@@ -78,3 +78,29 @@ export async function renderVideoClip({
       .run();
   });
 }
+
+/**
+ * Extracts a lightweight compressed MP3 audio track from any video for OpenAI Whisper
+ */
+export async function extractAudioForWhisper(
+  videoPath: string,
+  audioOutputPath: string
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const dir = path.dirname(audioOutputPath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+
+    ffmpeg(videoPath)
+      .noVideo()
+      .audioCodec("libmp3lame")
+      .audioBitrate(64)
+      .audioChannels(1)
+      .output(audioOutputPath)
+      .on("end", () => resolve(audioOutputPath))
+      .on("error", (err) => reject(err))
+      .run();
+  });
+}
+

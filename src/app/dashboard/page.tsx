@@ -10,124 +10,311 @@ import {
   Play,
   Pause,
   Download,
-  Share2,
   Sliders,
   Video,
   Wand2,
   Link2,
   Upload,
   Calendar,
-  Layers,
   CheckCircle2,
   TrendingUp,
   Volume2,
   VolumeX,
-  ArrowRight,
   Plus,
   RefreshCw,
-  Clock,
-  ChevronRight,
-  Filter,
   Key,
+  AlertCircle,
+  FileVideo,
 } from "lucide-react";
-import Navbar from "@/components/Navbar";
 import ApiSettingsModal from "@/components/ApiSettingsModal";
-import { SAMPLE_VIDEOS, MOCK_CLIPS, GeneratedClip } from "@/lib/mockData";
 import confetti from "canvas-confetti";
+
+export interface RealClip {
+  id: string;
+  videoFilePath: string;
+  videoUrl: string;
+  title: string;
+  hookHeadline: string;
+  startTime: number;
+  endTime: number;
+  duration: number;
+  durationFormatted: string;
+  viralityScore: number;
+  hookStrength: number;
+  engagementScore: number;
+  trendMatch: number;
+  viralityReason: string;
+  transcript: {
+    start: number;
+    end: number;
+    text: string;
+    emoji?: string;
+  }[];
+  aspectRatio: "9:16" | "1:1" | "16:9";
+  captionStyle: "hormozi" | "neon" | "beast" | "clean";
+}
 
 function DashboardContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
-  // State
+  // Settings & Ingestion State
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<"clips" | "projects" | "upload">("clips");
-  const [clips, setClips] = useState<GeneratedClip[]>(MOCK_CLIPS);
-  const [selectedClip, setSelectedClip] = useState<GeneratedClip>(MOCK_CLIPS[0]);
+  const [activeTab, setActiveTab] = useState<"clips" | "upload">("clips");
+  const [clips, setClips] = useState<RealClip[]>([]);
+  const [selectedClip, setSelectedClip] = useState<RealClip | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [isMuted, setIsMuted] = useState(true);
-  const [currentWordIdx, setCurrentWordIdx] = useState(0);
+  const [isMuted, setIsMuted] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
 
-  // Ingestion form state
+  // Upload inputs
   const [urlInput, setUrlInput] = useState("");
   const [promptInput, setPromptInput] = useState("");
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+
+  // Pipeline execution state
   const [isProcessing, setIsProcessing] = useState(false);
-  const [processingStage, setProcessingStage] = useState(0);
+  const [processingStage, setProcessingStage] = useState("");
+  const [isRendering, setIsRendering] = useState(false);
+  const [errorMsg, setErrorMsg] = useState("");
 
-  const stages = [
-    "Downloading video stream & demuxing audio tracks...",
-    "Running OpenAI Whisper speech-to-text diarization...",
-    "Computer Vision: Detecting active speakers & tracking faces...",
-    "ClipAnything™: Extracting high-retention golden nuggets & hooks...",
-    "Synthesizing dynamic animated captions & emoji triggers...",
-    "Calculating AI Virality Score™ & formatting 9:16 layout...",
-  ];
+  // Load saved clips from localStorage
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("opus_user_clips");
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setClips(parsed);
+            setSelectedClip(parsed[0]);
+          }
+        } catch (e) {}
+      }
+    }
+  }, []);
 
-  // Auto-start generation if navigated from hero
+  // Handle autostart from hero
   useEffect(() => {
     if (searchParams.get("autostart") === "true") {
-      runAiPipeline();
-    }
-    const sampleId = searchParams.get("source");
-    if (sampleId && sampleId !== "custom") {
-      const match = SAMPLE_VIDEOS.find((s) => s.id === sampleId);
-      if (match) {
-        setUrlInput(match.sourceUrl);
+      const url = searchParams.get("url");
+      const filePath = searchParams.get("filePath");
+      const fileUrl = searchParams.get("fileUrl");
+      const prompt = searchParams.get("prompt") || "";
+      if (filePath && fileUrl) {
+        startRealPipeline({ filePath, fileUrl, prompt });
+      } else if (url) {
+        startRealPipeline({ url, prompt });
       }
     }
   }, [searchParams]);
 
-  const runAiPipeline = () => {
-    setIsProcessing(true);
-    setProcessingStage(0);
+  // Real AI Processing Pipeline
+  const startRealPipeline = async ({
+    url,
+    filePath,
+    fileUrl,
+    prompt,
+  }: {
+    url?: string;
+    filePath?: string;
+    fileUrl?: string;
+    prompt?: string;
+  }) => {
+    setErrorMsg("");
 
-    const interval = setInterval(() => {
-      setProcessingStage((prev) => {
-        if (prev < stages.length - 1) {
-          return prev + 1;
-        } else {
-          clearInterval(interval);
-          setIsProcessing(false);
-          setActiveTab("clips");
-          try {
-            confetti({
-              particleCount: 80,
-              spread: 60,
-              origin: { y: 0.6 },
-            });
-          } catch (e) {}
-          return prev;
+    const openaiKey = localStorage.getItem("opus_openai_key") || "";
+    const claudeKey = localStorage.getItem("opus_claude_key") || "";
+    const preferredModel = (localStorage.getItem("opus_preferred_model") as any) || "claude-3-5-haiku";
+
+    if (!openaiKey && !claudeKey) {
+      setSettingsOpen(true);
+      setErrorMsg("Please enter your OpenAI API key or Claude API key in Settings to process videos.");
+      return;
+    }
+
+    setIsProcessing(true);
+
+    try {
+      let resolvedFilePath = filePath;
+      let resolvedFileUrl = fileUrl;
+
+      // Stage 1: Download YouTube URL if URL was provided
+      if (url && !resolvedFilePath) {
+        setProcessingStage("Downloading video stream with yt-dlp...");
+        const ytRes = await fetch("/api/download-youtube", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url }),
+        });
+        const ytData = await ytRes.json();
+        if (!ytRes.ok || ytData.error) {
+          throw new Error(ytData.error || "Failed to download YouTube video");
         }
+        resolvedFilePath = ytData.filePath;
+        resolvedFileUrl = ytData.fileUrl;
+      }
+
+      // If local file was selected in upload form
+      if (!resolvedFilePath && uploadFile) {
+        setProcessingStage("Uploading video file to local server...");
+        const formData = new FormData();
+        formData.append("file", uploadFile);
+        const upRes = await fetch("/api/upload", {
+          method: "POST",
+          body: formData,
+        });
+        const upData = await upRes.json();
+        if (!upRes.ok || upData.error) {
+          throw new Error(upData.error || "Failed to upload video");
+        }
+        resolvedFilePath = upData.filePath;
+        resolvedFileUrl = upData.fileUrl;
+      }
+
+      if (!resolvedFilePath) {
+        throw new Error("No video file or URL provided.");
+      }
+
+      // Stage 2: Speech-to-Text with OpenAI Whisper
+      setProcessingStage("Transcribing speech with OpenAI Whisper (Word Timestamps)...");
+      const transRes = await fetch("/api/transcribe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          filePath: resolvedFilePath,
+          openaiKey,
+        }),
       });
-    }, 1200);
+      const transData = await transRes.json();
+      if (!transRes.ok || transData.error) {
+        throw new Error(transData.error || "Audio transcription failed. Check your OpenAI API key.");
+      }
+
+      const fullTranscript = transData.text || "";
+      const rawWords = transData.words || [];
+
+      // Stage 3: Viral Curation with Claude or GPT-4o-mini
+      setProcessingStage(`Curating viral clips using ${preferredModel}...`);
+      const analyzeRes = await fetch("/api/analyze-clips", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          transcriptText: fullTranscript,
+          customPrompt: prompt || promptInput,
+          model: preferredModel,
+          openaiKey,
+          claudeKey,
+        }),
+      });
+      const analyzeData = await analyzeRes.json();
+      if (!analyzeRes.ok || analyzeData.error) {
+        throw new Error(analyzeData.error || "AI Virality analysis failed.");
+      }
+
+      // Stage 4: Assemble clips with synchronized word timestamps
+      const rawClips = analyzeData.clips || [];
+      const generatedClips: RealClip[] = rawClips.map((c: any, index: number) => {
+        // Find words falling in this timestamp window
+        const clipWords = rawWords.filter(
+          (w: any) => w.start >= c.startTime && w.end <= c.endTime + 0.5
+        );
+
+        return {
+          id: `clip-${Date.now()}-${index}`,
+          videoFilePath: resolvedFilePath!,
+          videoUrl: resolvedFileUrl || "/placeholder.mp4",
+          title: c.title || `Viral Short #${index + 1}`,
+          hookHeadline: c.hookHeadline || "",
+          startTime: c.startTime || 0,
+          endTime: c.endTime || 30,
+          duration: Math.round(c.endTime - c.startTime),
+          durationFormatted: c.durationFormatted || "0:30",
+          viralityScore: c.viralityScore || 90,
+          hookStrength: c.hookStrength || 92,
+          engagementScore: c.engagementScore || 88,
+          trendMatch: c.trendMatch || 90,
+          viralityReason: c.viralityReason || "High-retention narrative segment",
+          aspectRatio: "9:16",
+          captionStyle: "hormozi",
+          transcript:
+            clipWords.length > 0
+              ? clipWords.map((cw: any) => ({
+                  start: cw.start - c.startTime,
+                  end: cw.end - c.startTime,
+                  text: cw.word,
+                }))
+              : [
+                  { start: 0, end: 3, text: c.hookHeadline || c.title },
+                  { start: 3, end: 7, text: "Key insight" },
+                ],
+        };
+      });
+
+      if (generatedClips.length > 0) {
+        setClips(generatedClips);
+        setSelectedClip(generatedClips[0]);
+        localStorage.setItem("opus_user_clips", JSON.stringify(generatedClips));
+        setActiveTab("clips");
+        try {
+          confetti({
+            particleCount: 90,
+            spread: 70,
+            origin: { y: 0.6 },
+          });
+        } catch (e) {}
+      } else {
+        throw new Error("No clips could be extracted from this video segment.");
+      }
+    } catch (err: any) {
+      setErrorMsg(err.message || "An unexpected error occurred during processing.");
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
-  // Animate dynamic captions when playing
-  useEffect(() => {
-    if (!isPlaying || !selectedClip) return;
-    const interval = setInterval(() => {
-      setCurrentWordIdx((prev) => (prev + 1) % (selectedClip.transcript.length || 1));
-    }, 1400);
-    return () => clearInterval(interval);
-  }, [isPlaying, selectedClip]);
-
-  const handleDownload = (clip: GeneratedClip) => {
+  // Real FFmpeg Render & Download
+  const handleRenderAndDownload = async (clip: RealClip) => {
+    setIsRendering(true);
     try {
-      confetti({
-        particleCount: 50,
-        spread: 50,
-        origin: { y: 0.7 },
+      const res = await fetch("/api/render-clip", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          inputPath: clip.videoFilePath,
+          startTime: clip.startTime,
+          duration: clip.duration,
+          aspectRatio: clip.aspectRatio,
+        }),
       });
-    } catch (e) {}
-    alert(`Downloading "${clip.title}" in 1080p 60fps MP4!`);
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        throw new Error(data.error || "FFmpeg rendering failed");
+      }
+
+      // Trigger actual download of the rendered MP4
+      const a = document.createElement("a");
+      a.href = data.downloadUrl;
+      a.download = data.filename || `${clip.title}.mp4`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+
+      try {
+        confetti({ particleCount: 60, spread: 60 });
+      } catch (e) {}
+    } catch (err: any) {
+      alert(`Render Error: ${err.message}`);
+    } finally {
+      setIsRendering(false);
+    }
   };
 
   return (
     <div className="min-h-screen bg-[#08090E] text-white">
-      {/* Studio Top Navigation */}
+      {/* Top Header */}
       <header className="sticky top-0 z-40 bg-[#090A10]/90 backdrop-blur-xl border-b border-white/[0.08] px-4 sm:px-6 lg:px-8 py-3">
         <div className="flex items-center justify-between max-w-7xl mx-auto">
-          {/* Logo & Workspace */}
           <div className="flex items-center gap-6">
             <Link href="/" className="flex items-center gap-2">
               <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-[#6723FF] to-[#38BDF8] flex items-center justify-center p-[1px]">
@@ -140,32 +327,22 @@ function DashboardContent() {
               </span>
             </Link>
 
-            <div className="hidden md:flex items-center gap-2 pl-6 border-l border-white/[0.08] text-xs">
-              <span className="text-zinc-400">Project:</span>
-              <span className="font-bold text-white bg-white/[0.05] px-2.5 py-1 rounded-lg border border-white/[0.08]">
-                Personal Repurposing Lab
-              </span>
-            </div>
+            <span className="text-zinc-600 hidden sm:inline">|</span>
+            <span className="text-xs text-zinc-400 hidden sm:inline">Personal AI Repurposing Lab</span>
           </div>
 
-          {/* Credits remaining & action buttons */}
           <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-purple-950/30 border border-purple-500/30 text-xs">
-              <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-              <span className="font-bold text-purple-200">84 / 90 Mins Free</span>
-            </div>
-
             <Link
               href="/editor"
-              className="px-3.5 py-1.5 text-xs font-bold rounded-xl bg-white/[0.06] hover:bg-white/[0.1] border border-white/[0.1] text-zinc-200 transition-colors flex items-center gap-1.5"
+              className="px-3 py-1.5 text-xs font-bold rounded-xl bg-white/[0.05] hover:bg-white/[0.1] border border-white/[0.08] text-zinc-200 transition-colors flex items-center gap-1.5"
             >
               <Sliders className="w-3.5 h-3.5 text-cyan-400" />
-              <span>Opus Editor</span>
+              <span>Studio Editor</span>
             </Link>
 
             <Link
               href="/schedule"
-              className="px-3.5 py-1.5 text-xs font-bold rounded-xl bg-white/[0.06] hover:bg-white/[0.1] border border-white/[0.1] text-zinc-200 transition-colors flex items-center gap-1.5"
+              className="px-3 py-1.5 text-xs font-bold rounded-xl bg-white/[0.05] hover:bg-white/[0.1] border border-white/[0.08] text-zinc-200 transition-colors flex items-center gap-1.5"
             >
               <Calendar className="w-3.5 h-3.5 text-pink-400" />
               <span>Scheduler</span>
@@ -173,8 +350,7 @@ function DashboardContent() {
 
             <button
               onClick={() => setSettingsOpen(true)}
-              className="px-3.5 py-1.5 text-xs font-bold rounded-xl bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/25 text-purple-300 hover:text-white transition-colors flex items-center gap-1.5 cursor-pointer"
-              title="Configure OpenAI and Claude API Keys"
+              className="px-3 py-1.5 text-xs font-bold rounded-xl bg-purple-500/15 hover:bg-purple-500/25 border border-purple-500/30 text-purple-300 hover:text-white transition-colors flex items-center gap-1.5 cursor-pointer"
             >
               <Key className="w-3.5 h-3.5 text-purple-400" />
               <span>API Keys</span>
@@ -182,24 +358,39 @@ function DashboardContent() {
 
             <button
               onClick={() => setActiveTab("upload")}
-              className="btn-primary-gradient px-4 py-1.5 text-xs font-bold text-white rounded-xl flex items-center gap-1.5 shadow-lg shadow-purple-600/30"
+              className="btn-primary-gradient px-3.5 py-1.5 text-xs font-bold text-white rounded-xl flex items-center gap-1.5 shadow-lg shadow-purple-600/30 cursor-pointer"
             >
               <Plus className="w-3.5 h-3.5" />
-              <span>New Clip Project</span>
+              <span>New Clip</span>
             </button>
           </div>
         </div>
 
-        {/* API Settings Modal */}
         <ApiSettingsModal isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} />
       </header>
 
       {/* Main Studio Viewport */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Error Alert if any */}
+        {errorMsg && (
+          <div className="mb-6 p-4 rounded-2xl bg-red-950/40 border border-red-500/40 text-red-200 text-xs flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0" />
+              <span>{errorMsg}</span>
+            </div>
+            <button
+              onClick={() => setSettingsOpen(true)}
+              className="px-3 py-1 rounded-lg bg-red-600 text-white font-bold text-xs"
+            >
+              Open API Settings
+            </button>
+          </div>
+        )}
+
         {/* Processing Modal Overlay */}
         {isProcessing && (
-          <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
-            <div className="glass-panel-glow max-w-lg w-full p-8 rounded-3xl border border-purple-500/40 text-center shadow-2xl animate-in zoom-in-95 duration-200">
+          <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+            <div className="glass-panel-glow max-w-md w-full p-8 rounded-3xl border border-purple-500/40 text-center shadow-2xl animate-in zoom-in-95 duration-200">
               <div className="w-16 h-16 rounded-2xl bg-purple-600/20 border border-purple-500/40 text-purple-400 flex items-center justify-center mx-auto mb-6 relative">
                 <Wand2 className="w-8 h-8 animate-pulse text-purple-300" />
                 <span className="absolute -top-1 -right-1 flex h-3 w-3">
@@ -208,52 +399,19 @@ function DashboardContent() {
                 </span>
               </div>
 
-              <h3 className="text-xl font-black text-white mb-2">Generating Viral Clips</h3>
-              <p className="text-xs text-zinc-400 mb-6">
-                OpusClip AI is analyzing narrative flow, facial speaker focus, and generating viral subtitles.
+              <h3 className="text-xl font-black text-white mb-2">Processing Your Video</h3>
+              <p className="text-xs text-purple-300 font-semibold mb-6 animate-pulse">
+                {processingStage}
               </p>
 
-              {/* Step indicator */}
-              <div className="space-y-3 text-left mb-6 bg-black/40 p-4 rounded-2xl border border-white/[0.08]">
-                {stages.map((stg, sIdx) => {
-                  const isDone = sIdx < processingStage;
-                  const isCurrent = sIdx === processingStage;
-                  return (
-                    <div
-                      key={sIdx}
-                      className={`flex items-center gap-3 text-xs transition-colors ${
-                        isCurrent
-                          ? "text-purple-300 font-bold"
-                          : isDone
-                          ? "text-emerald-400"
-                          : "text-zinc-600"
-                      }`}
-                    >
-                      {isDone ? (
-                        <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
-                      ) : isCurrent ? (
-                        <div className="w-4 h-4 border-2 border-purple-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
-                      ) : (
-                        <div className="w-4 h-4 rounded-full border border-zinc-700 flex-shrink-0" />
-                      )}
-                      <span>{stg}</span>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Progress bar */}
               <div className="w-full bg-white/[0.08] h-2 rounded-full overflow-hidden">
-                <div
-                  className="bg-gradient-to-r from-purple-500 to-cyan-400 h-full rounded-full transition-all duration-300"
-                  style={{ width: `${((processingStage + 1) / stages.length) * 100}%` }}
-                />
+                <div className="bg-gradient-to-r from-purple-500 to-cyan-400 h-full rounded-full animate-pulse w-3/4" />
               </div>
             </div>
           </div>
         )}
 
-        {/* Tab Controls: Clips Gallery vs New Upload vs Projects */}
+        {/* Tab Switcher */}
         <div className="flex items-center justify-between mb-8 border-b border-white/[0.08] pb-4">
           <div className="flex items-center gap-3">
             <button
@@ -265,7 +423,7 @@ function DashboardContent() {
               }`}
             >
               <Sparkles className="w-4 h-4 text-amber-300" />
-              <span>Generated Viral Clips ({clips.length})</span>
+              <span>Your Viral Clips ({clips.length})</span>
             </button>
             <button
               onClick={() => setActiveTab("upload")}
@@ -278,312 +436,211 @@ function DashboardContent() {
               <Upload className="w-4 h-4" />
               <span>Import New Video</span>
             </button>
-            <button
-              onClick={() => setActiveTab("projects")}
-              className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition-all flex items-center gap-2 ${
-                activeTab === "projects"
-                  ? "bg-purple-600 text-white shadow-lg shadow-purple-600/30"
-                  : "text-zinc-400 hover:text-white hover:bg-white/[0.04]"
-              }`}
-            >
-              <Video className="w-4 h-4" />
-              <span>Source Videos (4)</span>
-            </button>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              onClick={runAiPipeline}
-              className="px-3 py-1.5 rounded-lg bg-white/[0.05] hover:bg-white/[0.1] border border-white/[0.08] text-xs font-semibold text-zinc-300 flex items-center gap-1.5 transition-colors"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-              <span>Re-analyze All</span>
-            </button>
           </div>
         </div>
 
-        {/* View 1: Generated Clips Gallery */}
+        {/* View 1: Clips Gallery */}
         {activeTab === "clips" && (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-            {/* Left Clips List */}
-            <div className="lg:col-span-7 space-y-4">
-              <div className="flex items-center justify-between text-xs text-zinc-400 font-semibold px-1">
-                <span>Ranked by AI Virality Score™</span>
-                <span>4 Clips Ready for Export</span>
+          <div>
+            {clips.length === 0 ? (
+              /* Clean Empty State */
+              <div className="glass-panel rounded-3xl p-12 text-center max-w-xl mx-auto border border-white/[0.08]">
+                <div className="w-16 h-16 rounded-2xl bg-purple-500/10 text-purple-400 flex items-center justify-center mx-auto mb-4 border border-purple-500/20">
+                  <FileVideo className="w-8 h-8" />
+                </div>
+                <h3 className="text-xl font-black text-white mb-2">No clips generated yet</h3>
+                <p className="text-xs text-zinc-400 mb-6 leading-relaxed">
+                  Paste a YouTube URL or upload a video file to run OpenAI Whisper transcription and Claude/ChatGPT viral hook curation.
+                </p>
+                <button
+                  onClick={() => setActiveTab("upload")}
+                  className="btn-primary-gradient px-6 py-3 rounded-xl font-bold text-xs text-white cursor-pointer shadow-lg shadow-purple-600/30"
+                >
+                  Import Your First Video
+                </button>
               </div>
-
-              {clips.map((clip, index) => {
-                const isSelected = selectedClip.id === clip.id;
-                return (
-                  <div
-                    key={clip.id}
-                    onClick={() => {
-                      setSelectedClip(clip);
-                      setCurrentWordIdx(0);
-                    }}
-                    className={`p-4 sm:p-5 rounded-2xl border transition-all cursor-pointer flex flex-col sm:flex-row items-start sm:items-center gap-4 ${
-                      isSelected
-                        ? "bg-purple-950/40 border-purple-500 shadow-xl shadow-purple-900/30 ring-1 ring-purple-500"
-                        : "glass-panel hover:bg-white/[0.04] border-white/[0.08]"
-                    }`}
-                  >
-                    {/* Thumbnail with Virality Badge */}
-                    <div className="relative w-full sm:w-36 h-28 sm:h-24 rounded-xl overflow-hidden flex-shrink-0 bg-black">
-                      <img
-                        src={clip.thumbnailUrl}
-                        alt={clip.title}
-                        className="w-full h-full object-cover"
-                      />
-                      <div className="absolute top-1.5 left-1.5 px-2 py-0.5 rounded-md bg-black/80 backdrop-blur-md text-[10px] font-black text-emerald-400 flex items-center gap-1 border border-emerald-500/30">
-                        <Flame className="w-3 h-3 fill-emerald-400" />
-                        <span>{clip.viralityScore}</span>
-                      </div>
-                      <div className="absolute bottom-1.5 right-1.5 px-1.5 py-0.5 rounded bg-black/80 text-[10px] text-zinc-300 font-mono">
-                        {clip.duration}
-                      </div>
-                    </div>
-
-                    {/* Clip Metadata */}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="text-[10px] font-extrabold px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 uppercase">
-                          Clip #{index + 1}
-                        </span>
-                        <span className="text-[11px] text-zinc-400">{clip.aspectRatio} Vertical</span>
-                        <span className="text-[11px] text-zinc-400">•</span>
-                        <span className="text-[11px] text-zinc-400 capitalize">{clip.captionStyle} Style</span>
-                      </div>
-
-                      <h4 className="text-sm font-bold text-white truncate mb-1">{clip.title}</h4>
-
-                      <p className="text-xs text-zinc-400 line-clamp-2 leading-relaxed mb-3">
-                        {clip.viralityReason}
-                      </p>
-
-                      {/* Micro score breakdown */}
-                      <div className="flex items-center gap-3 text-[11px]">
-                        <span className="text-emerald-400 font-semibold">Hook: {clip.hookStrength}%</span>
-                        <span className="text-zinc-600">•</span>
-                        <span className="text-cyan-400 font-semibold">Retention: {clip.engagementScore}%</span>
-                        <span className="text-zinc-600">•</span>
-                        <span className="text-purple-400 font-semibold">Trend: {clip.trendMatch}%</span>
-                      </div>
-                    </div>
-
-                    {/* Quick action buttons */}
-                    <div className="flex sm:flex-col gap-2 w-full sm:w-auto pt-2 sm:pt-0 border-t sm:border-t-0 border-white/[0.06]">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDownload(clip);
-                        }}
-                        className="flex-1 sm:flex-none p-2 rounded-xl bg-purple-600/30 hover:bg-purple-600 text-purple-300 hover:text-white border border-purple-500/30 text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
-                        title="Download 1080p MP4"
+            ) : (
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                {/* Left Clips List */}
+                <div className="lg:col-span-7 space-y-4">
+                  {clips.map((clip, index) => {
+                    const isSelected = selectedClip?.id === clip.id;
+                    return (
+                      <div
+                        key={clip.id}
+                        onClick={() => setSelectedClip(clip)}
+                        className={`p-4 sm:p-5 rounded-2xl border transition-all cursor-pointer flex flex-col sm:flex-row items-start sm:items-center gap-4 ${
+                          isSelected
+                            ? "bg-purple-950/40 border-purple-500 shadow-xl shadow-purple-900/30 ring-1 ring-purple-500"
+                            : "glass-panel hover:bg-white/[0.04] border-white/[0.08]"
+                        }`}
                       >
-                        <Download className="w-3.5 h-3.5" />
-                        <span className="sm:hidden">Download</span>
-                      </button>
-
-                      <Link
-                        href={`/editor?clip=${clip.id}`}
-                        onClick={(e) => e.stopPropagation()}
-                        className="flex-1 sm:flex-none p-2 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] text-zinc-300 hover:text-white border border-white/[0.08] text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
-                        title="Open in Opus Editor"
-                      >
-                        <Sliders className="w-3.5 h-3.5 text-cyan-400" />
-                        <span className="sm:hidden">Edit</span>
-                      </Link>
-
-                      <Link
-                        href={`/schedule?clip=${clip.id}`}
-                        onClick={(e) => e.stopPropagation()}
-                        className="flex-1 sm:flex-none p-2 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] text-zinc-300 hover:text-white border border-white/[0.08] text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
-                        title="Schedule Post"
-                      >
-                        <Calendar className="w-3.5 h-3.5 text-pink-400" />
-                        <span className="sm:hidden">Schedule</span>
-                      </Link>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* Right Live Player & Virality Analysis */}
-            <div className="lg:col-span-5 space-y-5">
-              {/* Vertical Short Live Player */}
-              <div className="glass-panel-glow p-5 rounded-3xl border border-white/[0.12] flex flex-col items-center">
-                <div className="relative w-[260px] sm:w-[280px] h-[480px] bg-black rounded-2xl overflow-hidden shadow-2xl border border-white/[0.1] flex flex-col">
-                  {/* Top overlay */}
-                  <div className="absolute top-0 left-0 right-0 z-30 p-3 flex items-center justify-between bg-gradient-to-b from-black/80 to-transparent">
-                    <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-black/60 backdrop-blur-md text-[10px] font-black text-emerald-400 border border-emerald-500/30">
-                      <Flame className="w-3 h-3 fill-emerald-400" />
-                      <span>{selectedClip.viralityScore} Virality Score</span>
-                    </div>
-                    <button
-                      onClick={() => setIsMuted(!isMuted)}
-                      className="p-1.5 rounded-full bg-black/60 text-white"
-                    >
-                      {isMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
-                    </button>
-                  </div>
-
-                  {/* Video Viewport */}
-                  <div className="relative flex-1 bg-zinc-950 flex flex-col">
-                    {selectedClip.layout === "split-screen" ? (
-                      <div className="flex-1 flex flex-col h-full">
-                        <div className="relative flex-1 overflow-hidden border-b border-purple-500/20">
-                          <img
-                            src="https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=600&auto=format&fit=crop&q=80"
-                            alt="Host"
+                        {/* Video Preview Block */}
+                        <div className="relative w-full sm:w-36 h-28 sm:h-24 rounded-xl overflow-hidden flex-shrink-0 bg-black flex items-center justify-center">
+                          <video
+                            src={clip.videoUrl}
                             className="w-full h-full object-cover"
+                            preload="metadata"
                           />
+                          <div className="absolute top-1.5 left-1.5 px-2 py-0.5 rounded-md bg-black/80 backdrop-blur-md text-[10px] font-black text-emerald-400 flex items-center gap-1 border border-emerald-500/30">
+                            <Flame className="w-3 h-3 fill-emerald-400" />
+                            <span>{clip.viralityScore}</span>
+                          </div>
+                          <div className="absolute bottom-1.5 right-1.5 px-1.5 py-0.5 rounded bg-black/80 text-[10px] text-zinc-300 font-mono">
+                            {clip.durationFormatted}
+                          </div>
                         </div>
-                        <div className="relative flex-1 overflow-hidden">
-                          <img
-                            src={selectedClip.thumbnailUrl}
-                            alt="Guest"
-                            className="w-full h-full object-cover scale-105"
-                          />
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="relative w-full h-full">
-                        <img
-                          src={selectedClip.thumbnailUrl}
-                          alt="Centered Speaker"
-                          className="w-full h-full object-cover scale-110"
-                        />
-                      </div>
-                    )}
 
-                    {/* Dynamic Subtitle overlay */}
-                    <div className="absolute bottom-12 inset-x-2 z-30 text-center pointer-events-none">
-                      <div className="inline-block px-3 py-1.5 rounded-xl bg-black/50 backdrop-blur-sm">
-                        <div className="caption-hormozi text-xl text-yellow-300">
-                          {selectedClip.transcript[currentWordIdx]?.text || "Viral moment"}{" "}
-                          {selectedClip.transcript[currentWordIdx]?.emoji && (
-                            <span>{selectedClip.transcript[currentWordIdx].emoji}</span>
+                        {/* Metadata */}
+                        <div className="flex-1 min-w-0">
+                          <span className="text-[10px] font-extrabold px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 uppercase mb-1 inline-block">
+                            Clip #{index + 1}
+                          </span>
+                          <h4 className="text-sm font-bold text-white truncate mb-1">{clip.title}</h4>
+                          <p className="text-xs text-zinc-400 line-clamp-2 leading-relaxed mb-3">
+                            {clip.viralityReason}
+                          </p>
+
+                          <div className="flex items-center gap-3 text-[11px]">
+                            <span className="text-emerald-400 font-semibold">Hook: {clip.hookStrength}%</span>
+                            <span className="text-zinc-600">•</span>
+                            <span className="text-cyan-400 font-semibold">Retention: {clip.engagementScore}%</span>
+                            <span className="text-zinc-600">•</span>
+                            <span className="text-purple-400 font-semibold">Trend: {clip.trendMatch}%</span>
+                          </div>
+                        </div>
+
+                        {/* Actions */}
+                        <div className="flex sm:flex-col gap-2 w-full sm:w-auto">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleRenderAndDownload(clip);
+                            }}
+                            disabled={isRendering}
+                            className="flex-1 sm:flex-none p-2 rounded-xl bg-purple-600/30 hover:bg-purple-600 text-purple-300 hover:text-white border border-purple-500/30 text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50"
+                            title="Render real 9:16 MP4 with FFmpeg"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                            <span className="sm:hidden">Download</span>
+                          </button>
+
+                          <Link
+                            href={`/editor?clipId=${clip.id}`}
+                            onClick={(e) => e.stopPropagation()}
+                            className="flex-1 sm:flex-none p-2 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] text-zinc-300 hover:text-white border border-white/[0.08] text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
+                            title="Open in Studio Editor"
+                          >
+                            <Sliders className="w-3.5 h-3.5 text-cyan-400" />
+                            <span className="sm:hidden">Edit</span>
+                          </Link>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Right Player & Diagnostics */}
+                {selectedClip && (
+                  <div className="lg:col-span-5 space-y-5">
+                    <div className="glass-panel-glow p-5 rounded-3xl border border-white/[0.12] flex flex-col items-center">
+                      {/* Vertical Video Viewport */}
+                      <div className="relative w-[260px] sm:w-[280px] h-[480px] bg-black rounded-2xl overflow-hidden shadow-2xl border border-white/[0.1] flex flex-col">
+                        <div className="relative flex-1 bg-zinc-950 flex flex-col justify-center items-center">
+                          <video
+                            src={selectedClip.videoUrl}
+                            className="w-full h-full object-cover"
+                            controls={false}
+                            muted={isMuted}
+                            autoPlay={isPlaying}
+                            loop
+                          />
+
+                          {/* Dynamic Subtitles Overlay */}
+                          <div className="absolute bottom-12 inset-x-2 z-30 text-center pointer-events-none">
+                            <div className="inline-block px-3 py-1.5 rounded-xl bg-black/60 backdrop-blur-sm">
+                              <span className="caption-hormozi text-xl text-yellow-300">
+                                {selectedClip.hookHeadline || selectedClip.title}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Play / Pause overlay */}
+                          <button
+                            onClick={() => setIsPlaying(!isPlaying)}
+                            className="absolute inset-0 flex items-center justify-center bg-black/20 hover:bg-black/40 transition-colors"
+                          >
+                            {!isPlaying && (
+                              <div className="p-4 rounded-full bg-black/60 text-white backdrop-blur-md">
+                                <Play className="w-6 h-6 fill-white" />
+                              </div>
+                            )}
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Export Button */}
+                      <div className="w-full mt-4">
+                        <button
+                          onClick={() => handleRenderAndDownload(selectedClip)}
+                          disabled={isRendering}
+                          className="w-full btn-primary-gradient py-3 rounded-xl font-bold text-xs sm:text-sm text-white flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-purple-600/30 disabled:opacity-50"
+                        >
+                          {isRendering ? (
+                            <>
+                              <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                              <span>Rendering 9:16 with FFmpeg...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Download className="w-4 h-4" />
+                              <span>Render & Download 9:16 MP4</span>
+                            </>
                           )}
-                        </div>
+                        </button>
                       </div>
                     </div>
 
-                    {/* Bottom Play bar */}
-                    <div className="absolute bottom-2 inset-x-3 flex items-center justify-between z-30">
-                      <button
-                        onClick={() => setIsPlaying(!isPlaying)}
-                        className="p-2 rounded-full bg-black/70 text-white hover:bg-black"
-                      >
-                        {isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
-                      </button>
-                      <span className="text-[10px] text-zinc-400 font-mono">
-                        00:0{currentWordIdx} / {selectedClip.duration}
-                      </span>
+                    {/* Virality Card */}
+                    <div className="glass-panel p-5 rounded-3xl border border-white/[0.08]">
+                      <div className="flex items-center justify-between mb-3">
+                        <span className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
+                          <TrendingUp className="w-4 h-4 text-emerald-400" />
+                          <span>AI Virality Diagnostics</span>
+                        </span>
+                        <span className="text-xs font-black text-emerald-400">
+                          {selectedClip.viralityScore} / 100
+                        </span>
+                      </div>
+                      <p className="text-xs text-zinc-300 leading-relaxed">
+                        {selectedClip.viralityReason}
+                      </p>
                     </div>
                   </div>
-                </div>
-
-                {/* Primary Action Buttons */}
-                <div className="w-full grid grid-cols-2 gap-2 mt-5">
-                  <button
-                    onClick={() => handleDownload(selectedClip)}
-                    className="btn-primary-gradient py-2.5 rounded-xl font-bold text-xs text-white flex items-center justify-center gap-1.5 cursor-pointer shadow-lg shadow-purple-600/30"
-                  >
-                    <Download className="w-4 h-4" />
-                    <span>Download 1080p</span>
-                  </button>
-                  <Link
-                    href={`/editor?clip=${selectedClip.id}`}
-                    className="py-2.5 rounded-xl bg-white/[0.08] hover:bg-white/[0.14] text-white font-bold text-xs flex items-center justify-center gap-1.5 border border-white/[0.1] transition-colors"
-                  >
-                    <Sliders className="w-4 h-4 text-cyan-400" />
-                    <span>Edit in Studio</span>
-                  </Link>
-                </div>
+                )}
               </div>
-
-              {/* Virality Diagnostic Inspector Card */}
-              <div className="glass-panel p-5 rounded-3xl border border-white/[0.08]">
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center gap-2">
-                    <TrendingUp className="w-4 h-4 text-emerald-400" />
-                    <span className="text-xs font-bold text-white uppercase tracking-wider">
-                      AI Virality Diagnostic
-                    </span>
-                  </div>
-                  <span className="text-xs font-black text-emerald-400">
-                    {selectedClip.viralityScore} / 100
-                  </span>
-                </div>
-
-                <div className="space-y-3 mb-4">
-                  <div>
-                    <div className="flex justify-between text-xs mb-1">
-                      <span className="text-zinc-400">Hook Strength (0-3s)</span>
-                      <span className="font-bold text-white">{selectedClip.hookStrength}%</span>
-                    </div>
-                    <div className="w-full bg-zinc-800 h-1.5 rounded-full overflow-hidden">
-                      <div
-                        className="bg-emerald-400 h-full rounded-full"
-                        style={{ width: `${selectedClip.hookStrength}%` }}
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <div className="flex justify-between text-xs mb-1">
-                      <span className="text-zinc-400">Engagement & Flow</span>
-                      <span className="font-bold text-white">{selectedClip.engagementScore}%</span>
-                    </div>
-                    <div className="w-full bg-zinc-800 h-1.5 rounded-full overflow-hidden">
-                      <div
-                        className="bg-cyan-400 h-full rounded-full"
-                        style={{ width: `${selectedClip.engagementScore}%` }}
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <div className="flex justify-between text-xs mb-1">
-                      <span className="text-zinc-400">Trend Alignment</span>
-                      <span className="font-bold text-white">{selectedClip.trendMatch}%</span>
-                    </div>
-                    <div className="w-full bg-zinc-800 h-1.5 rounded-full overflow-hidden">
-                      <div
-                        className="bg-purple-400 h-full rounded-full"
-                        style={{ width: `${selectedClip.trendMatch}%` }}
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                <div className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.06] text-xs text-zinc-300 leading-relaxed">
-                  <span className="font-bold text-purple-300">AI Recommendation:</span> Post to TikTok between 6:00 PM – 8:30 PM with the suggested hook title. High probability of algorithmic retention spike.
-                </div>
-              </div>
-            </div>
+            )}
           </div>
         )}
 
-        {/* View 2: Import New Video */}
+        {/* View 2: Import Video */}
         {activeTab === "upload" && (
-          <div className="max-w-2xl mx-auto glass-panel-glow p-8 rounded-3xl border border-white/[0.12]">
-            <h3 className="text-xl font-black text-white mb-2">Import Video for AI Repurposing</h3>
+          <div className="max-w-2xl mx-auto glass-panel-glow p-7 rounded-3xl border border-white/[0.12]">
+            <h3 className="text-xl font-black text-white mb-2">Import Video for AI Processing</h3>
             <p className="text-xs text-zinc-400 mb-6">
-              Paste a link or pick a demo sample to generate 10 viral clips.
+              Paste any YouTube URL or drop an MP4 video file.
             </p>
 
             <form
               onSubmit={(e) => {
                 e.preventDefault();
-                runAiPipeline();
+                startRealPipeline({ url: urlInput, prompt: promptInput });
               }}
               className="space-y-4"
             >
               <div>
                 <label className="block text-xs font-semibold text-zinc-300 mb-1.5">
-                  YouTube, Twitch, Vimeo, or Google Drive URL
+                  YouTube Video Link
                 </label>
                 <input
                   type="url"
@@ -596,77 +653,47 @@ function DashboardContent() {
 
               <div>
                 <label className="block text-xs font-semibold text-zinc-300 mb-1.5">
+                  Or Upload Local Video File (MP4, MOV, WebM)
+                </label>
+                <div className="border-2 border-dashed border-white/[0.12] hover:border-purple-500/50 rounded-2xl p-6 text-center cursor-pointer relative bg-white/[0.02]">
+                  <input
+                    type="file"
+                    accept="video/*"
+                    onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
+                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                  />
+                  <Upload className="w-6 h-6 text-purple-400 mx-auto mb-2" />
+                  <div className="text-xs font-bold text-white">
+                    {uploadFile ? uploadFile.name : "Select Video File"}
+                  </div>
+                  <div className="text-[11px] text-zinc-500 mt-0.5">
+                    {uploadFile ? `${(uploadFile.size / (1024 * 1024)).toFixed(1)} MB` : "Up to 2GB"}
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-zinc-300 mb-1.5">
                   ClipAnything™ Prompt (Optional)
                 </label>
                 <input
                   type="text"
                   value={promptInput}
                   onChange={(e) => setPromptInput(e.target.value)}
-                  placeholder="e.g. Find the most controversial statement about technology..."
-                  className="w-full glass-input text-white text-sm px-4 py-3 rounded-xl focus:ring-1 focus:ring-purple-500"
+                  placeholder="e.g. Focus on AI discussion, extract the funny story..."
+                  className="w-full glass-input text-white text-sm px-4 py-2.5 rounded-xl focus:ring-1 focus:ring-purple-500"
                 />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-zinc-300 mb-2">
-                  Or Pick a Ready Demo Podcast:
-                </label>
-                <div className="grid grid-cols-2 gap-2">
-                  {SAMPLE_VIDEOS.map((s) => (
-                    <button
-                      type="button"
-                      key={s.id}
-                      onClick={() => setUrlInput(s.sourceUrl)}
-                      className="p-2.5 rounded-xl border border-white/[0.08] bg-white/[0.02] hover:bg-white/[0.06] text-left text-xs"
-                    >
-                      <div className="font-bold text-white truncate">{s.title}</div>
-                      <div className="text-[10px] text-zinc-400 mt-0.5">{s.channel}</div>
-                    </button>
-                  ))}
-                </div>
               </div>
 
               <button
                 type="submit"
-                className="w-full btn-primary-gradient py-3.5 rounded-xl font-bold text-white text-sm mt-4 shadow-xl shadow-purple-600/30 flex items-center justify-center gap-2 cursor-pointer"
+                disabled={!urlInput.trim() && !uploadFile}
+                className="w-full btn-primary-gradient py-3.5 rounded-xl font-bold text-white text-sm mt-4 shadow-xl shadow-purple-600/30 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
               >
                 <Sparkles className="w-4 h-4 text-amber-300" />
-                <span>Run OpusClip AI Pipeline</span>
+                <span>Run Real AI Pipeline</span>
               </button>
             </form>
-          </div>
-        )}
-
-        {/* View 3: Source Videos */}
-        {activeTab === "projects" && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {SAMPLE_VIDEOS.map((sample) => (
-              <div
-                key={sample.id}
-                className="glass-panel rounded-2xl overflow-hidden border border-white/[0.08] hover:border-purple-500/40 transition-colors p-3"
-              >
-                <img
-                  src={sample.thumbnail}
-                  alt={sample.title}
-                  className="w-full h-36 object-cover rounded-xl mb-3"
-                />
-                <h4 className="text-xs font-bold text-white truncate">{sample.title}</h4>
-                <div className="text-[11px] text-zinc-400 mt-1 flex items-center justify-between">
-                  <span>{sample.channel}</span>
-                  <span className="font-mono">{sample.duration}</span>
-                </div>
-                <button
-                  onClick={() => {
-                    setUrlInput(sample.sourceUrl);
-                    runAiPipeline();
-                  }}
-                  className="w-full mt-3 py-2 rounded-xl bg-purple-600/30 hover:bg-purple-600 text-purple-300 hover:text-white text-xs font-bold transition-colors flex items-center justify-center gap-1.5"
-                >
-                  <Sparkles className="w-3.5 h-3.5" />
-                  <span>Generate Clips</span>
-                </button>
-              </div>
-            ))}
           </div>
         )}
       </main>

@@ -32,15 +32,14 @@ import confetti from "canvas-confetti";
 
 function EditorContent() {
   const searchParams = useSearchParams();
-  const clipId = searchParams.get("clip") || "clip-1";
-  const initialClip = MOCK_CLIPS.find((c) => c.id === clipId) || MOCK_CLIPS[0];
+  const clipId = searchParams.get("clip") || searchParams.get("clipId") || "";
 
   // Editor State
-  const [clip, setClip] = useState<GeneratedClip>(initialClip);
+  const [clip, setClip] = useState<any>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(42);
+  const [duration, setDuration] = useState(30);
 
   // Styling state
   const [captionStyle, setCaptionStyle] = useState<"hormozi" | "neon" | "beast" | "clean">("hormozi");
@@ -51,40 +50,48 @@ function EditorContent() {
   const [isUppercase, setIsUppercase] = useState(true);
 
   // Layout state
-  const [layoutMode, setLayoutMode] = useState<"single-focus" | "split-screen" | "blurred-fit">("split-screen");
-  const [showBRoll, setShowBRoll] = useState(true);
+  const [layoutMode, setLayoutMode] = useState<"single-focus" | "split-screen" | "blurred-fit">("single-focus");
+  const [showBRoll, setShowBRoll] = useState(false);
 
   // Transcript state for text-based editing
-  const [transcriptWords, setTranscriptWords] = useState([
-    { id: 1, text: "Most", deleted: false, time: 0 },
-    { id: 2, text: "people", deleted: false, time: 1.5 },
-    { id: 3, text: "think", deleted: false, time: 2.8 },
-    { id: 4, text: "AGI", deleted: false, time: 4.0, emoji: "🤖" },
-    { id: 5, text: "is", deleted: false, time: 5.2 },
-    { id: 6, text: "decades", deleted: false, time: 6.5 },
-    { id: 7, text: "away,", deleted: false, time: 8.0, emoji: "⏳" },
-    { id: 8, text: "um...", deleted: true, isFiller: true, time: 9.2 },
-    { id: 9, text: "but", deleted: false, time: 10.0 },
-    { id: 10, text: "look", deleted: false, time: 11.4 },
-    { id: 11, text: "at", deleted: false, time: 12.6 },
-    { id: 12, text: "exponential", deleted: false, time: 14.0, emoji: "📈" },
-    { id: 13, text: "compute.", deleted: false, time: 16.5, emoji: "⚡" },
-    { id: 14, text: "The", deleted: false, time: 18.0 },
-    { id: 15, text: "models", deleted: false, time: 19.5 },
-    { id: 16, text: "we", deleted: false, time: 21.0 },
-    { id: 17, text: "are", deleted: false, time: 22.5 },
-    { id: 18, text: "building", deleted: false, time: 24.0, emoji: "🏗️" },
-    { id: 19, text: "today", deleted: false, time: 26.0 },
-    { id: 20, text: "will", deleted: false, time: 28.0 },
-    { id: 21, text: "shock", deleted: false, time: 30.0, emoji: "🤯" },
-    { id: 22, text: "the", deleted: false, time: 32.5 },
-    { id: 23, text: "world.", deleted: false, time: 35.0, emoji: "🌍" },
-  ]);
+  const [transcriptWords, setTranscriptWords] = useState<any[]>([]);
+
+  // Load real clip on mount from localStorage
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("opus_user_clips");
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            const match = parsed.find((c: any) => c.id === clipId) || parsed[0];
+            setClip(match);
+            setDuration(match.duration || 30);
+            if (match.transcript && match.transcript.length > 0) {
+              setTranscriptWords(
+                match.transcript.map((t: any, idx: number) => ({
+                  id: idx + 1,
+                  text: t.text,
+                  time: t.start || idx * 1.5,
+                  deleted: false,
+                  emoji: t.emoji || "",
+                }))
+              );
+            }
+          }
+        } catch (e) {}
+      }
+    }
+  }, [clipId]);
 
   // Active word calculation
-  const activeWord = transcriptWords.find(
-    (w, idx) => !w.deleted && currentTime >= w.time && (idx === transcriptWords.length - 1 || currentTime < transcriptWords[idx + 1].time)
-  ) || transcriptWords[0];
+  const activeWord =
+    transcriptWords.find(
+      (w, idx) =>
+        !w.deleted &&
+        currentTime >= w.time &&
+        (idx === transcriptWords.length - 1 || currentTime < transcriptWords[idx + 1].time)
+    ) || transcriptWords[0];
 
   // Playback timer simulation
   useEffect(() => {
@@ -98,7 +105,7 @@ function EditorContent() {
           }
           return prev + 1;
         });
-      }, 700);
+      }, 1000);
     }
     return () => clearInterval(timer);
   }, [isPlaying, duration]);
@@ -108,10 +115,38 @@ function EditorContent() {
   const [exportResolution, setExportResolution] = useState("1080p");
   const [isExporting, setIsExporting] = useState(false);
 
-  const handleExport = () => {
+  const handleExport = async () => {
+    if (!clip?.videoFilePath) {
+      alert("No source video file path found for rendering.");
+      return;
+    }
+
     setIsExporting(true);
-    setTimeout(() => {
-      setIsExporting(false);
+    try {
+      const res = await fetch("/api/render-clip", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          inputPath: clip.videoFilePath,
+          startTime: clip.startTime || 0,
+          duration: clip.duration || duration,
+          aspectRatio: "9:16",
+          splitScreen: layoutMode === "split-screen",
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        throw new Error(data.error || "FFmpeg render failed");
+      }
+
+      // Download the rendered file
+      const a = document.createElement("a");
+      a.href = data.downloadUrl;
+      a.download = data.filename || `${clip.title}.mp4`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+
       setShowExportModal(false);
       try {
         confetti({
@@ -120,8 +155,11 @@ function EditorContent() {
           origin: { y: 0.6 },
         });
       } catch (e) {}
-      alert(`Clip successfully exported in ${exportResolution} 60fps!`);
-    }, 1800);
+    } catch (err: any) {
+      alert(`Render Error: ${err.message}`);
+    } finally {
+      setIsExporting(false);
+    }
   };
 
   const toggleDeleteWord = (id: number) => {
@@ -404,52 +442,68 @@ function EditorContent() {
 
               {/* Video Content Layer according to layout */}
               <div className="relative flex-1 bg-zinc-950 overflow-hidden flex flex-col">
-                {layoutMode === "split-screen" ? (
-                  <div className="flex-1 flex flex-col h-full">
-                    {/* Top Host */}
-                    <div className="relative flex-1 overflow-hidden border-b border-purple-500/20">
-                      <img
-                        src="https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=600&auto=format&fit=crop&q=80"
-                        alt="Host"
-                        className="w-full h-full object-cover"
-                      />
-                      <div className="absolute bottom-2 left-2 px-1.5 py-0.5 rounded bg-black/70 text-[9px] text-zinc-300">
-                        Lex Fridman
-                      </div>
-                    </div>
-                    {/* Bottom Guest */}
-                    <div className="relative flex-1 overflow-hidden">
-                      <img
-                        src={clip.thumbnailUrl}
-                        alt="Guest"
+                {layoutMode === "single-focus" ? (
+                  <div className="relative w-full h-full flex items-center justify-center bg-black">
+                    {clip?.videoUrl ? (
+                      <video
+                        src={clip.videoUrl}
                         className="w-full h-full object-cover scale-105"
+                        muted={isMuted}
+                        loop
+                        playsInline
+                        ref={(el) => {
+                          if (el) {
+                            if (isPlaying) el.play().catch(() => {});
+                            else el.pause();
+                          }
+                        }}
                       />
-                      <div className="absolute top-2 right-2 px-1.5 py-0.5 rounded-full bg-emerald-500 text-white text-[8px] font-bold">
-                        SPEAKER
-                      </div>
-                    </div>
+                    ) : (
+                      <div className="text-xs text-zinc-500">No video loaded</div>
+                    )}
                   </div>
-                ) : layoutMode === "single-focus" ? (
-                  <div className="relative w-full h-full">
-                    <img
-                      src={clip.thumbnailUrl}
-                      alt="Speaker"
-                      className="w-full h-full object-cover scale-110"
-                    />
+                ) : layoutMode === "split-screen" ? (
+                  <div className="flex-1 flex flex-col h-full bg-black">
+                    <div className="relative flex-1 overflow-hidden border-b border-purple-500/20">
+                      {clip?.videoUrl && (
+                        <video
+                          src={clip.videoUrl}
+                          className="w-full h-full object-cover"
+                          muted={isMuted}
+                          loop
+                        />
+                      )}
+                    </div>
+                    <div className="relative flex-1 overflow-hidden">
+                      {clip?.videoUrl && (
+                        <video
+                          src={clip.videoUrl}
+                          className="w-full h-full object-cover scale-110"
+                          muted={isMuted}
+                          loop
+                        />
+                      )}
+                    </div>
                   </div>
                 ) : (
                   /* Blurred fit */
-                  <div className="relative w-full h-full flex items-center justify-center">
-                    <img
-                      src={clip.thumbnailUrl}
-                      alt="Blur background"
-                      className="absolute inset-0 w-full h-full object-cover blur-xl opacity-50 scale-125"
-                    />
-                    <img
-                      src={clip.thumbnailUrl}
-                      alt="16:9 Center"
-                      className="relative w-full aspect-video object-cover z-10 shadow-2xl"
-                    />
+                  <div className="relative w-full h-full flex items-center justify-center bg-black">
+                    {clip?.videoUrl && (
+                      <>
+                        <video
+                          src={clip.videoUrl}
+                          className="absolute inset-0 w-full h-full object-cover blur-xl opacity-50 scale-125"
+                          muted
+                          loop
+                        />
+                        <video
+                          src={clip.videoUrl}
+                          className="relative w-full aspect-video object-cover z-10 shadow-2xl"
+                          muted={isMuted}
+                          loop
+                        />
+                      </>
+                    )}
                   </div>
                 )}
 
