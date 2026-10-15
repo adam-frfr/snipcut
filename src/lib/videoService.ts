@@ -3,10 +3,16 @@ import ffmpegStatic from "ffmpeg-static";
 import path from "path";
 import fs from "fs";
 
-// Set fluent-ffmpeg binary path to ffmpeg-static bundled executable
-if (ffmpegStatic) {
-  ffmpeg.setFfmpegPath(ffmpegStatic);
+// Set fluent-ffmpeg binary path to local bin/ffmpeg.exe or ffmpeg-static
+function getFfmpegBinary(): string {
+  const localBin = path.join(process.cwd(), "bin", "ffmpeg.exe");
+  if (fs.existsSync(localBin)) {
+    return localBin;
+  }
+  return ffmpegStatic || "ffmpeg";
 }
+
+ffmpeg.setFfmpegPath(getFfmpegBinary());
 
 export interface RenderOptions {
   inputPath: string;
@@ -47,23 +53,23 @@ export async function renderVideoClip({
           "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920",
         ]);
       } else {
-        // Center crop to 9:16 vertical
+        // Center crop to 9:16 vertical reframing
         command = command.videoFilters([
-          "scale=-1:1920,crop=1080:1920:(in_w-1080)/2:0",
+          "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920",
         ]);
       }
     } else if (aspectRatio === "1:1") {
       // 1080x1080 Square
       command = command.videoFilters([
-        "scale=-1:1080,crop=1080:1080:(in_w-1080)/2:0",
+        "scale=1080:1080:force_original_aspect_ratio=increase,crop=1080:1080",
       ]);
     }
 
     command
       .outputOptions([
         "-c:v libx264",
-        "-preset veryfast",
-        "-crf 22",
+        "-preset ultrafast",
+        "-crf 23",
         "-c:a aac",
         "-b:a 192k",
         "-movflags +faststart",

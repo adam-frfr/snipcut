@@ -42,6 +42,44 @@ export function getOpenAIClient(apiKey?: string): OpenAI {
   return new OpenAI({ apiKey: key });
 }
 
+export function extractClipsFromJsonString(rawContent: string): CuratedClipResult[] {
+  const cleaned = rawContent.replace(/```json/g, "").replace(/```/g, "").trim();
+
+  // 1. Direct JSON parse
+  try {
+    const parsed = JSON.parse(cleaned);
+    if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    if (parsed?.clips && Array.isArray(parsed.clips) && parsed.clips.length > 0) return parsed.clips;
+  } catch (e) {}
+
+  // 2. Outermost object match
+  const match = cleaned.match(/\{[\s\S]*\}/);
+  if (match) {
+    try {
+      const parsed = JSON.parse(match[0]);
+      if (parsed?.clips && Array.isArray(parsed.clips) && parsed.clips.length > 0) return parsed.clips;
+    } catch (e) {}
+  }
+
+  // 3. Robust partial JSON recovery: find individual clip objects
+  const clipRegex = /\{[^{}]*"title"[^{}]*"startTime"[^{}]*\}/g;
+  const found = cleaned.match(clipRegex);
+  if (found && found.length > 0) {
+    const recovered: CuratedClipResult[] = [];
+    for (const item of found) {
+      try {
+        const obj = JSON.parse(item);
+        if (obj.title && obj.startTime !== undefined) {
+          recovered.push(obj);
+        }
+      } catch (err) {}
+    }
+    if (recovered.length > 0) return recovered;
+  }
+
+  return [];
+}
+
 /**
  * Prompt Claude or ChatGPT to analyze the full transcript and extract viral golden nuggets
  */
@@ -111,33 +149,14 @@ You MUST respond strictly in valid JSON matching this schema:
         { role: "system", content: systemPrompt },
         {
           role: "user",
-          content: `Here is the video transcript:\n\n${transcriptText}\n\nRespond strictly with JSON containing the "clips" array. Extract at least 1 high-virality clip.`,
+          content: `Here is the video transcript with timestamps:\n\n${transcriptText}\n\nRespond strictly with JSON containing the "clips" array. Extract 2 to 4 top viral short clips.`,
         },
       ],
-      max_tokens: 3000,
+      max_tokens: 4000,
     });
 
     const content = response.choices[0]?.message?.content || "";
-    const cleaned = content.replace(/```json/g, "").replace(/```/g, "").trim();
-    let parsed: any = null;
-    try {
-      parsed = JSON.parse(cleaned);
-    } catch (e) {
-      const match = cleaned.match(/\{[\s\S]*\}|\[[\s\S]*\]/);
-      if (match) {
-        try {
-          parsed = JSON.parse(match[0]);
-        } catch (innerErr) {
-          console.error("JSON parse fallback error:", innerErr);
-        }
-      }
-    }
-
-    if (Array.isArray(parsed)) {
-      clips = parsed;
-    } else if (parsed && Array.isArray(parsed.clips)) {
-      clips = parsed.clips;
-    }
+    clips = extractClipsFromJsonString(content);
   } else {
     // Standard OpenAI
     const client = getOpenAIClient(activeKey);

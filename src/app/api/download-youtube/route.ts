@@ -15,45 +15,89 @@ function getYtDlpCommand() {
 }
 
 /**
- * Simple parser for VTT subtitles into timestamped segments
+ * Parses WebVTT subtitles into clean timecoded narrative blocks and word-level timings
  */
 function parseVttToTranscript(vttContent: string) {
   const lines = vttContent.split(/\r?\n/);
+  const words: { word: string; start: number; end: number }[] = [];
   const segments: { start: number; end: number; text: string }[] = [];
-  let currentStart = 0;
-  let currentEnd = 0;
 
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
-    const timeMatch = line.match(/(\d{2}):(\d{2}):(\d{2})\.(\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})\.(\d{3})/);
-    if (timeMatch) {
-      const h1 = parseInt(timeMatch[1], 10);
-      const m1 = parseInt(timeMatch[2], 10);
-      const s1 = parseInt(timeMatch[3], 10);
-      const ms1 = parseInt(timeMatch[4], 10);
-      currentStart = h1 * 3600 + m1 * 60 + s1 + ms1 / 1000;
+    const line = lines[i];
+    if (line.includes("-->")) {
+      const timeMatch = line.match(
+        /(\d{2}):(\d{2}):(\d{2})\.(\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})\.(\d{3})/
+      );
+      if (timeMatch) {
+        const s =
+          parseInt(timeMatch[1], 10) * 3600 +
+          parseInt(timeMatch[2], 10) * 60 +
+          parseInt(timeMatch[3], 10) +
+          parseInt(timeMatch[4], 10) / 1000;
+        const e =
+          parseInt(timeMatch[5], 10) * 3600 +
+          parseInt(timeMatch[6], 10) * 60 +
+          parseInt(timeMatch[7], 10) +
+          parseInt(timeMatch[8], 10) / 1000;
 
-      const h2 = parseInt(timeMatch[5], 10);
-      const m2 = parseInt(timeMatch[6], 10);
-      const s2 = parseInt(timeMatch[7], 10);
-      const ms2 = parseInt(timeMatch[8], 10);
-      currentEnd = h2 * 3600 + m2 * 60 + s2 + ms2 / 1000;
-
-      // The next lines until empty line are the caption text
-      let textLines = [];
-      i++;
-      while (i < lines.length && lines[i].trim() !== "") {
-        textLines.push(lines[i].trim().replace(/<[^>]*>/g, ""));
         i++;
-      }
-      const text = textLines.join(" ").trim();
-      if (text) {
-        segments.push({ start: currentStart, end: currentEnd, text });
+        let cueText = "";
+        while (i < lines.length && lines[i].trim() !== "") {
+          const raw = lines[i].trim();
+          // Extract newly spoken words from lines containing <c> tags or regular lines
+          if (raw.includes("<c>")) {
+            const clean = raw.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+            if (clean) cueText += (cueText ? " " : "") + clean;
+          } else if (!raw.includes("<") && raw.length > 0 && segments.length === 0) {
+            // Include opening cue
+            cueText += (cueText ? " " : "") + raw;
+          }
+          i++;
+        }
+
+        if (cueText) {
+          segments.push({ start: s, end: e, text: cueText });
+          const parts = cueText.split(/\s+/).filter(Boolean);
+          const duration = Math.max(0.4, e - s);
+          const wordDur = duration / Math.max(1, parts.length);
+          parts.forEach((w, idx) => {
+            words.push({
+              word: w,
+              start: Math.round((s + idx * wordDur) * 100) / 100,
+              end: Math.round((s + (idx + 1) * wordDur) * 100) / 100,
+            });
+          });
+        }
       }
     }
   }
 
-  return segments;
+  // Format into compact timecoded blocks: [00:15] Hello everyone...
+  const blocks: string[] = [];
+  let curBlock = { start: 0, text: "" };
+  for (const seg of segments) {
+    if (seg.start - curBlock.start >= 20 && curBlock.text) {
+      const m = Math.floor(curBlock.start / 60);
+      const sec = Math.floor(curBlock.start % 60);
+      const ts = `[${m < 10 ? "0" : ""}${m}:${sec < 10 ? "0" : ""}${sec}]`;
+      blocks.push(`${ts} ${curBlock.text}`);
+      curBlock = { start: seg.start, text: seg.text };
+    } else {
+      curBlock.text += (curBlock.text ? " " : "") + seg.text;
+    }
+  }
+  if (curBlock.text) {
+    const m = Math.floor(curBlock.start / 60);
+    const sec = Math.floor(curBlock.start % 60);
+    const ts = `[${m < 10 ? "0" : ""}${m}:${sec < 10 ? "0" : ""}${sec}]`;
+    blocks.push(`${ts} ${curBlock.text}`);
+  }
+
+  return {
+    transcriptText: blocks.join("\n"),
+    segments,
+    words,
+  };
 }
 
 export async function POST(req: NextRequest) {
@@ -75,7 +119,7 @@ export async function POST(req: NextRequest) {
     const binDir = path.join(process.cwd(), "bin");
 
     // 1. Download video & write English subtitles with ffmpeg audio/video merging
-    const cmd = `${ytDlp} --ffmpeg-location "${binDir}" -f "bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4]/best" --no-warnings --ignore-errors --write-sub --write-auto-sub --sub-lang "en" --convert-subs vtt --merge-output-format mp4 -o "${outputTemplate}" "${url}"`;
+    const cmd = `${ytDlp} --ffmpeg-location "${binDir}" -f "bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4]/best" --no-warnings --ignore-errors --write-sub --write-auto-sub --sub-lang "en.*,en-orig,en" --convert-subs vtt --merge-output-format mp4 -o "${outputTemplate}" "${url}"`;
 
     await execPromise(cmd, { timeout: 240000 });
 
@@ -98,14 +142,17 @@ export async function POST(req: NextRequest) {
     // Look for downloaded vtt subtitle
     let transcriptText = "";
     let transcriptSegments: { start: number; end: number; text: string }[] = [];
+    let transcriptWords: { word: string; start: number; end: number }[] = [];
 
     const files = fs.readdirSync(downloadDir);
     const subtitleFile = files.find((f) => f.startsWith(filePrefix) && f.endsWith(".vtt"));
     if (subtitleFile) {
       const vttPath = path.join(downloadDir, subtitleFile);
       const vttContent = fs.readFileSync(vttPath, "utf-8");
-      transcriptSegments = parseVttToTranscript(vttContent);
-      transcriptText = transcriptSegments.map((s) => s.text).join(" ");
+      const parsed = parseVttToTranscript(vttContent);
+      transcriptText = parsed.transcriptText;
+      transcriptSegments = parsed.segments;
+      transcriptWords = parsed.words;
     }
 
     return NextResponse.json({
@@ -115,6 +162,7 @@ export async function POST(req: NextRequest) {
       fileName: videoFilename,
       transcriptText,
       transcriptSegments,
+      transcriptWords,
     });
   } catch (err: any) {
     console.error("YouTube download error:", err);

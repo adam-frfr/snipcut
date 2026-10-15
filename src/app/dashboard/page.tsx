@@ -61,6 +61,8 @@ function DashboardContent() {
   const [selectedClip, setSelectedClip] = useState<RealClip | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
+  const [playbackTime, setPlaybackTime] = useState(0);
+  const videoRef = React.useRef<HTMLVideoElement>(null);
 
   // Upload inputs
   const [urlInput, setUrlInput] = useState("");
@@ -73,6 +75,47 @@ function DashboardContent() {
   const [isRendering, setIsRendering] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const [hasServerKey, setHasServerKey] = useState(true);
+
+  // Sync video time when selected clip changes
+  useEffect(() => {
+    if (selectedClip && videoRef.current) {
+      if ((selectedClip as any).renderedVideoUrl) {
+        videoRef.current.currentTime = 0;
+      } else {
+        videoRef.current.currentTime = selectedClip.startTime || 0;
+      }
+      setPlaybackTime(0);
+      if (isPlaying) {
+        videoRef.current.play().catch(() => {});
+      }
+    }
+  }, [selectedClip]);
+
+  const handleTimeUpdate = () => {
+    if (!videoRef.current || !selectedClip) return;
+    const ct = videoRef.current.currentTime;
+    if ((selectedClip as any).renderedVideoUrl) {
+      setPlaybackTime(ct);
+    } else {
+      if (ct < selectedClip.startTime || ct >= selectedClip.endTime) {
+        videoRef.current.currentTime = selectedClip.startTime || 0;
+        setPlaybackTime(0);
+      } else {
+        setPlaybackTime(ct - (selectedClip.startTime || 0));
+      }
+    }
+  };
+
+  const togglePlay = () => {
+    if (!videoRef.current) return;
+    if (isPlaying) {
+      videoRef.current.pause();
+      setIsPlaying(false);
+    } else {
+      videoRef.current.play().catch(() => {});
+      setIsPlaying(true);
+    }
+  };
 
   // 1. Fetch server API key configuration on load and sync to localStorage
   useEffect(() => {
@@ -167,7 +210,7 @@ function DashboardContent() {
         // If subtitles were auto-extracted from YouTube, use them
         if (ytData.transcriptText) {
           fullTranscript = ytData.transcriptText;
-          rawWords = ytData.transcriptSegments || [];
+          rawWords = ytData.transcriptWords || ytData.transcriptSegments || [];
         }
       }
 
@@ -229,7 +272,7 @@ function DashboardContent() {
         throw new Error(analyzeData.error || "AI Virality analysis failed.");
       }
 
-      // Stage 4: Assemble clips
+      // Stage 4: Assemble clips with precise timestamps
       const rawClips = analyzeData.clips || [];
       const generatedClips: RealClip[] = rawClips.map((c: any, index: number) => {
         const clipWords = rawWords.filter(
@@ -244,7 +287,7 @@ function DashboardContent() {
           hookHeadline: c.hookHeadline || "",
           startTime: c.startTime || 0,
           endTime: c.endTime || 30,
-          duration: Math.round(c.endTime - c.startTime),
+          duration: Math.max(5, Math.round(c.endTime - c.startTime)),
           durationFormatted: c.durationFormatted || "0:30",
           viralityScore: c.viralityScore || 92,
           hookStrength: c.hookStrength || 94,
@@ -267,7 +310,30 @@ function DashboardContent() {
         };
       });
 
+      // Stage 5: Auto-render top viral clip to 9:16 vertical MP4 via FFmpeg
       if (generatedClips.length > 0) {
+        setProcessingStage("OpusClip FFmpeg: Precision-trimming and 9:16 vertical reframing...");
+        try {
+          const topClip = generatedClips[0];
+          const renderRes = await fetch("/api/render-clip", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              inputPath: resolvedFilePath,
+              startTime: topClip.startTime,
+              duration: topClip.duration,
+              aspectRatio: "9:16",
+            }),
+          });
+          const renderData = await renderRes.json();
+          if (renderData.success && renderData.downloadUrl) {
+            topClip.videoUrl = renderData.downloadUrl;
+            (topClip as any).renderedVideoUrl = renderData.downloadUrl;
+          }
+        } catch (renderErr) {
+          console.warn("Auto-render notice:", renderErr);
+        }
+
         setClips(generatedClips);
         setSelectedClip(generatedClips[0]);
         localStorage.setItem("opus_user_clips", JSON.stringify(generatedClips));
@@ -307,6 +373,22 @@ function DashboardContent() {
       if (!res.ok || data.error) {
         throw new Error(data.error || "FFmpeg rendering failed");
       }
+
+      // Update clip so preview is permanently the cut MP4
+      const updatedClips = clips.map((c) =>
+        c.id === clip.id
+          ? { ...c, videoUrl: data.downloadUrl, renderedVideoUrl: data.downloadUrl }
+          : c
+      );
+      setClips(updatedClips);
+      if (selectedClip && selectedClip.id === clip.id) {
+        setSelectedClip({
+          ...selectedClip,
+          videoUrl: data.downloadUrl,
+          renderedVideoUrl: data.downloadUrl,
+        } as any);
+      }
+      localStorage.setItem("opus_user_clips", JSON.stringify(updatedClips));
 
       // Trigger actual download of the rendered MP4
       const a = document.createElement("a");
@@ -581,26 +663,68 @@ function DashboardContent() {
                       <div className="relative w-[260px] sm:w-[280px] h-[480px] bg-black rounded-2xl overflow-hidden shadow-2xl border border-white/[0.1] flex flex-col">
                         <div className="relative flex-1 bg-zinc-950 flex flex-col justify-center items-center">
                           <video
-                            src={selectedClip.videoUrl}
+                            ref={videoRef}
+                            src={(selectedClip as any).renderedVideoUrl || selectedClip.videoUrl}
                             className="w-full h-full object-cover"
                             controls={false}
                             muted={isMuted}
-                            autoPlay={isPlaying}
-                            loop
+                            playsInline
+                            onTimeUpdate={handleTimeUpdate}
+                            onEnded={() => {
+                              if (videoRef.current && selectedClip) {
+                                videoRef.current.currentTime = (selectedClip as any).renderedVideoUrl
+                                  ? 0
+                                  : selectedClip.startTime;
+                                videoRef.current.play().catch(() => {});
+                              }
+                            }}
                           />
 
                           {/* Dynamic Subtitles Overlay */}
-                          <div className="absolute bottom-12 inset-x-2 z-30 text-center pointer-events-none">
-                            <div className="inline-block px-3 py-1.5 rounded-xl bg-black/60 backdrop-blur-sm">
-                              <span className="caption-hormozi text-xl text-yellow-300">
-                                {selectedClip.hookHeadline || selectedClip.title}
-                              </span>
+                          <div className="absolute bottom-12 inset-x-2 z-30 text-center pointer-events-none px-2">
+                            <div className="inline-block px-3 py-2 rounded-2xl bg-black/75 backdrop-blur-md border border-white/10 shadow-2xl max-w-[90%]">
+                              {selectedClip.transcript && selectedClip.transcript.length > 0 ? (
+                                (() => {
+                                  const currentWordIndex = selectedClip.transcript.findIndex(
+                                    (w) => playbackTime >= w.start && playbackTime <= w.end
+                                  );
+                                  const activeIdx = currentWordIndex >= 0 ? currentWordIndex : 0;
+                                  const startIdx = Math.max(0, activeIdx - 1);
+                                  const endIdx = Math.min(selectedClip.transcript.length, startIdx + 4);
+                                  const visibleWords = selectedClip.transcript.slice(startIdx, endIdx);
+
+                                  return (
+                                    <div className="flex flex-wrap justify-center items-center gap-1.5">
+                                      {visibleWords.map((w, idx) => {
+                                        const isWordActive =
+                                          playbackTime >= w.start && playbackTime <= w.end;
+                                        return (
+                                          <span
+                                            key={idx}
+                                            className={`caption-hormozi text-base sm:text-lg font-black uppercase tracking-wider transition-all duration-100 ${
+                                              isWordActive
+                                                ? "text-yellow-400 scale-110 drop-shadow-[0_2px_10px_rgba(250,204,21,0.8)]"
+                                                : "text-white"
+                                            }`}
+                                          >
+                                            {w.text}
+                                          </span>
+                                        );
+                                      })}
+                                    </div>
+                                  );
+                                })()
+                              ) : (
+                                <span className="caption-hormozi text-base text-yellow-300 uppercase font-black">
+                                  {selectedClip.hookHeadline || selectedClip.title}
+                                </span>
+                              )}
                             </div>
                           </div>
 
                           {/* Play / Pause overlay */}
                           <button
-                            onClick={() => setIsPlaying(!isPlaying)}
+                            onClick={togglePlay}
                             className="absolute inset-0 flex items-center justify-center bg-black/20 hover:bg-black/40 transition-colors"
                           >
                             {!isPlaying && (
