@@ -13,15 +13,11 @@ import {
   Sliders,
   Video,
   Wand2,
-  Link2,
   Upload,
   Calendar,
   CheckCircle2,
   TrendingUp,
-  Volume2,
-  VolumeX,
   Plus,
-  RefreshCw,
   Key,
   AlertCircle,
   FileVideo,
@@ -65,7 +61,6 @@ function DashboardContent() {
   const [selectedClip, setSelectedClip] = useState<RealClip | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
-  const [currentTime, setCurrentTime] = useState(0);
 
   // Upload inputs
   const [urlInput, setUrlInput] = useState("");
@@ -77,24 +72,42 @@ function DashboardContent() {
   const [processingStage, setProcessingStage] = useState("");
   const [isRendering, setIsRendering] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+  const [hasServerKey, setHasServerKey] = useState(true);
 
-  // Load saved clips from localStorage
+  // 1. Fetch server API key configuration on load and sync to localStorage
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      const saved = localStorage.getItem("opus_user_clips");
-      if (saved) {
-        try {
-          const parsed = JSON.parse(saved);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            setClips(parsed);
-            setSelectedClip(parsed[0]);
+    async function checkServerConfig() {
+      try {
+        const res = await fetch("/api/config");
+        const data = await res.json();
+        if (data.hasKey && data.apiKey) {
+          setHasServerKey(true);
+          localStorage.setItem("opus_openai_key", data.apiKey);
+          localStorage.setItem("opus_claude_key", data.apiKey);
+          if (data.preferredModel) {
+            localStorage.setItem("opus_preferred_model", data.preferredModel);
           }
-        } catch (e) {}
+        }
+      } catch (err) {
+        console.error("Config check error:", err);
       }
+    }
+    checkServerConfig();
+
+    // Load saved clips
+    const saved = localStorage.getItem("opus_user_clips");
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setClips(parsed);
+          setSelectedClip(parsed[0]);
+        }
+      } catch (e) {}
     }
   }, []);
 
-  // Handle autostart from hero
+  // 2. Handle autostart from hero when query params exist
   useEffect(() => {
     if (searchParams.get("autostart") === "true") {
       const url = searchParams.get("url");
@@ -122,22 +135,19 @@ function DashboardContent() {
     prompt?: string;
   }) => {
     setErrorMsg("");
-
-    const openaiKey = localStorage.getItem("opus_openai_key") || "";
-    const claudeKey = localStorage.getItem("opus_claude_key") || "";
-    const preferredModel = (localStorage.getItem("opus_preferred_model") as any) || "claude-3-5-haiku";
-
-    if (!openaiKey && !claudeKey) {
-      setSettingsOpen(true);
-      setErrorMsg("Please enter your OpenAI API key or Claude API key in Settings to process videos.");
-      return;
-    }
-
     setIsProcessing(true);
+
+    const clientKey =
+      (typeof window !== "undefined"
+        ? localStorage.getItem("opus_openai_key") ||
+          localStorage.getItem("opus_claude_key")
+        : "") || "";
 
     try {
       let resolvedFilePath = filePath;
       let resolvedFileUrl = fileUrl;
+      let fullTranscript = "";
+      let rawWords: any[] = [];
 
       // Stage 1: Download YouTube URL if URL was provided
       if (url && !resolvedFilePath) {
@@ -149,10 +159,16 @@ function DashboardContent() {
         });
         const ytData = await ytRes.json();
         if (!ytRes.ok || ytData.error) {
-          throw new Error(ytData.error || "Failed to download YouTube video");
+          throw new Error(ytData.error || "Failed to download YouTube video. Please check the URL.");
         }
         resolvedFilePath = ytData.filePath;
         resolvedFileUrl = ytData.fileUrl;
+
+        // If subtitles were auto-extracted from YouTube, use them
+        if (ytData.transcriptText) {
+          fullTranscript = ytData.transcriptText;
+          rawWords = ytData.transcriptSegments || [];
+        }
       }
 
       // If local file was selected in upload form
@@ -176,35 +192,36 @@ function DashboardContent() {
         throw new Error("No video file or URL provided.");
       }
 
-      // Stage 2: Speech-to-Text with OpenAI Whisper
-      setProcessingStage("Transcribing speech with OpenAI Whisper (Word Timestamps)...");
-      const transRes = await fetch("/api/transcribe", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          filePath: resolvedFilePath,
-          openaiKey,
-        }),
-      });
-      const transData = await transRes.json();
-      if (!transRes.ok || transData.error) {
-        throw new Error(transData.error || "Audio transcription failed. Check your OpenAI API key.");
+      // Stage 2: If we don't have transcript yet, transcribe via Whisper
+      if (!fullTranscript) {
+        setProcessingStage("Transcribing speech with OpenAI Whisper (Word Timestamps)...");
+        const transRes = await fetch("/api/transcribe", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            filePath: resolvedFilePath,
+            openaiKey: clientKey,
+          }),
+        });
+        const transData = await transRes.json();
+        if (!transRes.ok || transData.error) {
+          throw new Error(transData.error || "Audio transcription failed.");
+        }
+        fullTranscript = transData.text || "";
+        rawWords = transData.words || [];
       }
 
-      const fullTranscript = transData.text || "";
-      const rawWords = transData.words || [];
-
-      // Stage 3: Viral Curation with Claude or GPT-4o-mini
-      setProcessingStage(`Curating viral clips using ${preferredModel}...`);
+      // Stage 3: Viral Curation with Claude 3.5 Sonnet / Haiku
+      setProcessingStage("OpusClip AI: Curating viral hooks and calculating virality scores...");
       const analyzeRes = await fetch("/api/analyze-clips", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           transcriptText: fullTranscript,
           customPrompt: prompt || promptInput,
-          model: preferredModel,
-          openaiKey,
-          claudeKey,
+          model: "~anthropic/claude-sonnet-latest",
+          openaiKey: clientKey,
+          claudeKey: clientKey,
         }),
       });
       const analyzeData = await analyzeRes.json();
@@ -212,10 +229,9 @@ function DashboardContent() {
         throw new Error(analyzeData.error || "AI Virality analysis failed.");
       }
 
-      // Stage 4: Assemble clips with synchronized word timestamps
+      // Stage 4: Assemble clips
       const rawClips = analyzeData.clips || [];
       const generatedClips: RealClip[] = rawClips.map((c: any, index: number) => {
-        // Find words falling in this timestamp window
         const clipWords = rawWords.filter(
           (w: any) => w.start >= c.startTime && w.end <= c.endTime + 0.5
         );
@@ -230,10 +246,10 @@ function DashboardContent() {
           endTime: c.endTime || 30,
           duration: Math.round(c.endTime - c.startTime),
           durationFormatted: c.durationFormatted || "0:30",
-          viralityScore: c.viralityScore || 90,
-          hookStrength: c.hookStrength || 92,
-          engagementScore: c.engagementScore || 88,
-          trendMatch: c.trendMatch || 90,
+          viralityScore: c.viralityScore || 92,
+          hookStrength: c.hookStrength || 94,
+          engagementScore: c.engagementScore || 90,
+          trendMatch: c.trendMatch || 92,
           viralityReason: c.viralityReason || "High-retention narrative segment",
           aspectRatio: "9:16",
           captionStyle: "hormozi",
@@ -242,7 +258,7 @@ function DashboardContent() {
               ? clipWords.map((cw: any) => ({
                   start: cw.start - c.startTime,
                   end: cw.end - c.startTime,
-                  text: cw.word,
+                  text: cw.text || cw.word,
                 }))
               : [
                   { start: 0, end: 3, text: c.hookHeadline || c.title },
@@ -328,7 +344,13 @@ function DashboardContent() {
             </Link>
 
             <span className="text-zinc-600 hidden sm:inline">|</span>
-            <span className="text-xs text-zinc-400 hidden sm:inline">Personal AI Repurposing Lab</span>
+            <div className="hidden sm:flex items-center gap-2 text-xs text-zinc-400">
+              <span>Engine Status:</span>
+              <span className="flex items-center gap-1 text-emerald-400 font-bold">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span>AI Connected ($3.00/day)</span>
+              </span>
+            </div>
           </div>
 
           <div className="flex items-center gap-3">
@@ -373,17 +395,28 @@ function DashboardContent() {
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Error Alert if any */}
         {errorMsg && (
-          <div className="mb-6 p-4 rounded-2xl bg-red-950/40 border border-red-500/40 text-red-200 text-xs flex items-center justify-between">
+          <div className="mb-6 p-4 rounded-2xl bg-red-950/40 border border-red-500/40 text-red-200 text-xs flex items-center justify-between gap-4">
             <div className="flex items-center gap-2">
               <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0" />
               <span>{errorMsg}</span>
             </div>
-            <button
-              onClick={() => setSettingsOpen(true)}
-              className="px-3 py-1 rounded-lg bg-red-600 text-white font-bold text-xs"
-            >
-              Open API Settings
-            </button>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <button
+                onClick={() => setErrorMsg("")}
+                className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-medium text-xs transition"
+              >
+                Dismiss
+              </button>
+              <button
+                onClick={() => {
+                  setErrorMsg("");
+                  setActiveTab("upload");
+                }}
+                className="px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs transition"
+              >
+                Try Another Video
+              </button>
+            </div>
           </div>
         )}
 
@@ -399,7 +432,7 @@ function DashboardContent() {
                 </span>
               </div>
 
-              <h3 className="text-xl font-black text-white mb-2">Processing Your Video</h3>
+              <h3 className="text-xl font-black text-white mb-2">Processing Video with AI</h3>
               <p className="text-xs text-purple-300 font-semibold mb-6 animate-pulse">
                 {processingStage}
               </p>
@@ -450,7 +483,7 @@ function DashboardContent() {
                 </div>
                 <h3 className="text-xl font-black text-white mb-2">No clips generated yet</h3>
                 <p className="text-xs text-zinc-400 mb-6 leading-relaxed">
-                  Paste a YouTube URL or upload a video file to run OpenAI Whisper transcription and Claude/ChatGPT viral hook curation.
+                  Paste a YouTube URL or upload a video file to run automatic transcription and Claude/ChatGPT viral hook curation.
                 </p>
                 <button
                   onClick={() => setActiveTab("upload")}

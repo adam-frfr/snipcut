@@ -31,16 +31,41 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
   } | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
-  // Load keys from localStorage on mount
+  // Load keys from localStorage or server config on mount & on open
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      const storedOpenai = localStorage.getItem("opus_openai_key") || "";
-      const storedClaude = localStorage.getItem("opus_claude_key") || "";
-      const storedModel = (localStorage.getItem("opus_preferred_model") as any) || "claude-3-5-haiku";
+    async function loadConfig() {
+      let storedOpenai = "";
+      let storedClaude = "";
+      let storedModel = "claude-3-5-haiku";
+
+      if (typeof window !== "undefined") {
+        storedOpenai = localStorage.getItem("opus_openai_key") || "";
+        storedClaude = localStorage.getItem("opus_claude_key") || "";
+        storedModel = (localStorage.getItem("opus_preferred_model") as any) || "claude-3-5-haiku";
+      }
+
+      // If empty in localStorage, fetch from server .env.local
+      if (!storedOpenai || !storedClaude) {
+        try {
+          const res = await fetch("/api/config");
+          const data = await res.json();
+          if (data.apiKey) {
+            storedOpenai = storedOpenai || data.apiKey;
+            storedClaude = storedClaude || data.apiKey;
+            if (typeof window !== "undefined") {
+              localStorage.setItem("opus_openai_key", storedOpenai);
+              localStorage.setItem("opus_claude_key", storedClaude);
+            }
+          }
+        } catch (e) {}
+      }
+
       setOpenaiKey(storedOpenai);
       setClaudeKey(storedClaude);
-      setPreferredModel(storedModel);
+      setPreferredModel(storedModel as any);
     }
+
+    loadConfig();
   }, [isOpen]);
 
   if (!isOpen) return null;

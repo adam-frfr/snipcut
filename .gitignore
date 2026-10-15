@@ -2,6 +2,7 @@
 
 # dependencies
 /node_modules
+/bin
 /.pnp
 .pnp.*
 .yarn/*
@@ -23,6 +24,12 @@
 # misc
 .DS_Store
 *.pem
+/public/downloads/*
+!/public/downloads/.gitkeep
+/public/extracted_audio/*
+!/public/extracted_audio/.gitkeep
+/public/rendered_clips/*
+!/public/rendered_clips/.gitkeep
 
 # debug
 npm-debug.log*
