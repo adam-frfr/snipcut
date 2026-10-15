@@ -30,9 +30,21 @@ export interface RenderOptions {
   captionStyle?: "hormozi" | "neon" | "beast" | "clean";
 }
 
+export interface FocusShot {
+  start: number;
+  end: number;
+  position: "left" | "center" | "right";
+  subject_center_x?: number;
+  crop_x: number;
+  label: string;
+  details: string;
+}
+
 export interface TrackingResult {
   status: "success" | "error";
   mode: string;
+  isDynamic?: boolean;
+  shots?: FocusShot[];
   filter_type: "vf" | "filter_complex";
   filter_value: string;
   subject_center_x?: number;

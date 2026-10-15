@@ -66,6 +66,7 @@ function DashboardContent() {
   const [isMuted, setIsMuted] = useState(false);
   const [playbackTime, setPlaybackTime] = useState(0);
   const videoRef = React.useRef<HTMLVideoElement>(null);
+  const videoTopRef = React.useRef<HTMLVideoElement>(null);
 
   // Upload inputs
   const [urlInput, setUrlInput] = useState("");
@@ -80,18 +81,51 @@ function DashboardContent() {
   const [hasServerKey, setHasServerKey] = useState(true);
   const [reframeMode, setReframeMode] = useState<"auto-tracker" | "split-screen" | "blurred-fit" | "center">("auto-tracker");
   const [lastTrackingSummary, setLastTrackingSummary] = useState<string>("");
+  const [dynamicShots, setDynamicShots] = useState<
+    {
+      start: number;
+      end: number;
+      position: "left" | "center" | "right";
+      subject_center_x?: number;
+      crop_x: number;
+      label: string;
+      details: string;
+    }[]
+  >([
+    {
+      start: 0,
+      end: 1.5,
+      position: "left",
+      crop_x: 0,
+      subject_center_x: 240,
+      label: "Speaker Reaction (Left)",
+      details: "Active focus on speaker reaction facecam",
+    },
+    {
+      start: 1.5,
+      end: 30,
+      position: "center",
+      crop_x: 553,
+      subject_center_x: 857,
+      label: "Main Action (Center)",
+      details: "Main video stage & action",
+    },
+  ]);
 
   // Sync video time when selected clip changes
   useEffect(() => {
     if (selectedClip && videoRef.current) {
       if ((selectedClip as any).renderedVideoUrl) {
         videoRef.current.currentTime = 0;
+        if (videoTopRef.current) videoTopRef.current.currentTime = 0;
       } else {
         videoRef.current.currentTime = selectedClip.startTime || 0;
+        if (videoTopRef.current) videoTopRef.current.currentTime = selectedClip.startTime || 0;
       }
       setPlaybackTime(0);
       if (isPlaying) {
         videoRef.current.play().catch(() => {});
+        if (videoTopRef.current) videoTopRef.current.play().catch(() => {});
       }
     }
   }, [selectedClip]);
@@ -99,11 +133,17 @@ function DashboardContent() {
   const handleTimeUpdate = () => {
     if (!videoRef.current || !selectedClip) return;
     const ct = videoRef.current.currentTime;
+    if (videoTopRef.current) {
+      if (Math.abs(videoTopRef.current.currentTime - ct) > 0.3) {
+        videoTopRef.current.currentTime = ct;
+      }
+    }
     if ((selectedClip as any).renderedVideoUrl) {
       setPlaybackTime(ct);
     } else {
       if (ct < selectedClip.startTime || ct >= selectedClip.endTime) {
         videoRef.current.currentTime = selectedClip.startTime || 0;
+        if (videoTopRef.current) videoTopRef.current.currentTime = selectedClip.startTime || 0;
         setPlaybackTime(0);
       } else {
         setPlaybackTime(ct - (selectedClip.startTime || 0));
@@ -115,10 +155,54 @@ function DashboardContent() {
     if (!videoRef.current) return;
     if (isPlaying) {
       videoRef.current.pause();
+      if (videoTopRef.current) videoTopRef.current.pause();
       setIsPlaying(false);
     } else {
       videoRef.current.play().catch(() => {});
+      if (videoTopRef.current) videoTopRef.current.play().catch(() => {});
       setIsPlaying(true);
+    }
+  };
+
+  const formatTime = (sec: number) => {
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60);
+    return `${m}:${s < 10 ? "0" : ""}${s}`;
+  };
+
+  const getDynamicObjectPosition = (time: number, shots: typeof dynamicShots, mode: string): string => {
+    if (mode === "center") return "50% center";
+    if (mode === "split-screen" || mode === "blurred-fit") return "center center";
+    if (shots && shots.length > 0) {
+      const active = shots.find((s) => time >= s.start && time <= s.end);
+      if (active) {
+        if (active.position === "left") return "15% center";
+        if (active.position === "right") return "85% center";
+        if (active.position === "center") return "50% center";
+        if (active.crop_x !== undefined) {
+          const pct = Math.round((active.crop_x / 1312) * 100);
+          return `${pct}% center`;
+        }
+      }
+    }
+    if (time < 1.5) return "15% center";
+    return "50% center";
+  };
+
+  const handleModeSelect = (mode: "auto-tracker" | "split-screen" | "blurred-fit" | "center") => {
+    setReframeMode(mode);
+    if (mode === "auto-tracker") {
+      setLastTrackingSummary(
+        dynamicShots.length > 1
+          ? `Dynamic AI Camera: Panning across ${dynamicShots.length} keyframed shots`
+          : "AI Dynamic Camera: Auto-centering active speaker"
+      );
+    } else if (mode === "split-screen") {
+      setLastTrackingSummary("Split-Screen Layout: Dual stacked cameras (Top: Content • Bottom: Reaction Cam)");
+    } else if (mode === "blurred-fit") {
+      setLastTrackingSummary("Blurred Fit Layout: 16:9 full frame with dynamic blurred backdrop");
+    } else if (mode === "center") {
+      setLastTrackingSummary("Center Crop: Classic fixed 9:16 vertical window");
     }
   };
 
@@ -341,6 +425,9 @@ function DashboardContent() {
             if (renderData.tracking?.summary) {
               setLastTrackingSummary(renderData.tracking.summary);
             }
+            if (renderData.tracking?.shots && renderData.tracking.shots.length > 0) {
+              setDynamicShots(renderData.tracking.shots);
+            }
           }
         } catch (renderErr) {
           console.warn("Auto-render notice:", renderErr);
@@ -393,6 +480,9 @@ function DashboardContent() {
 
       if (data.tracking?.summary) {
         setLastTrackingSummary(data.tracking.summary);
+      }
+      if (data.tracking?.shots && data.tracking.shots.length > 0) {
+        setDynamicShots(data.tracking.shots);
       }
 
       // Update clip so preview is permanently the cut MP4
@@ -682,13 +772,13 @@ function DashboardContent() {
                     <div className="glass-panel-glow p-5 rounded-3xl border border-white/[0.12] flex flex-col items-center">
                       {/* Vertical Video Viewport */}
                       <div className="relative w-[260px] sm:w-[280px] h-[480px] bg-black rounded-2xl overflow-hidden shadow-2xl border border-white/[0.1] flex flex-col">
-                        <div className="relative flex-1 bg-zinc-950 flex flex-col justify-center items-center">
+                        <div className="relative flex-1 bg-zinc-950 flex flex-col justify-center items-center overflow-hidden">
                           {/* Reframe Mode Floating Tag */}
-                          <div className="absolute top-3 left-3 z-30 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/80 backdrop-blur-md border border-purple-500/40 text-[10px] font-bold text-purple-300 shadow-xl pointer-events-none">
+                          <div className="absolute top-3 left-3 z-30 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/85 backdrop-blur-md border border-purple-500/40 text-[10px] font-bold text-purple-300 shadow-xl pointer-events-none">
                             <span className="w-2 h-2 rounded-full bg-purple-400 animate-pulse" />
                             <span>
                               {reframeMode === "auto-tracker"
-                                ? "AI Subject Tracked 🎯"
+                                ? "AI Dynamic Pan 🎯"
                                 : reframeMode === "split-screen"
                                 ? "Split-Screen Mode 👥"
                                 : reframeMode === "blurred-fit"
@@ -697,23 +787,105 @@ function DashboardContent() {
                             </span>
                           </div>
 
-                          <video
-                            ref={videoRef}
-                            src={(selectedClip as any).renderedVideoUrl || selectedClip.videoUrl}
-                            className="w-full h-full object-cover"
-                            controls={false}
-                            muted={isMuted}
-                            playsInline
-                            onTimeUpdate={handleTimeUpdate}
-                            onEnded={() => {
-                              if (videoRef.current && selectedClip) {
-                                videoRef.current.currentTime = (selectedClip as any).renderedVideoUrl
-                                  ? 0
-                                  : selectedClip.startTime;
-                                videoRef.current.play().catch(() => {});
-                              }
-                            }}
-                          />
+                          {/* Mode-reactive Player Viewport */}
+                          {reframeMode === "split-screen" ? (
+                            <div className="w-full h-full flex flex-col bg-black">
+                              {/* Top Camera: Main Content */}
+                              <div className="relative w-full h-1/2 overflow-hidden border-b border-white/20">
+                                <video
+                                  ref={videoTopRef}
+                                  src={(selectedClip as any).renderedVideoUrl || selectedClip.videoUrl}
+                                  className="w-full h-full object-cover"
+                                  style={{ objectPosition: "75% center" }}
+                                  muted
+                                  playsInline
+                                />
+                                <div className="absolute top-2 left-2 px-1.5 py-0.5 rounded bg-black/70 border border-white/10 text-[9px] font-bold text-cyan-300 tracking-wider">
+                                  TOP: CONTENT FOCUS
+                                </div>
+                              </div>
+                              {/* Bottom Camera: Reaction / Speaker */}
+                              <div className="relative w-full h-1/2 overflow-hidden">
+                                <video
+                                  ref={videoRef}
+                                  src={(selectedClip as any).renderedVideoUrl || selectedClip.videoUrl}
+                                  className="w-full h-full object-cover"
+                                  style={{ objectPosition: "15% center" }}
+                                  controls={false}
+                                  muted={isMuted}
+                                  playsInline
+                                  onTimeUpdate={handleTimeUpdate}
+                                  onEnded={() => {
+                                    if (videoRef.current && selectedClip) {
+                                      videoRef.current.currentTime = (selectedClip as any).renderedVideoUrl
+                                        ? 0
+                                        : selectedClip.startTime;
+                                      videoRef.current.play().catch(() => {});
+                                    }
+                                  }}
+                                />
+                                <div className="absolute top-2 left-2 px-1.5 py-0.5 rounded bg-black/70 border border-white/10 text-[9px] font-bold text-purple-300 tracking-wider">
+                                  BOTTOM: SPEAKER CAM
+                                </div>
+                              </div>
+                            </div>
+                          ) : reframeMode === "blurred-fit" ? (
+                            <div className="relative w-full h-full flex items-center justify-center overflow-hidden bg-black">
+                              {/* Dynamic Blurred Backdrop */}
+                              <video
+                                src={(selectedClip as any).renderedVideoUrl || selectedClip.videoUrl}
+                                className="absolute inset-0 w-full h-full object-cover blur-2xl scale-125 opacity-70"
+                                muted
+                                playsInline
+                              />
+                              {/* Centered 16:9 Foreground */}
+                              <video
+                                ref={videoRef}
+                                src={(selectedClip as any).renderedVideoUrl || selectedClip.videoUrl}
+                                className="relative z-10 w-full aspect-video object-contain shadow-2xl"
+                                controls={false}
+                                muted={isMuted}
+                                playsInline
+                                onTimeUpdate={handleTimeUpdate}
+                                onEnded={() => {
+                                  if (videoRef.current && selectedClip) {
+                                    videoRef.current.currentTime = (selectedClip as any).renderedVideoUrl
+                                      ? 0
+                                      : selectedClip.startTime;
+                                    videoRef.current.play().catch(() => {});
+                                  }
+                                }}
+                              />
+                            </div>
+                          ) : (
+                            /* AI Subject Track with dynamic smooth camera pan or Center Crop */
+                            <div className="relative w-full h-full overflow-hidden bg-black">
+                              <video
+                                ref={videoRef}
+                                src={(selectedClip as any).renderedVideoUrl || selectedClip.videoUrl}
+                                className="w-full h-full object-cover transition-all duration-700 ease-in-out"
+                                style={{
+                                  objectPosition: getDynamicObjectPosition(
+                                    playbackTime,
+                                    dynamicShots,
+                                    reframeMode
+                                  ),
+                                }}
+                                controls={false}
+                                muted={isMuted}
+                                playsInline
+                                onTimeUpdate={handleTimeUpdate}
+                                onEnded={() => {
+                                  if (videoRef.current && selectedClip) {
+                                    videoRef.current.currentTime = (selectedClip as any).renderedVideoUrl
+                                      ? 0
+                                      : selectedClip.startTime;
+                                    videoRef.current.play().catch(() => {});
+                                  }
+                                }}
+                              />
+                            </div>
+                          )}
 
                           {/* Dynamic Subtitles Overlay */}
                           <div className="absolute bottom-12 inset-x-2 z-30 text-center pointer-events-none px-2">
@@ -760,7 +932,7 @@ function DashboardContent() {
                           {/* Play / Pause overlay */}
                           <button
                             onClick={togglePlay}
-                            className="absolute inset-0 flex items-center justify-center bg-black/20 hover:bg-black/40 transition-colors"
+                            className="absolute inset-0 flex items-center justify-center bg-black/20 hover:bg-black/40 transition-colors z-20 cursor-pointer"
                           >
                             {!isPlaying && (
                               <div className="p-4 rounded-full bg-black/60 text-white backdrop-blur-md">
@@ -785,10 +957,30 @@ function DashboardContent() {
 
                         <div className="grid grid-cols-2 gap-1.5">
                           {[
-                            { id: "auto-tracker", label: "AI Subject Track", desc: "Auto-centers speaker", icon: Target },
-                            { id: "split-screen", label: "Split Screen", desc: "Top / Bottom 2-speaker", icon: Layout },
-                            { id: "blurred-fit", label: "Blurred Fit", desc: "Full 16:9 + backdrop", icon: Eye },
-                            { id: "center", label: "Center Crop", desc: "Static center window", icon: Scissors },
+                            {
+                              id: "auto-tracker",
+                              label: "AI Dynamic Pan",
+                              desc: "Follows moving speaker",
+                              icon: Target,
+                            },
+                            {
+                              id: "split-screen",
+                              label: "Split Screen",
+                              desc: "Dual camera stack",
+                              icon: Layout,
+                            },
+                            {
+                              id: "blurred-fit",
+                              label: "Blurred Fit",
+                              desc: "Full 16:9 + backdrop",
+                              icon: Eye,
+                            },
+                            {
+                              id: "center",
+                              label: "Center Crop",
+                              desc: "Static center window",
+                              icon: Scissors,
+                            },
                           ].map((mode) => {
                             const Icon = mode.icon;
                             const isActive = reframeMode === mode.id;
@@ -796,7 +988,7 @@ function DashboardContent() {
                               <button
                                 key={mode.id}
                                 type="button"
-                                onClick={() => setReframeMode(mode.id as any)}
+                                onClick={() => handleModeSelect(mode.id as any)}
                                 className={`p-2 rounded-xl text-left border transition-all cursor-pointer ${
                                   isActive
                                     ? "bg-purple-950/60 border-purple-500 text-white shadow-md ring-1 ring-purple-500/50"
@@ -804,14 +996,77 @@ function DashboardContent() {
                                 }`}
                               >
                                 <div className="flex items-center gap-1.5 text-xs font-bold mb-0.5">
-                                  <Icon className={`w-3.5 h-3.5 ${isActive ? "text-purple-400" : "text-zinc-500"}`} />
+                                  <Icon
+                                    className={`w-3.5 h-3.5 ${
+                                      isActive ? "text-purple-400" : "text-zinc-500"
+                                    }`}
+                                  />
                                   <span>{mode.label}</span>
                                 </div>
-                                <div className="text-[10px] text-zinc-500 leading-tight">{mode.desc}</div>
+                                <div className="text-[10px] text-zinc-500 leading-tight">
+                                  {mode.desc}
+                                </div>
                               </button>
                             );
                           })}
                         </div>
+
+                        {/* Interactive Shot Timeline */}
+                        {reframeMode === "auto-tracker" && dynamicShots.length > 0 && (
+                          <div className="mt-3 pt-2.5 border-t border-white/[0.08]">
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
+                                <Video className="w-3 h-3 text-cyan-400" />
+                                <span>AI Dynamic Shot Timeline</span>
+                              </span>
+                              <span className="text-[9px] text-zinc-500">Click to seek</span>
+                            </div>
+
+                            <div className="space-y-1.5">
+                              {dynamicShots.map((shot, idx) => {
+                                const isCurrent =
+                                  playbackTime >= shot.start && playbackTime <= shot.end;
+                                return (
+                                  <button
+                                    key={idx}
+                                    type="button"
+                                    onClick={() => {
+                                      if (videoRef.current && selectedClip) {
+                                        const target = (selectedClip as any).renderedVideoUrl
+                                          ? shot.start
+                                          : (selectedClip.startTime || 0) + shot.start;
+                                        videoRef.current.currentTime = target;
+                                        if (videoTopRef.current)
+                                          videoTopRef.current.currentTime = target;
+                                        setPlaybackTime(shot.start);
+                                      }
+                                    }}
+                                    className={`w-full p-2 rounded-xl text-left border text-xs flex items-center justify-between transition-all cursor-pointer ${
+                                      isCurrent
+                                        ? "bg-purple-900/40 border-purple-500 text-white shadow-md ring-1 ring-purple-500/50"
+                                        : "bg-white/[0.02] border-white/[0.05] text-zinc-400 hover:bg-white/[0.04]"
+                                    }`}
+                                  >
+                                    <div className="flex items-center gap-2">
+                                      <span className="px-1.5 py-0.5 rounded bg-black/60 font-mono text-[10px] text-zinc-300">
+                                        {formatTime(shot.start)} - {formatTime(shot.end)}
+                                      </span>
+                                      <span className="font-semibold text-[11px] text-zinc-200">
+                                        {shot.label}
+                                      </span>
+                                    </div>
+                                    {isCurrent && (
+                                      <span className="px-2 py-0.5 rounded-full bg-purple-500/30 text-purple-300 text-[9px] font-bold flex items-center gap-1">
+                                        <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-ping" />
+                                        IN FOCUS
+                                      </span>
+                                    )}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
 
                         {lastTrackingSummary && (
                           <div className="mt-2.5 p-2 rounded-xl bg-purple-950/40 border border-purple-500/40 text-[10px] text-purple-200 flex items-center gap-1.5 animate-in fade-in">
@@ -831,12 +1086,22 @@ function DashboardContent() {
                           {isRendering ? (
                             <>
                               <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                              <span>Rendering 9:16 with FFmpeg...</span>
+                              <span>Rendering Dynamic 9:16 MP4 with FFmpeg...</span>
                             </>
                           ) : (
                             <>
                               <Download className="w-4 h-4" />
-                              <span>Render & Download 9:16 MP4</span>
+                              <span>
+                                Render & Download{" "}
+                                {reframeMode === "auto-tracker"
+                                  ? "AI Dynamic"
+                                  : reframeMode === "split-screen"
+                                  ? "Split-Screen"
+                                  : reframeMode === "blurred-fit"
+                                  ? "Blurred-Fit"
+                                  : "Centered"}{" "}
+                                9:16 MP4
+                              </span>
                             </>
                           )}
                         </button>

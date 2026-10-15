@@ -454,11 +454,14 @@ function EditorContent() {
               {/* Video Content Layer according to layout */}
               <div className="relative flex-1 bg-zinc-950 overflow-hidden flex flex-col">
                 {layoutMode === "single-focus" ? (
-                  <div className="relative w-full h-full flex items-center justify-center bg-black">
+                  <div className="relative w-full h-full flex items-center justify-center bg-black overflow-hidden">
                     {clip?.videoUrl ? (
                       <video
                         src={clip.videoUrl}
-                        className="w-full h-full object-cover scale-105"
+                        className="w-full h-full object-cover transition-all duration-700 ease-in-out"
+                        style={{
+                          objectPosition: currentTime < 1.5 ? "15% center" : "50% center",
+                        }}
                         muted={isMuted}
                         loop
                         playsInline
@@ -477,39 +480,51 @@ function EditorContent() {
                   <div className="flex-1 flex flex-col h-full bg-black">
                     <div className="relative flex-1 overflow-hidden border-b border-purple-500/20">
                       {clip?.videoUrl && (
-                        <video
-                          src={clip.videoUrl}
-                          className="w-full h-full object-cover"
-                          muted={isMuted}
-                          loop
-                        />
+                        <>
+                          <video
+                            src={clip.videoUrl}
+                            className="w-full h-full object-cover"
+                            style={{ objectPosition: "75% center" }}
+                            muted
+                            loop
+                          />
+                          <div className="absolute top-2 left-2 px-1.5 py-0.5 rounded bg-black/70 border border-white/10 text-[8px] font-bold text-cyan-300">
+                            TOP: MAIN CONTENT
+                          </div>
+                        </>
                       )}
                     </div>
                     <div className="relative flex-1 overflow-hidden">
                       {clip?.videoUrl && (
-                        <video
-                          src={clip.videoUrl}
-                          className="w-full h-full object-cover scale-110"
-                          muted={isMuted}
-                          loop
-                        />
+                        <>
+                          <video
+                            src={clip.videoUrl}
+                            className="w-full h-full object-cover"
+                            style={{ objectPosition: "15% center" }}
+                            muted={isMuted}
+                            loop
+                          />
+                          <div className="absolute top-2 left-2 px-1.5 py-0.5 rounded bg-black/70 border border-white/10 text-[8px] font-bold text-purple-300">
+                            BOTTOM: REACTION CAM
+                          </div>
+                        </>
                       )}
                     </div>
                   </div>
                 ) : (
                   /* Blurred fit */
-                  <div className="relative w-full h-full flex items-center justify-center bg-black">
+                  <div className="relative w-full h-full flex items-center justify-center bg-black overflow-hidden">
                     {clip?.videoUrl && (
                       <>
                         <video
                           src={clip.videoUrl}
-                          className="absolute inset-0 w-full h-full object-cover blur-xl opacity-50 scale-125"
+                          className="absolute inset-0 w-full h-full object-cover blur-2xl opacity-60 scale-125"
                           muted
                           loop
                         />
                         <video
                           src={clip.videoUrl}
-                          className="relative w-full aspect-video object-cover z-10 shadow-2xl"
+                          className="relative w-full aspect-video object-contain z-10 shadow-2xl"
                           muted={isMuted}
                           loop
                         />
