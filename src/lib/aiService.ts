@@ -1,5 +1,4 @@
 import OpenAI from "openai";
-import Anthropic from "@anthropic-ai/sdk";
 
 export interface WordTimestamp {
   word: string;
@@ -22,24 +21,29 @@ export interface CuratedClipResult {
   suggestedEmojis: string[];
 }
 
+export function isHackClubKey(key: string): boolean {
+  return key.trim().startsWith("sk-hc-v1-");
+}
+
 export function getOpenAIClient(apiKey?: string): OpenAI {
-  const key = apiKey || process.env.OPENAI_API_KEY;
+  const key = (apiKey || process.env.OPENAI_API_KEY || "").trim();
   if (!key) {
-    throw new Error("OpenAI API key is missing. Please provide it in Settings or .env.local");
+    throw new Error("API key is missing. Please provide it in Settings or .env.local");
   }
+
+  // If it's a HackClub AI key, route through HackClub OpenAI-compatible proxy
+  if (isHackClubKey(key)) {
+    return new OpenAI({
+      apiKey: key,
+      baseURL: "https://ai.hackclub.com/proxy/v1",
+    });
+  }
+
   return new OpenAI({ apiKey: key });
 }
 
-export function getAnthropicClient(apiKey?: string): Anthropic {
-  const key = apiKey || process.env.ANTHROPIC_API_KEY;
-  if (!key) {
-    throw new Error("Anthropic Claude API key is missing. Please provide it in Settings or .env.local");
-  }
-  return new Anthropic({ apiKey: key });
-}
-
 /**
- * Prompt Claude or GPT-4o-mini to analyze the full transcript and extract viral golden nuggets
+ * Prompt Claude or ChatGPT to analyze the full transcript and extract viral golden nuggets
  */
 export async function analyzeTranscriptForViralClips({
   transcriptText,
@@ -52,10 +56,12 @@ export async function analyzeTranscriptForViralClips({
   transcriptText: string;
   words?: WordTimestamp[];
   customPrompt?: string;
-  model?: "claude-3-5-haiku" | "gpt-4o-mini" | "claude-3-5-sonnet";
+  model?: string;
   openaiKey?: string;
   claudeKey?: string;
 }): Promise<CuratedClipResult[]> {
+  const activeKey = (openaiKey || claudeKey || process.env.OPENAI_API_KEY || process.env.ANTHROPIC_API_KEY || "").trim();
+
   const systemPrompt = `You are OpusClip AI, the world's #1 video curation intelligence algorithm for TikTok, YouTube Shorts, and Instagram Reels.
 Your task is to analyze long-form video transcripts and extract 3 to 6 standalone viral short clips.
 
@@ -87,49 +93,51 @@ You MUST respond strictly in valid JSON matching this schema:
   ]
 }`;
 
-  if (model.startsWith("claude") && (claudeKey || process.env.ANTHROPIC_API_KEY)) {
-    const anthropic = getAnthropicClient(claudeKey);
-    const selectedModel = model === "claude-3-5-sonnet" ? "claude-3-5-sonnet-20241022" : "claude-3-5-haiku-20241022";
-    
-    const response = await anthropic.messages.create({
-      model: selectedModel,
-      max_tokens: 3000,
-      system: systemPrompt,
+  if (isHackClubKey(activeKey)) {
+    // Map to Hack Club available model IDs
+    let targetModel = "~anthropic/claude-sonnet-latest";
+    if (model.includes("haiku")) {
+      targetModel = "~anthropic/claude-haiku-latest";
+    } else if (model.includes("gpt") || model.includes("mini")) {
+      targetModel = "~openai/gpt-mini-latest";
+    }
+
+    const client = getOpenAIClient(activeKey);
+    const response = await client.chat.completions.create({
+      model: targetModel,
       messages: [
+        { role: "system", content: systemPrompt },
         {
           role: "user",
-          content: `Here is the full video transcript:\n\n${transcriptText}\n\nExtract the highest potential viral shorts with timestamps.`,
+          content: `Here is the video transcript:\n\n${transcriptText}\n\nRespond strictly with JSON containing the "clips" array.`,
         },
       ],
+      max_tokens: 3000,
     });
 
-    const contentText = response.content
-      .filter((c) => c.type === "text")
-      .map((c) => (c as any).text)
-      .join("\n");
-
-    const jsonMatch = contentText.match(/\{[\s\S]*\}/);
+    const content = response.choices[0]?.message?.content || "";
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
-      throw new Error("Failed to parse JSON clips from Claude response");
+      throw new Error("Could not parse JSON clips from AI response: " + content.slice(0, 200));
     }
     const parsed = JSON.parse(jsonMatch[0]);
     return parsed.clips || [];
   } else {
-    // Default to OpenAI GPT-4o-mini
-    const openai = getOpenAIClient(openaiKey);
-    const response = await openai.chat.completions.create({
+    // Standard OpenAI
+    const client = getOpenAIClient(activeKey);
+    const response = await client.chat.completions.create({
       model: "gpt-4o-mini",
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: systemPrompt },
         {
           role: "user",
-          content: `Here is the full video transcript:\n\n${transcriptText}\n\nExtract the highest potential viral shorts with timestamps.`,
+          content: `Here is the video transcript:\n\n${transcriptText}\n\nExtract viral shorts with timestamps.`,
         },
       ],
     });
 
-    const parsed = JSON.parse(response.choices[0].message.content || "{}");
+    const parsed = JSON.parse(response.choices[0]?.message?.content || "{}");
     return parsed.clips || [];
   }
 }
