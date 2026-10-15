@@ -11,6 +11,7 @@ export async function POST(req: NextRequest) {
       duration,
       aspectRatio,
       splitScreen,
+      reframeMode,
       transcript,
       headline,
       captionStyle,
@@ -27,12 +28,13 @@ export async function POST(req: NextRequest) {
     const outputFilename = `clip-${Date.now()}.mp4`;
     const outputPath = path.join(outputDir, outputFilename);
 
-    await renderVideoClip({
+    const renderResult = await renderVideoClip({
       inputPath,
       outputPath,
       startTime: Number(startTime),
       duration: Number(duration),
       aspectRatio: aspectRatio || "9:16",
+      reframeMode: reframeMode || "auto-tracker",
       splitScreen: Boolean(splitScreen),
       transcript,
       headline,
@@ -43,6 +45,7 @@ export async function POST(req: NextRequest) {
       success: true,
       downloadUrl: `/rendered_clips/${outputFilename}`,
       filename: outputFilename,
+      tracking: renderResult.tracking,
     });
   } catch (error: any) {
     console.error("FFmpeg Render Error:", error);

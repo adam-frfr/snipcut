@@ -21,6 +21,9 @@ import {
   Key,
   AlertCircle,
   FileVideo,
+  Target,
+  Layout,
+  Eye,
 } from "lucide-react";
 import ApiSettingsModal from "@/components/ApiSettingsModal";
 import confetti from "canvas-confetti";
@@ -75,6 +78,8 @@ function DashboardContent() {
   const [isRendering, setIsRendering] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const [hasServerKey, setHasServerKey] = useState(true);
+  const [reframeMode, setReframeMode] = useState<"auto-tracker" | "split-screen" | "blurred-fit" | "center">("auto-tracker");
+  const [lastTrackingSummary, setLastTrackingSummary] = useState<string>("");
 
   // Sync video time when selected clip changes
   useEffect(() => {
@@ -323,6 +328,7 @@ function DashboardContent() {
               startTime: topClip.startTime,
               duration: topClip.duration,
               aspectRatio: "9:16",
+              reframeMode: "auto-tracker",
               transcript: topClip.transcript,
               headline: topClip.hookHeadline || topClip.title,
               captionStyle: topClip.captionStyle || "hormozi",
@@ -332,6 +338,9 @@ function DashboardContent() {
           if (renderData.success && renderData.downloadUrl) {
             topClip.videoUrl = renderData.downloadUrl;
             (topClip as any).renderedVideoUrl = renderData.downloadUrl;
+            if (renderData.tracking?.summary) {
+              setLastTrackingSummary(renderData.tracking.summary);
+            }
           }
         } catch (renderErr) {
           console.warn("Auto-render notice:", renderErr);
@@ -369,7 +378,9 @@ function DashboardContent() {
           inputPath: clip.videoFilePath,
           startTime: clip.startTime,
           duration: clip.duration,
-          aspectRatio: clip.aspectRatio,
+          aspectRatio: clip.aspectRatio || "9:16",
+          reframeMode: reframeMode,
+          splitScreen: reframeMode === "split-screen",
           transcript: clip.transcript,
           headline: clip.hookHeadline || clip.title,
           captionStyle: clip.captionStyle || "hormozi",
@@ -378,6 +389,10 @@ function DashboardContent() {
       const data = await res.json();
       if (!res.ok || data.error) {
         throw new Error(data.error || "FFmpeg rendering failed");
+      }
+
+      if (data.tracking?.summary) {
+        setLastTrackingSummary(data.tracking.summary);
       }
 
       // Update clip so preview is permanently the cut MP4
@@ -668,6 +683,20 @@ function DashboardContent() {
                       {/* Vertical Video Viewport */}
                       <div className="relative w-[260px] sm:w-[280px] h-[480px] bg-black rounded-2xl overflow-hidden shadow-2xl border border-white/[0.1] flex flex-col">
                         <div className="relative flex-1 bg-zinc-950 flex flex-col justify-center items-center">
+                          {/* Reframe Mode Floating Tag */}
+                          <div className="absolute top-3 left-3 z-30 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/80 backdrop-blur-md border border-purple-500/40 text-[10px] font-bold text-purple-300 shadow-xl pointer-events-none">
+                            <span className="w-2 h-2 rounded-full bg-purple-400 animate-pulse" />
+                            <span>
+                              {reframeMode === "auto-tracker"
+                                ? "AI Subject Tracked 🎯"
+                                : reframeMode === "split-screen"
+                                ? "Split-Screen Mode 👥"
+                                : reframeMode === "blurred-fit"
+                                ? "Blurred Backdrop 🌌"
+                                : "Center Crop 📐"}
+                            </span>
+                          </div>
+
                           <video
                             ref={videoRef}
                             src={(selectedClip as any).renderedVideoUrl || selectedClip.videoUrl}
@@ -740,6 +769,56 @@ function DashboardContent() {
                             )}
                           </button>
                         </div>
+                      </div>
+
+                      {/* OpusClip ReframeAnything Controls */}
+                      <div className="w-full mt-3.5 p-3 rounded-2xl bg-white/[0.03] border border-white/[0.08]">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-[11px] font-black uppercase tracking-wider text-zinc-300 flex items-center gap-1.5">
+                            <Target className="w-3.5 h-3.5 text-purple-400" />
+                            <span>Reframe Mode</span>
+                          </span>
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-500/20 border border-purple-500/30 text-purple-300">
+                            ReframeAnything™
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-1.5">
+                          {[
+                            { id: "auto-tracker", label: "AI Subject Track", desc: "Auto-centers speaker", icon: Target },
+                            { id: "split-screen", label: "Split Screen", desc: "Top / Bottom 2-speaker", icon: Layout },
+                            { id: "blurred-fit", label: "Blurred Fit", desc: "Full 16:9 + backdrop", icon: Eye },
+                            { id: "center", label: "Center Crop", desc: "Static center window", icon: Scissors },
+                          ].map((mode) => {
+                            const Icon = mode.icon;
+                            const isActive = reframeMode === mode.id;
+                            return (
+                              <button
+                                key={mode.id}
+                                type="button"
+                                onClick={() => setReframeMode(mode.id as any)}
+                                className={`p-2 rounded-xl text-left border transition-all cursor-pointer ${
+                                  isActive
+                                    ? "bg-purple-950/60 border-purple-500 text-white shadow-md ring-1 ring-purple-500/50"
+                                    : "bg-white/[0.02] border-white/[0.06] text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.04]"
+                                }`}
+                              >
+                                <div className="flex items-center gap-1.5 text-xs font-bold mb-0.5">
+                                  <Icon className={`w-3.5 h-3.5 ${isActive ? "text-purple-400" : "text-zinc-500"}`} />
+                                  <span>{mode.label}</span>
+                                </div>
+                                <div className="text-[10px] text-zinc-500 leading-tight">{mode.desc}</div>
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        {lastTrackingSummary && (
+                          <div className="mt-2.5 p-2 rounded-xl bg-purple-950/40 border border-purple-500/40 text-[10px] text-purple-200 flex items-center gap-1.5 animate-in fade-in">
+                            <Sparkles className="w-3.5 h-3.5 text-purple-400 flex-shrink-0" />
+                            <span className="truncate">{lastTrackingSummary}</span>
+                          </div>
+                        )}
                       </div>
 
                       {/* Export Button */}

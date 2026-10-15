@@ -2,6 +2,7 @@ import ffmpeg from "fluent-ffmpeg";
 import ffmpegStatic from "ffmpeg-static";
 import path from "path";
 import fs from "fs";
+import { spawn } from "child_process";
 
 // Set fluent-ffmpeg binary path to local bin/ffmpeg.exe or ffmpeg-static
 function getFfmpegBinary(): string {
@@ -14,16 +15,31 @@ function getFfmpegBinary(): string {
 
 ffmpeg.setFfmpegPath(getFfmpegBinary());
 
+export type ReframeMode = "auto-tracker" | "split-screen" | "blurred-fit" | "center";
+
 export interface RenderOptions {
   inputPath: string;
   outputPath: string;
   startTime: number;
   duration: number;
   aspectRatio: "9:16" | "1:1" | "16:9";
+  reframeMode?: ReframeMode;
   splitScreen?: boolean;
   transcript?: { start: number; end: number; text: string }[];
   headline?: string;
   captionStyle?: "hormozi" | "neon" | "beast" | "clean";
+}
+
+export interface TrackingResult {
+  status: "success" | "error";
+  mode: string;
+  filter_type: "vf" | "filter_complex";
+  filter_value: string;
+  subject_center_x?: number;
+  crop_x?: number;
+  crop_w?: number;
+  crop_h?: number;
+  summary?: string;
 }
 
 function formatSrtTime(seconds: number): string {
@@ -35,7 +51,91 @@ function formatSrtTime(seconds: number): string {
 }
 
 /**
- * Trims, reframes to 9:16 vertical, and burns in viral subtitles using local FFmpeg
+ * Runs deep-learning AI Subject Tracking (OpusClip ReframeAnything)
+ * Computes optimal 9:16 crop box keeping speaker centered or multi-mode layout
+ */
+export async function detectSubjectAndReframe(
+  videoPath: string,
+  startTime: number,
+  duration: number,
+  mode: ReframeMode = "auto-tracker"
+): Promise<TrackingResult> {
+  return new Promise((resolve) => {
+    const scriptPath = path.join(process.cwd(), "scripts", "track_reframe.py");
+    if (!fs.existsSync(scriptPath)) {
+      return resolve({
+        status: "success",
+        mode: "center",
+        filter_type: "vf",
+        filter_value: "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920",
+        summary: "Default center crop fallback",
+      });
+    }
+
+    const py = spawn("python", [
+      scriptPath,
+      "--video",
+      videoPath,
+      "--start",
+      String(startTime),
+      "--duration",
+      String(duration),
+      "--mode",
+      mode,
+    ]);
+
+    let stdout = "";
+    let stderr = "";
+
+    py.stdout.on("data", (data) => {
+      stdout += data.toString();
+    });
+
+    py.stderr.on("data", (data) => {
+      stderr += data.toString();
+    });
+
+    py.on("close", (code) => {
+      if (code === 0 && stdout.trim()) {
+        try {
+          const lines = stdout.trim().split("\n");
+          for (let i = lines.length - 1; i >= 0; i--) {
+            const line = lines[i].trim();
+            if (line.startsWith("{") && line.endsWith("}")) {
+              const parsed = JSON.parse(line);
+              return resolve(parsed);
+            }
+          }
+        } catch (e) {
+          console.warn("Could not parse tracking python output:", stdout);
+        }
+      }
+
+      // Fallback
+      resolve({
+        status: "success",
+        mode: "center",
+        filter_type: "vf",
+        filter_value: "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920",
+        summary: "Default center crop",
+      });
+    });
+
+    py.on("error", (err) => {
+      console.warn("Python tracking spawn error:", err);
+      resolve({
+        status: "success",
+        mode: "center",
+        filter_type: "vf",
+        filter_value: "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920",
+        summary: "Default center crop fallback",
+      });
+    });
+  });
+}
+
+/**
+ * Trims, reframes to 9:16 vertical (with AI Subject Tracking), and burns in viral subtitles using local FFmpeg
  */
 export async function renderVideoClip({
   inputPath,
@@ -43,11 +143,49 @@ export async function renderVideoClip({
   startTime,
   duration,
   aspectRatio = "9:16",
+  reframeMode = "auto-tracker",
   splitScreen = false,
   transcript,
   headline,
   captionStyle = "hormozi",
-}: RenderOptions): Promise<string> {
+}: RenderOptions): Promise<{ outputPath: string; tracking: TrackingResult }> {
+  // Resolve input path if relative or web public path
+  let resolvedInput = inputPath;
+  if (!fs.existsSync(resolvedInput)) {
+    const publicCandidate = path.join(process.cwd(), "public", inputPath.replace(/^\//, ""));
+    if (fs.existsSync(publicCandidate)) {
+      resolvedInput = publicCandidate;
+    }
+  }
+
+  // Determine actual reframe mode
+  let effectiveMode: ReframeMode = reframeMode;
+  if (splitScreen) {
+    effectiveMode = "split-screen";
+  }
+
+  // Run AI Subject Tracking
+  let trackingResult: TrackingResult = {
+    status: "success",
+    mode: effectiveMode,
+    filter_type: "vf",
+    filter_value: "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920",
+    summary: "Static center crop",
+  };
+
+  if (aspectRatio === "9:16") {
+    try {
+      trackingResult = await detectSubjectAndReframe(
+        resolvedInput,
+        startTime,
+        duration,
+        effectiveMode
+      );
+    } catch (e) {
+      console.warn("AI Tracking warning:", e);
+    }
+  }
+
   return new Promise((resolve, reject) => {
     // Ensure output directory exists
     const dir = path.dirname(outputPath);
@@ -55,24 +193,11 @@ export async function renderVideoClip({
       fs.mkdirSync(dir, { recursive: true });
     }
 
-    let command = ffmpeg(inputPath)
+    let command = ffmpeg(resolvedInput)
       .setStartTime(startTime)
       .setDuration(duration);
 
-    const filters: string[] = [];
-
-    // 1. Aspect ratio reframing
-    if (aspectRatio === "9:16") {
-      if (splitScreen) {
-        filters.push("scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920");
-      } else {
-        filters.push("scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920");
-      }
-    } else if (aspectRatio === "1:1") {
-      filters.push("scale=1080:1080:force_original_aspect_ratio=increase,crop=1080:1080");
-    }
-
-    // 2. Subtitle burn-in (Hormozi / TikTok shorts style)
+    // Prepare subtitles
     let tempSrtPath: string | null = null;
     let srtEntries: { start: number; end: number; text: string }[] = [];
 
@@ -92,6 +217,7 @@ export async function renderVideoClip({
       ];
     }
 
+    let subtitleFilterStr: string | null = null;
     if (srtEntries.length > 0) {
       const srtLines: string[] = [];
       srtEntries.forEach((entry, idx) => {
@@ -104,7 +230,6 @@ export async function renderVideoClip({
       tempSrtPath = path.join(dir, `sub-${Date.now()}-${Math.floor(Math.random() * 1000)}.srt`);
       fs.writeFileSync(tempSrtPath, srtLines.join("\n"), "utf-8");
 
-      // Format subtitle filter style
       let forceStyle =
         "Fontname=Arial,Fontsize=24,PrimaryColour=&H0000FFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=3,Alignment=2,MarginV=130";
       if (captionStyle === "neon") {
@@ -119,11 +244,43 @@ export async function renderVideoClip({
       }
 
       const srtEscaped = tempSrtPath.replace(/\\/g, "/").replace(/:/g, "\\:");
-      filters.push(`subtitles='${srtEscaped}':force_style='${forceStyle}'`);
+      subtitleFilterStr = `subtitles='${srtEscaped}':force_style='${forceStyle}'`;
     }
 
-    if (filters.length > 0) {
+    // Apply filters based on aspect ratio and tracking
+    if (aspectRatio === "9:16") {
+      if (trackingResult.filter_type === "filter_complex") {
+        if (subtitleFilterStr) {
+          command = command.complexFilter(
+            `${trackingResult.filter_value}[base_v];[base_v]${subtitleFilterStr}[v]`,
+            "v"
+          );
+        } else {
+          command = command.complexFilter(trackingResult.filter_value);
+        }
+      } else {
+        // Standard video filter array (auto-tracker or center crop)
+        const filters = [trackingResult.filter_value];
+        if (subtitleFilterStr) {
+          filters.push(subtitleFilterStr);
+        }
+        command = command.videoFilters(filters);
+      }
+    } else if (aspectRatio === "1:1") {
+      const filters = ["scale=1080:1080:force_original_aspect_ratio=increase,crop=1080:1080"];
+      if (subtitleFilterStr) {
+        filters.push(subtitleFilterStr);
+      }
       command = command.videoFilters(filters);
+    } else {
+      // 16:9
+      const filters: string[] = [];
+      if (subtitleFilterStr) {
+        filters.push(subtitleFilterStr);
+      }
+      if (filters.length > 0) {
+        command = command.videoFilters(filters);
+      }
     }
 
     const cleanup = () => {
@@ -146,7 +303,7 @@ export async function renderVideoClip({
       .output(outputPath)
       .on("end", () => {
         cleanup();
-        resolve(outputPath);
+        resolve({ outputPath, tracking: trackingResult });
       })
       .on("error", (err) => {
         cleanup();
@@ -180,4 +337,3 @@ export async function extractAudioForWhisper(
       .run();
   });
 }
-

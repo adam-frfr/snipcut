@@ -131,6 +131,14 @@ function EditorContent() {
           startTime: clip.startTime || 0,
           duration: clip.duration || duration,
           aspectRatio: "9:16",
+          reframeMode:
+            layoutMode === "single-focus"
+              ? "auto-tracker"
+              : layoutMode === "split-screen"
+              ? "split-screen"
+              : layoutMode === "blurred-fit"
+              ? "blurred-fit"
+              : "auto-tracker",
           splitScreen: layoutMode === "split-screen",
           transcript: clip.transcript,
           headline: clip.hookHeadline || clip.title,
