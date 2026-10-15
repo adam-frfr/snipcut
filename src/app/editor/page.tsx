@@ -132,6 +132,9 @@ function EditorContent() {
           duration: clip.duration || duration,
           aspectRatio: "9:16",
           splitScreen: layoutMode === "split-screen",
+          transcript: clip.transcript,
+          headline: clip.hookHeadline || clip.title,
+          captionStyle,
         }),
       });
       const data = await res.json();

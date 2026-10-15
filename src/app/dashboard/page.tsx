@@ -323,6 +323,9 @@ function DashboardContent() {
               startTime: topClip.startTime,
               duration: topClip.duration,
               aspectRatio: "9:16",
+              transcript: topClip.transcript,
+              headline: topClip.hookHeadline || topClip.title,
+              captionStyle: topClip.captionStyle || "hormozi",
             }),
           });
           const renderData = await renderRes.json();
@@ -367,6 +370,9 @@ function DashboardContent() {
           startTime: clip.startTime,
           duration: clip.duration,
           aspectRatio: clip.aspectRatio,
+          transcript: clip.transcript,
+          headline: clip.hookHeadline || clip.title,
+          captionStyle: clip.captionStyle || "hormozi",
         }),
       });
       const data = await res.json();

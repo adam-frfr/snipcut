@@ -5,7 +5,16 @@ import os from "os";
 
 export async function POST(req: NextRequest) {
   try {
-    const { inputPath, startTime, duration, aspectRatio, splitScreen } = await req.json();
+    const {
+      inputPath,
+      startTime,
+      duration,
+      aspectRatio,
+      splitScreen,
+      transcript,
+      headline,
+      captionStyle,
+    } = await req.json();
 
     if (!inputPath || startTime === undefined || !duration) {
       return NextResponse.json(
@@ -25,6 +34,9 @@ export async function POST(req: NextRequest) {
       duration: Number(duration),
       aspectRatio: aspectRatio || "9:16",
       splitScreen: Boolean(splitScreen),
+      transcript,
+      headline,
+      captionStyle,
     });
 
     return NextResponse.json({

@@ -21,10 +21,21 @@ export interface RenderOptions {
   duration: number;
   aspectRatio: "9:16" | "1:1" | "16:9";
   splitScreen?: boolean;
+  transcript?: { start: number; end: number; text: string }[];
+  headline?: string;
+  captionStyle?: "hormozi" | "neon" | "beast" | "clean";
+}
+
+function formatSrtTime(seconds: number): string {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+  const ms = Math.min(999, Math.floor((seconds % 1) * 1000));
+  return `${h < 10 ? "0" : ""}${h}:${m < 10 ? "0" : ""}${m}:${s < 10 ? "0" : ""}${s},${ms < 100 ? (ms < 10 ? "00" : "0") : ""}${ms}`;
 }
 
 /**
- * Trims and crops a video into 9:16, 1:1, or 16:9 using local FFmpeg
+ * Trims, reframes to 9:16 vertical, and burns in viral subtitles using local FFmpeg
  */
 export async function renderVideoClip({
   inputPath,
@@ -33,6 +44,9 @@ export async function renderVideoClip({
   duration,
   aspectRatio = "9:16",
   splitScreen = false,
+  transcript,
+  headline,
+  captionStyle = "hormozi",
 }: RenderOptions): Promise<string> {
   return new Promise((resolve, reject) => {
     // Ensure output directory exists
@@ -45,25 +59,80 @@ export async function renderVideoClip({
       .setStartTime(startTime)
       .setDuration(duration);
 
-    // Apply video filters for aspect ratio
+    const filters: string[] = [];
+
+    // 1. Aspect ratio reframing
     if (aspectRatio === "9:16") {
       if (splitScreen) {
-        // Stack top and bottom video crop for 2 speakers
-        command = command.videoFilters([
-          "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920",
-        ]);
+        filters.push("scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920");
       } else {
-        // Center crop to 9:16 vertical reframing
-        command = command.videoFilters([
-          "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920",
-        ]);
+        filters.push("scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920");
       }
     } else if (aspectRatio === "1:1") {
-      // 1080x1080 Square
-      command = command.videoFilters([
-        "scale=1080:1080:force_original_aspect_ratio=increase,crop=1080:1080",
-      ]);
+      filters.push("scale=1080:1080:force_original_aspect_ratio=increase,crop=1080:1080");
     }
+
+    // 2. Subtitle burn-in (Hormozi / TikTok shorts style)
+    let tempSrtPath: string | null = null;
+    let srtEntries: { start: number; end: number; text: string }[] = [];
+
+    if (transcript && transcript.length > 0) {
+      srtEntries = transcript.map((t) => ({
+        start: Math.max(0, t.start),
+        end: Math.max(t.start + 0.4, t.end),
+        text: t.text.toUpperCase(),
+      }));
+    } else if (headline) {
+      srtEntries = [
+        {
+          start: 0,
+          end: duration,
+          text: headline.toUpperCase(),
+        },
+      ];
+    }
+
+    if (srtEntries.length > 0) {
+      const srtLines: string[] = [];
+      srtEntries.forEach((entry, idx) => {
+        srtLines.push(`${idx + 1}`);
+        srtLines.push(`${formatSrtTime(entry.start)} --> ${formatSrtTime(entry.end)}`);
+        srtLines.push(entry.text);
+        srtLines.push("");
+      });
+
+      tempSrtPath = path.join(dir, `sub-${Date.now()}-${Math.floor(Math.random() * 1000)}.srt`);
+      fs.writeFileSync(tempSrtPath, srtLines.join("\n"), "utf-8");
+
+      // Format subtitle filter style
+      let forceStyle =
+        "Fontname=Arial,Fontsize=24,PrimaryColour=&H0000FFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=3,Alignment=2,MarginV=130";
+      if (captionStyle === "neon") {
+        forceStyle =
+          "Fontname=Arial,Fontsize=24,PrimaryColour=&H0000FF00,OutlineColour=&H00000000,BorderStyle=1,Outline=3,Alignment=2,MarginV=130";
+      } else if (captionStyle === "beast") {
+        forceStyle =
+          "Fontname=Arial,Fontsize=26,PrimaryColour=&H0000FFFF,OutlineColour=&H000000FF,BorderStyle=1,Outline=4,Alignment=2,MarginV=130";
+      } else if (captionStyle === "clean") {
+        forceStyle =
+          "Fontname=Arial,Fontsize=22,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Alignment=2,MarginV=130";
+      }
+
+      const srtEscaped = tempSrtPath.replace(/\\/g, "/").replace(/:/g, "\\:");
+      filters.push(`subtitles='${srtEscaped}':force_style='${forceStyle}'`);
+    }
+
+    if (filters.length > 0) {
+      command = command.videoFilters(filters);
+    }
+
+    const cleanup = () => {
+      if (tempSrtPath && fs.existsSync(tempSrtPath)) {
+        try {
+          fs.unlinkSync(tempSrtPath);
+        } catch (e) {}
+      }
+    };
 
     command
       .outputOptions([
@@ -76,9 +145,11 @@ export async function renderVideoClip({
       ])
       .output(outputPath)
       .on("end", () => {
+        cleanup();
         resolve(outputPath);
       })
       .on("error", (err) => {
+        cleanup();
         reject(err);
       })
       .run();
