@@ -126,7 +126,7 @@ You MUST respond strictly in valid JSON matching this schema:
       "trendMatch": 95,
       "viralityReason": "Detailed explanation of why this segment will hook viewers on social feeds",
       "keyPhrases": ["exponential compute", "obsolete", "inflection point"],
-      "suggestedEmojis": ["🤯", "⚡", "🚀"]
+      "suggestedEmojis": []
     }
   ]
 }`;
@@ -181,7 +181,7 @@ You MUST respond strictly in valid JSON matching this schema:
     const firstWords = transcriptText.split(/\s+/).slice(0, 8).join(" ");
     clips = [
       {
-        title: "Viral Highlight Moment 🔥",
+        title: "Viral Highlight Moment",
         hookHeadline: firstWords || "Must-watch moment",
         startTime: 0,
         endTime: 20,
@@ -192,7 +192,7 @@ You MUST respond strictly in valid JSON matching this schema:
         trendMatch: 94,
         viralityReason: "Top retention introductory segment with fast emotional delivery.",
         keyPhrases: ["viral moment", "trending"],
-        suggestedEmojis: ["🔥", "✨"],
+        suggestedEmojis: [],
       },
     ];
   }

@@ -11,31 +11,20 @@ import {
   Volume2,
   VolumeX,
   Type,
-  Layout,
-  Layers,
-  Sparkles,
   Download,
-  Trash2,
   Check,
-  Flame,
   ArrowLeft,
-  Smile,
   Sliders,
-  Maximize2,
-  Video,
-  Clock,
-  Palette,
-  ShieldAlert,
   Move,
   Crop,
   Sun,
-  Eye,
-  Zap,
   Music,
-  FastForward,
   RotateCw,
   FlipHorizontal,
   Grid,
+  Heart,
+  MessageSquare,
+  Share2,
 } from "lucide-react";
 import { MOCK_CLIPS, CAPTION_PRESETS } from "@/lib/mockData";
 import confetti from "canvas-confetti";
@@ -72,21 +61,18 @@ function EditorContent() {
   const [layoutMode, setLayoutMode] = useState<"single-focus" | "split-screen" | "blurred-fit" | "manual-pan">("single-focus");
   const [trackingSmoothness, setTrackingSmoothness] = useState<"smooth" | "dynamic" | "cut">("dynamic");
   const [safeZoneOverlay, setSafeZoneOverlay] = useState<boolean>(false);
-  const [shotFraming, setShotFraming] = useState<"close" | "medium" | "wide">("medium");
 
   // 3. Captions & Typography (CapCut Text Style)
-  const [captionStyle, setCaptionStyle] = useState<"hormozi" | "neon" | "beast" | "clean" | "vogue" | "karaoke">("hormozi");
+  const [captionStyle, setCaptionStyle] = useState<"hormozi" | "neon" | "beast" | "clean">("hormozi");
   const [fontFamily, setFontFamily] = useState<string>("Plus Jakarta Sans");
-  const [fontSize, setFontSize] = useState<"sm" | "md" | "lg" | "xl" | "2xl">("lg");
-  const [highlightColor, setHighlightColor] = useState<string>("#C87A47");
+  const [fontSize, setFontSize] = useState<"sm" | "md" | "lg" | "xl">("lg");
+  const [highlightColor, setHighlightColor] = useState<string>("#FFC700");
   const [textColor, setTextColor] = useState<string>("#FFFFFF");
   const [strokeWidth, setStrokeWidth] = useState<number>(2);
   const [strokeColor, setStrokeColor] = useState<string>("#000000");
   const [bgBox, setBgBox] = useState<"none" | "pill" | "box">("pill");
   const [captionPositionY, setCaptionPositionY] = useState<number>(80); // % from top
-  const [showEmojis, setShowEmojis] = useState(true);
   const [isUppercase, setIsUppercase] = useState(true);
-  const [captionAnimation, setCaptionAnimation] = useState<"pop" | "bounce" | "fade">("pop");
 
   // 4. Color & Adjustments (CapCut Filter Grade)
   const [activeFilter, setActiveFilter] = useState<"none" | "viral" | "warm" | "moody" | "cold" | "vibrant">("none");
@@ -94,9 +80,8 @@ function EditorContent() {
   const [contrast, setContrast] = useState<number>(0); // -50 to +50
   const [saturation, setSaturation] = useState<number>(0); // -50 to +50
   const [warmth, setWarmth] = useState<number>(0); // -50 to +50
-  const [vignette, setVignette] = useState<number>(0); // 0 to 50
 
-  // 5. Transcript & Timeline State
+  // 5. Transcript & Timeline State (Zero Emojis)
   const [transcriptWords, setTranscriptWords] = useState<any[]>([]);
 
   // Export Modal
@@ -137,25 +122,23 @@ function EditorContent() {
             text: t.text,
             time: t.start || idx * 1.5,
             deleted: false,
-            emoji: t.emoji || "",
           }))
         );
       } else {
-        // Fallback default word blocks
         const defaultWords = [
           { id: 1, text: "In", time: 0, deleted: false },
           { id: 2, text: "the", time: 0.4, deleted: false },
           { id: 3, text: "next", time: 0.7, deleted: false },
           { id: 4, text: "decade,", time: 1.1, deleted: false },
-          { id: 5, text: "AI", time: 1.8, deleted: false, emoji: "🤖" },
+          { id: 5, text: "AI", time: 1.8, deleted: false },
           { id: 6, text: "compute", time: 2.2, deleted: false },
           { id: 7, text: "will", time: 2.6, deleted: false },
-          { id: 8, text: "scale", time: 3.0, deleted: false, emoji: "🚀" },
+          { id: 8, text: "scale", time: 3.0, deleted: false },
           { id: 9, text: "exponentially", time: 3.5, deleted: false },
-          { id: 10, text: "faster", time: 4.2, deleted: false, emoji: "⚡" },
+          { id: 10, text: "faster", time: 4.2, deleted: false },
           { id: 11, text: "than", time: 4.8, deleted: false },
           { id: 12, text: "anyone", time: 5.2, deleted: false },
-          { id: 13, text: "predicts.", time: 5.7, deleted: false, emoji: "🤯" },
+          { id: 13, text: "predicts.", time: 5.7, deleted: false },
         ];
         setTranscriptWords(defaultWords);
       }
@@ -234,7 +217,6 @@ function EditorContent() {
     setContrast(0);
     setSaturation(0);
     setWarmth(0);
-    setVignette(0);
     setActiveFilter("none");
     setPlaybackSpeed(1.0);
     setVolume(100);
@@ -276,7 +258,7 @@ function EditorContent() {
     }
   };
 
-  // Word-level deletion (CapCut / Descript style text cutting)
+  // Word-level deletion
   const toggleWordDelete = (id: number) => {
     setTranscriptWords((prev) =>
       prev.map((w) => (w.id === id ? { ...w, deleted: !w.deleted } : w))
@@ -286,16 +268,15 @@ function EditorContent() {
   // Export render
   const handleExport = async () => {
     if (!clip?.videoFilePath) {
-      // Simulate export if local mock
       setIsExporting(true);
       setTimeout(() => {
         setIsExporting(false);
         setShowExportModal(false);
         try {
-          confetti({ particleCount: 80, spread: 70, origin: { y: 0.6 } });
+          confetti({ particleCount: 70, spread: 60, origin: { y: 0.6 } });
         } catch (e) {}
-        alert("Video rendered successfully with your CapCut manual transforms and dynamic captions!");
-      }, 2000);
+        alert("Video rendered successfully with transforms and subtitles.");
+      }, 1500);
       return;
     }
 
@@ -336,7 +317,7 @@ function EditorContent() {
       document.body.removeChild(a);
 
       try {
-        confetti({ particleCount: 90, spread: 80, origin: { y: 0.6 } });
+        confetti({ particleCount: 80, spread: 70, origin: { y: 0.6 } });
       } catch (e) {}
       setShowExportModal(false);
     } catch (err: any) {
@@ -353,66 +334,63 @@ function EditorContent() {
   };
 
   return (
-    <div className="min-h-screen bg-[#F5EFEB] text-[#2B1D16] flex flex-col select-none font-sans">
-      {/* Top Bar: CapCut Editor Header */}
-      <header className="h-14 bg-[#FAF6F1]/95 backdrop-blur-md border-b border-[#E8DDD2] px-4 flex items-center justify-between z-40 sticky top-0 shadow-xs">
+    <div className="min-h-screen bg-[#F8F7F4] text-black flex flex-col select-none font-sans">
+      {/* Top Bar: Neo-Brutalist Editor Header */}
+      <header className="h-13 bg-[#F8F7F4] border-b-2 border-black px-4 flex items-center justify-between z-40 sticky top-0">
         <div className="flex items-center gap-3">
           <Link
             href="/dashboard"
-            className="p-2 rounded-xl bg-white border border-[#E8DDD2] text-[#2B1D16] hover:bg-[#EAE1D7] transition-colors"
-            title="Back to Clips Dashboard"
+            className="p-1.5 border-2 border-black bg-white hover:bg-[#FFC700] rounded-lg transition-colors cursor-pointer"
+            title="Back to Dashboard"
           >
-            <ArrowLeft className="w-4 h-4" />
+            <ArrowLeft className="w-4 h-4 stroke-[3]" />
           </Link>
           <div className="flex items-center gap-2">
-            <span className="font-black text-sm tracking-tight text-[#2B1D16]">Opus Studio Pro</span>
-            <span className="text-[10px] bg-[#EAE1D7] text-[#2B1D16] px-2.5 py-0.5 rounded-full font-bold">
-              CapCut Manual Suite
-            </span>
+            <span className="font-black text-sm uppercase tracking-tight text-black">STUDIO EDITOR</span>
+            <span className="neo-tag-yellow text-[9px]">PRO</span>
           </div>
-          <div className="hidden sm:block h-4 w-px bg-[#DDD3C7]" />
+          <div className="hidden sm:block h-4 w-px bg-black/20" />
           <input
             type="text"
             value={clip?.title || "Viral Clip #1"}
             onChange={(e) => setClip({ ...clip, title: e.target.value })}
-            className="hidden sm:block text-xs font-bold text-[#2B1D16] bg-transparent hover:bg-white/60 focus:bg-white px-2 py-1 rounded-lg border border-transparent focus:border-[#E8DDD2] transition-all max-w-[240px] truncate"
-            title="Click to rename clip"
+            className="hidden sm:block text-xs font-black uppercase text-black bg-transparent hover:bg-white focus:bg-white px-2 py-0.5 border border-transparent focus:border-black rounded transition-all max-w-[220px] truncate"
+            title="Click to rename"
           />
         </div>
 
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center gap-2">
           {clip && (
-            <div className="hidden md:flex items-center gap-1.5 px-3 py-1 rounded-full bg-white border border-[#E8DDD2] text-xs font-bold text-[#3A7D44]">
-              <Flame className="w-3.5 h-3.5 fill-[#3A7D44]" />
-              <span>{clip.viralityScore || 98} Virality</span>
+            <div className="hidden md:flex items-center gap-1 px-2.5 py-0.5 bg-black text-white border-2 border-black text-[10px] font-black uppercase">
+              <span>VIRALITY {clip.viralityScore || 98}/100</span>
             </div>
           )}
 
           <button
             onClick={resetAllAdjustments}
-            className="px-3 py-1.5 rounded-xl bg-white border border-[#E8DDD2] hover:bg-[#EAE1D7] text-[#7A6B63] hover:text-[#2B1D16] text-xs font-bold transition-colors flex items-center gap-1.5 cursor-pointer"
-            title="Reset all transforms, colors, and audio adjustments"
+            className="neo-btn-white px-3 py-1.5 rounded-lg text-xs font-black uppercase flex items-center gap-1.5 cursor-pointer"
+            title="Reset All Adjustments"
           >
-            <RotateCcw className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Reset All</span>
+            <RotateCcw className="w-3.5 h-3.5 stroke-[3]" />
+            <span className="hidden sm:inline">Reset</span>
           </button>
 
           <button
             onClick={() => setShowExportModal(true)}
-            className="warm-btn-terracotta px-4 py-1.5 rounded-xl text-xs font-bold text-white flex items-center gap-1.5 shadow-sm cursor-pointer"
+            className="neo-btn-yellow px-4 py-1.5 rounded-lg text-xs font-black uppercase flex items-center gap-1.5 cursor-pointer"
           >
-            <Download className="w-3.5 h-3.5" />
-            <span>Export Clip</span>
+            <Download className="w-3.5 h-3.5 stroke-[3]" />
+            <span>Export</span>
           </button>
         </div>
       </header>
 
-      {/* Main 3-Column Studio Layout */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* Left Column: CapCut Manual Controls Sidebar */}
-        <aside className="w-80 sm:w-96 bg-white border-r border-[#E8DDD2] flex flex-col z-20 shadow-xs">
-          {/* CapCut 5-Tab Category Selector */}
-          <div className="grid grid-cols-5 p-2 bg-[#FAF6F1] border-b border-[#E8DDD2] text-[11px] font-bold">
+      {/* Main Studio Body */}
+      <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
+        {/* Left Column: Sidebar Controls */}
+        <aside className="w-full md:w-80 bg-white border-b-2 md:border-b-0 md:border-r-2 border-black flex flex-col z-20">
+          {/* Neo-Brutalist Category Selector */}
+          <div className="grid grid-cols-5 p-1.5 bg-[#F8F7F4] border-b-2 border-black text-[10px] font-black uppercase">
             {[
               { id: "transform", label: "Basic", icon: Move },
               { id: "reframe", label: "Reframe", icon: Crop },
@@ -426,13 +404,13 @@ function EditorContent() {
                 <button
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id as SidebarTab)}
-                  className={`flex flex-col items-center justify-center py-2 rounded-xl transition-all cursor-pointer ${
+                  className={`flex flex-col items-center justify-center py-2 rounded-lg border-2 transition-all cursor-pointer ${
                     isActive
-                      ? "bg-[#2B1D16] text-white shadow-sm"
-                      : "text-[#7A6B63] hover:text-[#2B1D16] hover:bg-white"
+                      ? "bg-black border-black text-white shadow-[2px_2px_0px_#FFC700]"
+                      : "bg-white border-black text-black hover:bg-[#F8F7F4]"
                   }`}
                 >
-                  <Icon className="w-3.5 h-3.5 mb-1" />
+                  <Icon className="w-3.5 h-3.5 mb-0.5 stroke-[2.5]" />
                   <span>{tab.label}</span>
                 </button>
               );
@@ -440,42 +418,41 @@ function EditorContent() {
           </div>
 
           {/* Tab Content Panels */}
-          <div className="flex-1 overflow-y-auto p-5 space-y-6">
+          <div className="flex-1 overflow-y-auto p-4 space-y-4 max-h-[45vh] md:max-h-none">
             {/* TAB 1: TRANSFORM & CANVAS */}
             {activeTab === "transform" && (
-              <div className="space-y-5">
+              <div className="space-y-4">
                 <div>
-                  <label className="text-xs font-black text-[#2B1D16] uppercase tracking-wider block mb-2">
-                    Canvas Aspect Ratio
+                  <label className="text-xs font-black uppercase tracking-wider block mb-1.5 text-black">
+                    Aspect Ratio
                   </label>
-                  <div className="grid grid-cols-4 gap-1.5 bg-[#FAF6F1] p-1.5 rounded-2xl border border-[#E8DDD2]">
+                  <div className="grid grid-cols-4 gap-1.5">
                     {[
-                      { id: "9:16", label: "9:16", sub: "TikTok" },
-                      { id: "1:1", label: "1:1", sub: "Square" },
-                      { id: "16:9", label: "16:9", sub: "Wide" },
-                      { id: "4:5", label: "4:5", sub: "Insta" },
+                      { id: "9:16", label: "9:16" },
+                      { id: "1:1", label: "1:1" },
+                      { id: "16:9", label: "16:9" },
+                      { id: "4:5", label: "4:5" },
                     ].map((ar) => (
                       <button
                         key={ar.id}
                         onClick={() => setAspectRatio(ar.id as any)}
-                        className={`py-2 rounded-xl text-xs font-bold text-center transition-all cursor-pointer ${
+                        className={`py-1.5 border-2 border-black rounded-lg text-xs font-black uppercase text-center transition-all cursor-pointer ${
                           aspectRatio === ar.id
-                            ? "bg-[#2B1D16] text-white shadow-sm"
-                            : "text-[#7A6B63] hover:text-[#2B1D16]"
+                            ? "bg-[#FFC700] text-black shadow-[2px_2px_0px_#000000]"
+                            : "bg-white text-black hover:bg-[#F8F7F4]"
                         }`}
                       >
-                        <div className="font-black">{ar.label}</div>
-                        <div className="text-[9px] opacity-70">{ar.sub}</div>
+                        {ar.label}
                       </button>
                     ))}
                   </div>
                 </div>
 
                 {/* Scale / Zoom */}
-                <div className="bg-[#FAF6F1] p-4 rounded-2xl border border-[#E8DDD2] space-y-2">
-                  <div className="flex items-center justify-between text-xs font-bold text-[#2B1D16]">
-                    <span>Scale / Zoom</span>
-                    <span className="font-mono text-[#C87A47]">{zoom}%</span>
+                <div className="bg-[#F8F7F4] p-3 border-2 border-black rounded-xl space-y-1.5">
+                  <div className="flex items-center justify-between text-xs font-black uppercase text-black">
+                    <span>Scale Zoom</span>
+                    <span className="font-mono">{zoom}%</span>
                   </div>
                   <input
                     type="range"
@@ -483,23 +460,16 @@ function EditorContent() {
                     max="200"
                     value={zoom}
                     onChange={(e) => setZoom(Number(e.target.value))}
-                    className="w-full h-1.5 bg-[#EAE1D7] rounded-lg appearance-none cursor-pointer accent-[#C87A47]"
+                    className="w-full h-2 bg-[#E0DDD5] rounded appearance-none cursor-pointer accent-[#FFC700]"
                   />
-                  <div className="flex justify-between text-[10px] text-[#7A6B63]">
-                    <span>50%</span>
-                    <button onClick={() => setZoom(100)} className="hover:underline font-bold">
-                      100% (Default)
-                    </button>
-                    <span>200%</span>
-                  </div>
                 </div>
 
                 {/* Position X & Y */}
-                <div className="bg-[#FAF6F1] p-4 rounded-2xl border border-[#E8DDD2] space-y-4">
+                <div className="bg-[#F8F7F4] p-3 border-2 border-black rounded-xl space-y-3">
                   <div>
-                    <div className="flex items-center justify-between text-xs font-bold text-[#2B1D16] mb-1.5">
-                      <span>Position X Offset</span>
-                      <span className="font-mono text-[#C87A47]">{posX}px</span>
+                    <div className="flex items-center justify-between text-xs font-black uppercase text-black mb-1">
+                      <span>Position X</span>
+                      <span className="font-mono">{posX}px</span>
                     </div>
                     <input
                       type="range"
@@ -507,14 +477,13 @@ function EditorContent() {
                       max="200"
                       value={posX}
                       onChange={(e) => setPosX(Number(e.target.value))}
-                      className="w-full h-1.5 bg-[#EAE1D7] rounded-lg appearance-none cursor-pointer accent-[#C87A47]"
+                      className="w-full h-2 bg-[#E0DDD5] rounded appearance-none cursor-pointer accent-[#FFC700]"
                     />
                   </div>
-
                   <div>
-                    <div className="flex items-center justify-between text-xs font-bold text-[#2B1D16] mb-1.5">
-                      <span>Position Y Offset</span>
-                      <span className="font-mono text-[#C87A47]">{posY}px</span>
+                    <div className="flex items-center justify-between text-xs font-black uppercase text-black mb-1">
+                      <span>Position Y</span>
+                      <span className="font-mono">{posY}px</span>
                     </div>
                     <input
                       type="range"
@@ -522,16 +491,16 @@ function EditorContent() {
                       max="200"
                       value={posY}
                       onChange={(e) => setPosY(Number(e.target.value))}
-                      className="w-full h-1.5 bg-[#EAE1D7] rounded-lg appearance-none cursor-pointer accent-[#C87A47]"
+                      className="w-full h-2 bg-[#E0DDD5] rounded appearance-none cursor-pointer accent-[#FFC700]"
                     />
                   </div>
                 </div>
 
                 {/* Rotation & Flip */}
-                <div className="bg-[#FAF6F1] p-4 rounded-2xl border border-[#E8DDD2] space-y-3">
-                  <div className="flex items-center justify-between text-xs font-bold text-[#2B1D16]">
-                    <span>Rotation Angle</span>
-                    <span className="font-mono text-[#C87A47]">{rotation}°</span>
+                <div className="bg-[#F8F7F4] p-3 border-2 border-black rounded-xl space-y-2">
+                  <div className="flex items-center justify-between text-xs font-black uppercase text-black">
+                    <span>Rotation</span>
+                    <span className="font-mono">{rotation} deg</span>
                   </div>
                   <input
                     type="range"
@@ -539,49 +508,47 @@ function EditorContent() {
                     max="180"
                     value={rotation}
                     onChange={(e) => setRotation(Number(e.target.value))}
-                    className="w-full h-1.5 bg-[#EAE1D7] rounded-lg appearance-none cursor-pointer accent-[#C87A47]"
+                    className="w-full h-2 bg-[#E0DDD5] rounded appearance-none cursor-pointer accent-[#FFC700]"
                   />
                   <div className="flex gap-2 pt-1">
                     <button
                       onClick={() => setRotation((prev) => (prev + 90) % 360)}
-                      className="flex-1 py-2 rounded-xl bg-white border border-[#E8DDD2] hover:bg-[#EAE1D7] text-xs font-bold text-[#2B1D16] flex items-center justify-center gap-1.5 transition cursor-pointer"
+                      className="flex-1 py-1.5 border-2 border-black rounded-lg bg-white text-xs font-black uppercase hover:bg-[#FFC700] flex items-center justify-center gap-1 transition cursor-pointer"
                     >
-                      <RotateCw className="w-3.5 h-3.5" />
-                      <span>Rotate 90°</span>
+                      <RotateCw className="w-3.5 h-3.5 stroke-[3]" />
+                      <span>Rotate 90</span>
                     </button>
                     <button
                       onClick={() => setFlipH(!flipH)}
-                      className={`flex-1 py-2 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 transition cursor-pointer ${
-                        flipH
-                          ? "bg-[#2B1D16] border-[#2B1D16] text-white"
-                          : "bg-white border-[#E8DDD2] text-[#2B1D16] hover:bg-[#EAE1D7]"
+                      className={`flex-1 py-1.5 border-2 border-black rounded-lg text-xs font-black uppercase flex items-center justify-center gap-1 transition cursor-pointer ${
+                        flipH ? "bg-black text-white" : "bg-white text-black hover:bg-[#FFC700]"
                       }`}
                     >
-                      <FlipHorizontal className="w-3.5 h-3.5" />
-                      <span>Mirror Flip</span>
+                      <FlipHorizontal className="w-3.5 h-3.5 stroke-[3]" />
+                      <span>Flip</span>
                     </button>
                   </div>
                 </div>
 
-                {/* Canvas Background Fill */}
+                {/* Canvas Backdrop */}
                 <div>
-                  <label className="text-xs font-black text-[#2B1D16] uppercase tracking-wider block mb-2">
-                    Canvas Backdrop Fill
+                  <label className="text-xs font-black uppercase tracking-wider block mb-1.5 text-black">
+                    Backdrop Style
                   </label>
-                  <div className="grid grid-cols-4 gap-2">
+                  <div className="grid grid-cols-4 gap-1.5">
                     {[
-                      { id: "blur", label: "Blur Mirror" },
+                      { id: "blur", label: "Blur" },
                       { id: "black", label: "Black" },
-                      { id: "sand", label: "Warm Sand" },
+                      { id: "sand", label: "Ivory" },
                       { id: "white", label: "White" },
                     ].map((bg) => (
                       <button
                         key={bg.id}
                         onClick={() => setCanvasBg(bg.id as any)}
-                        className={`py-2 px-1 rounded-xl text-xs font-bold text-center border transition-all cursor-pointer ${
+                        className={`py-1.5 border-2 border-black rounded-lg text-xs font-black uppercase text-center transition-all cursor-pointer ${
                           canvasBg === bg.id
-                            ? "bg-[#2B1D16] border-[#2B1D16] text-white shadow-sm"
-                            : "bg-[#FAF6F1] border-[#E8DDD2] text-[#7A6B63] hover:text-[#2B1D16]"
+                            ? "bg-[#FFC700] text-black shadow-[2px_2px_0px_#000000]"
+                            : "bg-white text-black hover:bg-[#F8F7F4]"
                         }`}
                       >
                         {bg.label}
@@ -592,34 +559,34 @@ function EditorContent() {
               </div>
             )}
 
-            {/* TAB 2: REFRAME & TRACKING */}
+            {/* TAB 2: REFRAME */}
             {activeTab === "reframe" && (
-              <div className="space-y-5">
+              <div className="space-y-4">
                 <div>
-                  <label className="text-xs font-black text-[#2B1D16] uppercase tracking-wider block mb-2">
-                    AI Tracking & Reframe Layout
+                  <label className="text-xs font-black uppercase tracking-wider block mb-2 text-black">
+                    Camera Layout
                   </label>
                   <div className="space-y-2">
                     {[
-                      { id: "single-focus", title: "AI Dynamic Pan Tracker", desc: "Smooth camera motion follows speaker" },
-                      { id: "split-screen", title: "Dual Speaker Stack", desc: "Top: Content • Bottom: Reaction Face" },
-                      { id: "blurred-fit", title: "Blurred Background Fit", desc: "Padded 16:9 canvas with blurred mirror" },
-                      { id: "manual-pan", title: "Manual Pan & Center", desc: "Fixed center framing" },
+                      { id: "single-focus", title: "AI Dynamic Pan Track", desc: "Smooth camera motion follows speaker" },
+                      { id: "split-screen", title: "Dual Speaker Stack", desc: "Top: Content - Bottom: Facecam" },
+                      { id: "blurred-fit", title: "Blurred Canvas Fit", desc: "16:9 full view with blurred background" },
+                      { id: "manual-pan", title: "Static Center Crop", desc: "Classic vertical center frame" },
                     ].map((mode) => (
                       <button
                         key={mode.id}
                         onClick={() => setLayoutMode(mode.id as any)}
-                        className={`w-full p-3 rounded-2xl border text-left transition-all cursor-pointer ${
+                        className={`w-full p-2.5 border-2 border-black rounded-xl text-left transition-all cursor-pointer ${
                           layoutMode === mode.id
-                            ? "bg-[#2B1D16] border-[#2B1D16] text-white shadow-sm"
-                            : "bg-[#FAF6F1] border-[#E8DDD2] text-[#7A6B63] hover:text-[#2B1D16]"
+                            ? "bg-black text-white shadow-[2px_2px_0px_#FFC700]"
+                            : "bg-[#F8F7F4] text-black hover:bg-white"
                         }`}
                       >
-                        <div className="flex items-center justify-between text-xs font-bold mb-0.5">
+                        <div className="flex items-center justify-between text-xs font-black uppercase mb-0.5">
                           <span>{mode.title}</span>
-                          {layoutMode === mode.id && <Check className="w-3.5 h-3.5 text-[#C87A47]" />}
+                          {layoutMode === mode.id && <Check className="w-3.5 h-3.5 text-[#FFC700] stroke-[3]" />}
                         </div>
-                        <div className={`text-[10px] ${layoutMode === mode.id ? "text-[#DDD3C7]" : "text-[#7A6B63]"}`}>
+                        <div className={`text-[10px] font-bold ${layoutMode === mode.id ? "text-[#CCCCCC]" : "text-[#666666]"}`}>
                           {mode.desc}
                         </div>
                       </button>
@@ -627,90 +594,55 @@ function EditorContent() {
                   </div>
                 </div>
 
-                {/* Camera Smoothing */}
-                <div className="bg-[#FAF6F1] p-4 rounded-2xl border border-[#E8DDD2] space-y-2">
-                  <label className="text-xs font-bold text-[#2B1D16] block">
-                    Camera Motion Smoothing
-                  </label>
-                  <div className="grid grid-cols-3 gap-1.5">
-                    {[
-                      { id: "smooth", label: "Cinematic" },
-                      { id: "dynamic", label: "Natural" },
-                      { id: "cut", label: "Snap Cut" },
-                    ].map((s) => (
-                      <button
-                        key={s.id}
-                        onClick={() => setTrackingSmoothness(s.id as any)}
-                        className={`py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
-                          trackingSmoothness === s.id
-                            ? "bg-[#2B1D16] border-[#2B1D16] text-white shadow-sm"
-                            : "bg-white border-[#E8DDD2] text-[#7A6B63]"
-                        }`}
-                      >
-                        {s.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Safe Zone Overlay */}
-                <div className="flex items-center justify-between p-4 rounded-2xl bg-[#FAF6F1] border border-[#E8DDD2]">
+                {/* Safe Zone Toggle */}
+                <div className="flex items-center justify-between p-3 border-2 border-black rounded-xl bg-[#F8F7F4]">
                   <div>
-                    <div className="text-xs font-bold text-[#2B1D16] flex items-center gap-1.5">
-                      <Grid className="w-3.5 h-3.5 text-[#C87A47]" />
-                      <span>TikTok/Reels Safe Zone Guides</span>
+                    <div className="text-xs font-black uppercase text-black flex items-center gap-1.5">
+                      <Grid className="w-3.5 h-3.5 stroke-[3]" />
+                      <span>Social UI Safe Zone</span>
                     </div>
-                    <div className="text-[10px] text-[#7A6B63]">
-                      Show interface button margins & caption danger zones
+                    <div className="text-[10px] font-bold text-[#666666]">
+                      Overlay TikTok/Reels icon danger zones
                     </div>
                   </div>
                   <button
                     onClick={() => setSafeZoneOverlay(!safeZoneOverlay)}
-                    className={`w-10 h-6 rounded-full relative transition-colors cursor-pointer ${
-                      safeZoneOverlay ? "bg-[#C87A47]" : "bg-[#DDD3C7]"
+                    className={`px-3 py-1 border-2 border-black rounded text-xs font-black uppercase cursor-pointer ${
+                      safeZoneOverlay ? "bg-[#FFC700] text-black" : "bg-white text-black"
                     }`}
                   >
-                    <div
-                      className={`w-4 h-4 bg-white rounded-full absolute top-1 transition-all ${
-                        safeZoneOverlay ? "right-1" : "left-1"
-                      }`}
-                    />
+                    {safeZoneOverlay ? "ON" : "OFF"}
                   </button>
                 </div>
               </div>
             )}
 
-            {/* TAB 3: CAPTIONS & TYPOGRAPHY */}
+            {/* TAB 3: CAPTIONS */}
             {activeTab === "captions" && (
-              <div className="space-y-5">
+              <div className="space-y-4">
                 <div>
-                  <label className="text-xs font-black text-[#2B1D16] uppercase tracking-wider block mb-2">
-                    Subtitle Preset Style
+                  <label className="text-xs font-black uppercase tracking-wider block mb-1.5 text-black">
+                    Preset Caption Style
                   </label>
                   <div className="grid grid-cols-2 gap-2">
                     {[
-                      { id: "hormozi", name: "Hormozi Pop", font: "Bold Display" },
-                      { id: "beast", name: "MrBeast Viral", font: "High Energy" },
-                      { id: "neon", name: "Cyber Neon", font: "Vibrant Outline" },
-                      { id: "clean", name: "Clean Minimal", font: "Modern Sans" },
-                      { id: "vogue", name: "Editorial", font: "Serif Luxury" },
-                      { id: "karaoke", name: "Word Pulse", font: "Bouncing Fill" },
+                      { id: "hormozi", name: "Alex Hormozi" },
+                      { id: "beast", name: "MrBeast Punch" },
+                      { id: "neon", name: "High Contrast" },
+                      { id: "clean", name: "Minimal Clean" },
                     ].map((p) => (
                       <button
                         key={p.id}
                         onClick={() => setCaptionStyle(p.id as any)}
-                        className={`p-3 rounded-2xl border text-left transition-all cursor-pointer ${
+                        className={`p-2.5 border-2 border-black rounded-xl text-left transition-all cursor-pointer ${
                           captionStyle === p.id
-                            ? "bg-[#2B1D16] border-[#2B1D16] text-white shadow-sm"
-                            : "bg-[#FAF6F1] border-[#E8DDD2] text-[#7A6B63] hover:text-[#2B1D16]"
+                            ? "bg-black text-white shadow-[2px_2px_0px_#FFC700]"
+                            : "bg-[#F8F7F4] text-black hover:bg-white"
                         }`}
                       >
-                        <div className="text-xs font-bold flex items-center justify-between mb-0.5">
+                        <div className="text-xs font-black uppercase flex items-center justify-between">
                           <span>{p.name}</span>
-                          {captionStyle === p.id && <Check className="w-3 h-3 text-[#C87A47]" />}
-                        </div>
-                        <div className={`text-[9px] ${captionStyle === p.id ? "text-[#DDD3C7]" : "text-[#7A6B63]"}`}>
-                          {p.font}
+                          {captionStyle === p.id && <Check className="w-3 h-3 text-[#FFC700] stroke-[3]" />}
                         </div>
                       </button>
                     ))}
@@ -719,36 +651,35 @@ function EditorContent() {
 
                 {/* Font Family Selector */}
                 <div>
-                  <label className="text-xs font-black text-[#2B1D16] uppercase tracking-wider block mb-2">
+                  <label className="text-xs font-black uppercase tracking-wider block mb-1 text-black">
                     Font Family
                   </label>
                   <select
                     value={fontFamily}
                     onChange={(e) => setFontFamily(e.target.value)}
-                    className="w-full bg-[#FAF6F1] border border-[#E8DDD2] rounded-2xl px-3.5 py-2.5 text-xs font-bold text-[#2B1D16] focus:outline-none focus:border-[#C87A47]"
+                    className="w-full neo-input py-2 px-3 text-xs font-black uppercase"
                   >
-                    <option value="Plus Jakarta Sans">Plus Jakarta Sans (Modern Editorial)</option>
-                    <option value="Impact">Impact (Classic Bold Shorts)</option>
-                    <option value="Montserrat">Montserrat (Clean Tech)</option>
-                    <option value="Anton">Anton (Heavy Contrast)</option>
-                    <option value="Outfit">Outfit (Rounded Premium)</option>
+                    <option value="Plus Jakarta Sans">Plus Jakarta Sans</option>
+                    <option value="Impact">Impact (Heavy Condensed)</option>
+                    <option value="Montserrat">Montserrat (Clean)</option>
+                    <option value="Anton">Anton (High Contrast)</option>
                   </select>
                 </div>
 
-                {/* Colors & Stroke */}
-                <div className="bg-[#FAF6F1] p-4 rounded-2xl border border-[#E8DDD2] space-y-4">
+                {/* Color and Outline */}
+                <div className="bg-[#F8F7F4] p-3 border-2 border-black rounded-xl space-y-3">
                   <div>
-                    <label className="text-xs font-bold text-[#2B1D16] block mb-2">
-                      Active Keyword Highlight Color
+                    <label className="text-xs font-black uppercase text-black block mb-1.5">
+                      Keyword Highlight Color
                     </label>
                     <div className="flex items-center gap-2">
-                      {["#C87A47", "#3A7D44", "#EAB308", "#EF4444", "#06B6D4", "#FFFFFF"].map((hex) => (
+                      {["#FFC700", "#FF5500", "#22C55E", "#06B6D4", "#FFFFFF"].map((hex) => (
                         <button
                           key={hex}
                           onClick={() => setHighlightColor(hex)}
                           style={{ backgroundColor: hex }}
-                          className={`w-7 h-7 rounded-full border border-black/10 transition-transform cursor-pointer ${
-                            highlightColor === hex ? "scale-125 ring-2 ring-[#2B1D16]" : "opacity-80"
+                          className={`w-7 h-7 rounded border-2 border-black cursor-pointer ${
+                            highlightColor === hex ? "ring-2 ring-black scale-110" : ""
                           }`}
                         />
                       ))}
@@ -756,9 +687,9 @@ function EditorContent() {
                   </div>
 
                   <div>
-                    <div className="flex justify-between text-xs font-bold text-[#2B1D16] mb-1.5">
-                      <span>Stroke / Outline Width</span>
-                      <span className="font-mono text-[#C87A47]">{strokeWidth}px</span>
+                    <div className="flex justify-between text-xs font-black uppercase text-black mb-1">
+                      <span>Outline Stroke</span>
+                      <span className="font-mono">{strokeWidth}px</span>
                     </div>
                     <input
                       type="range"
@@ -766,14 +697,14 @@ function EditorContent() {
                       max="6"
                       value={strokeWidth}
                       onChange={(e) => setStrokeWidth(Number(e.target.value))}
-                      className="w-full h-1.5 bg-[#EAE1D7] rounded-lg appearance-none cursor-pointer accent-[#C87A47]"
+                      className="w-full h-2 bg-[#E0DDD5] rounded appearance-none cursor-pointer accent-[#FFC700]"
                     />
                   </div>
 
                   <div>
-                    <div className="flex justify-between text-xs font-bold text-[#2B1D16] mb-1.5">
-                      <span>Vertical Y Position</span>
-                      <span className="font-mono text-[#C87A47]">{captionPositionY}%</span>
+                    <div className="flex justify-between text-xs font-black uppercase text-black mb-1">
+                      <span>Position Y</span>
+                      <span className="font-mono">{captionPositionY}%</span>
                     </div>
                     <input
                       type="range"
@@ -781,67 +712,41 @@ function EditorContent() {
                       max="90"
                       value={captionPositionY}
                       onChange={(e) => setCaptionPositionY(Number(e.target.value))}
-                      className="w-full h-1.5 bg-[#EAE1D7] rounded-lg appearance-none cursor-pointer accent-[#C87A47]"
+                      className="w-full h-2 bg-[#E0DDD5] rounded appearance-none cursor-pointer accent-[#FFC700]"
                     />
                   </div>
                 </div>
 
-                {/* Toggles */}
-                <div className="space-y-3 bg-[#FAF6F1] p-4 rounded-2xl border border-[#E8DDD2]">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-[#2B1D16] flex items-center gap-1.5">
-                      <Smile className="w-3.5 h-3.5 text-[#C87A47]" />
-                      <span>Auto Emojis In Subtitles</span>
-                    </span>
-                    <button
-                      onClick={() => setShowEmojis(!showEmojis)}
-                      className={`w-9 h-5 rounded-full relative transition-colors cursor-pointer ${
-                        showEmojis ? "bg-[#C87A47]" : "bg-[#DDD3C7]"
-                      }`}
-                    >
-                      <div
-                        className={`w-3.5 h-3.5 bg-white rounded-full absolute top-0.75 transition-all ${
-                          showEmojis ? "right-1" : "left-1"
-                        }`}
-                      />
-                    </button>
-                  </div>
-
-                  <div className="flex items-center justify-between pt-2 border-t border-[#E8DDD2]">
-                    <span className="text-xs font-bold text-[#2B1D16]">UPPERCASE All Words</span>
-                    <button
-                      onClick={() => setIsUppercase(!isUppercase)}
-                      className={`w-9 h-5 rounded-full relative transition-colors cursor-pointer ${
-                        isUppercase ? "bg-[#C87A47]" : "bg-[#DDD3C7]"
-                      }`}
-                    >
-                      <div
-                        className={`w-3.5 h-3.5 bg-white rounded-full absolute top-0.75 transition-all ${
-                          isUppercase ? "right-1" : "left-1"
-                        }`}
-                      />
-                    </button>
-                  </div>
+                <div className="flex items-center justify-between p-3 border-2 border-black rounded-xl bg-[#F8F7F4]">
+                  <span className="text-xs font-black uppercase text-black">UPPERCASE All Text</span>
+                  <button
+                    onClick={() => setIsUppercase(!isUppercase)}
+                    className={`px-3 py-1 border-2 border-black rounded text-xs font-black uppercase cursor-pointer ${
+                      isUppercase ? "bg-[#FFC700] text-black" : "bg-white text-black"
+                    }`}
+                  >
+                    {isUppercase ? "YES" : "NO"}
+                  </button>
                 </div>
               </div>
             )}
 
             {/* TAB 4: AUDIO & SPEED */}
             {activeTab === "audio" && (
-              <div className="space-y-5">
+              <div className="space-y-4">
                 <div>
-                  <label className="text-xs font-black text-[#2B1D16] uppercase tracking-wider block mb-2">
-                    Playback & Clip Speed
+                  <label className="text-xs font-black uppercase tracking-wider block mb-1.5 text-black">
+                    Clip Playback Speed
                   </label>
-                  <div className="grid grid-cols-6 gap-1 bg-[#FAF6F1] p-1.5 rounded-2xl border border-[#E8DDD2]">
-                    {[0.5, 0.75, 1.0, 1.25, 1.5, 2.0].map((s) => (
+                  <div className="grid grid-cols-5 gap-1">
+                    {[0.75, 1.0, 1.25, 1.5, 2.0].map((s) => (
                       <button
                         key={s}
                         onClick={() => setPlaybackSpeed(s)}
-                        className={`py-2 rounded-xl text-xs font-bold text-center transition-all cursor-pointer ${
+                        className={`py-2 border-2 border-black rounded-lg text-xs font-black uppercase text-center transition-all cursor-pointer ${
                           playbackSpeed === s
-                            ? "bg-[#2B1D16] text-white shadow-sm"
-                            : "text-[#7A6B63] hover:text-[#2B1D16]"
+                            ? "bg-[#FFC700] text-black shadow-[2px_2px_0px_#000000]"
+                            : "bg-white text-black hover:bg-[#F8F7F4]"
                         }`}
                       >
                         {s}x
@@ -850,14 +755,10 @@ function EditorContent() {
                   </div>
                 </div>
 
-                {/* Volume Slider */}
-                <div className="bg-[#FAF6F1] p-4 rounded-2xl border border-[#E8DDD2] space-y-2">
-                  <div className="flex items-center justify-between text-xs font-bold text-[#2B1D16]">
-                    <span className="flex items-center gap-1.5">
-                      <Volume2 className="w-3.5 h-3.5 text-[#C87A47]" />
-                      <span>Volume Level</span>
-                    </span>
-                    <span className="font-mono text-[#C87A47]">{volume}%</span>
+                <div className="bg-[#F8F7F4] p-3 border-2 border-black rounded-xl space-y-1.5">
+                  <div className="flex items-center justify-between text-xs font-black uppercase text-black">
+                    <span>Volume Boost</span>
+                    <span className="font-mono">{volume}%</span>
                   </div>
                   <input
                     type="range"
@@ -865,65 +766,35 @@ function EditorContent() {
                     max="200"
                     value={volume}
                     onChange={(e) => setVolume(Number(e.target.value))}
-                    className="w-full h-1.5 bg-[#EAE1D7] rounded-lg appearance-none cursor-pointer accent-[#C87A47]"
+                    className="w-full h-2 bg-[#E0DDD5] rounded appearance-none cursor-pointer accent-[#FFC700]"
                   />
-                  <div className="flex justify-between text-[10px] text-[#7A6B63]">
-                    <span>0% (Mute)</span>
-                    <span>100% (Normal)</span>
-                    <span>200% (Boost)</span>
-                  </div>
-                </div>
-
-                {/* Voice Enhance & Denoise */}
-                <div className="flex items-center justify-between p-4 rounded-2xl bg-[#FAF6F1] border border-[#E8DDD2]">
-                  <div>
-                    <div className="text-xs font-bold text-[#2B1D16] flex items-center gap-1.5">
-                      <Zap className="w-3.5 h-3.5 text-[#C87A47]" />
-                      <span>AI Voice Enhance & Denoise</span>
-                    </div>
-                    <div className="text-[10px] text-[#7A6B63]">
-                      Attenuates room echoes & background hiss
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => setVoiceEnhance(!voiceEnhance)}
-                    className={`w-10 h-6 rounded-full relative transition-colors cursor-pointer ${
-                      voiceEnhance ? "bg-[#C87A47]" : "bg-[#DDD3C7]"
-                    }`}
-                  >
-                    <div
-                      className={`w-4 h-4 bg-white rounded-full absolute top-1 transition-all ${
-                        voiceEnhance ? "right-1" : "left-1"
-                      }`}
-                    />
-                  </button>
                 </div>
               </div>
             )}
 
-            {/* TAB 5: COLOR & FILTERS */}
+            {/* TAB 5: FILTERS */}
             {activeTab === "filters" && (
-              <div className="space-y-5">
+              <div className="space-y-4">
                 <div>
-                  <label className="text-xs font-black text-[#2B1D16] uppercase tracking-wider block mb-2">
-                    Color Filter Presets
+                  <label className="text-xs font-black uppercase tracking-wider block mb-1.5 text-black">
+                    Color Presets
                   </label>
-                  <div className="grid grid-cols-3 gap-2">
+                  <div className="grid grid-cols-3 gap-1.5">
                     {[
-                      { id: "none", label: "Original" },
-                      { id: "viral", label: "Viral Punch" },
-                      { id: "warm", label: "Warm Film" },
-                      { id: "moody", label: "Moody Dark" },
-                      { id: "cold", label: "Cold Tech" },
-                      { id: "vibrant", label: "Golden Hour" },
+                      { id: "none", label: "Raw" },
+                      { id: "viral", label: "Punch" },
+                      { id: "warm", label: "Warm" },
+                      { id: "moody", label: "Moody" },
+                      { id: "cold", label: "Cold" },
+                      { id: "vibrant", label: "Golden" },
                     ].map((f) => (
                       <button
                         key={f.id}
                         onClick={() => handleFilterPreset(f.id as any)}
-                        className={`py-2 px-2 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                        className={`py-1.5 border-2 border-black rounded-lg text-xs font-black uppercase transition-all cursor-pointer ${
                           activeFilter === f.id
-                            ? "bg-[#2B1D16] border-[#2B1D16] text-white shadow-sm"
-                            : "bg-[#FAF6F1] border-[#E8DDD2] text-[#7A6B63] hover:text-[#2B1D16]"
+                            ? "bg-[#FFC700] text-black shadow-[2px_2px_0px_#000000]"
+                            : "bg-white text-black hover:bg-[#F8F7F4]"
                         }`}
                       >
                         {f.label}
@@ -932,12 +803,11 @@ function EditorContent() {
                   </div>
                 </div>
 
-                {/* Granular Sliders */}
-                <div className="bg-[#FAF6F1] p-4 rounded-2xl border border-[#E8DDD2] space-y-4">
+                <div className="bg-[#F8F7F4] p-3 border-2 border-black rounded-xl space-y-3">
                   <div>
-                    <div className="flex justify-between text-xs font-bold text-[#2B1D16] mb-1">
+                    <div className="flex justify-between text-xs font-black uppercase text-black mb-1">
                       <span>Brightness</span>
-                      <span className="font-mono text-[#C87A47]">{brightness > 0 ? `+${brightness}` : brightness}</span>
+                      <span className="font-mono">{brightness}</span>
                     </div>
                     <input
                       type="range"
@@ -945,14 +815,13 @@ function EditorContent() {
                       max="50"
                       value={brightness}
                       onChange={(e) => setBrightness(Number(e.target.value))}
-                      className="w-full h-1.5 bg-[#EAE1D7] rounded-lg appearance-none cursor-pointer accent-[#C87A47]"
+                      className="w-full h-2 bg-[#E0DDD5] rounded appearance-none cursor-pointer accent-[#FFC700]"
                     />
                   </div>
-
                   <div>
-                    <div className="flex justify-between text-xs font-bold text-[#2B1D16] mb-1">
+                    <div className="flex justify-between text-xs font-black uppercase text-black mb-1">
                       <span>Contrast</span>
-                      <span className="font-mono text-[#C87A47]">{contrast > 0 ? `+${contrast}` : contrast}</span>
+                      <span className="font-mono">{contrast}</span>
                     </div>
                     <input
                       type="range"
@@ -960,14 +829,13 @@ function EditorContent() {
                       max="50"
                       value={contrast}
                       onChange={(e) => setContrast(Number(e.target.value))}
-                      className="w-full h-1.5 bg-[#EAE1D7] rounded-lg appearance-none cursor-pointer accent-[#C87A47]"
+                      className="w-full h-2 bg-[#E0DDD5] rounded appearance-none cursor-pointer accent-[#FFC700]"
                     />
                   </div>
-
                   <div>
-                    <div className="flex justify-between text-xs font-bold text-[#2B1D16] mb-1">
+                    <div className="flex justify-between text-xs font-black uppercase text-black mb-1">
                       <span>Saturation</span>
-                      <span className="font-mono text-[#C87A47]">{saturation > 0 ? `+${saturation}` : saturation}</span>
+                      <span className="font-mono">{saturation}</span>
                     </div>
                     <input
                       type="range"
@@ -975,22 +843,7 @@ function EditorContent() {
                       max="50"
                       value={saturation}
                       onChange={(e) => setSaturation(Number(e.target.value))}
-                      className="w-full h-1.5 bg-[#EAE1D7] rounded-lg appearance-none cursor-pointer accent-[#C87A47]"
-                    />
-                  </div>
-
-                  <div>
-                    <div className="flex justify-between text-xs font-bold text-[#2B1D16] mb-1">
-                      <span>Color Warmth / Temp</span>
-                      <span className="font-mono text-[#C87A47]">{warmth > 0 ? `+${warmth}` : warmth}</span>
-                    </div>
-                    <input
-                      type="range"
-                      min="-50"
-                      max="50"
-                      value={warmth}
-                      onChange={(e) => setWarmth(Number(e.target.value))}
-                      className="w-full h-1.5 bg-[#EAE1D7] rounded-lg appearance-none cursor-pointer accent-[#C87A47]"
+                      className="w-full h-2 bg-[#E0DDD5] rounded appearance-none cursor-pointer accent-[#FFC700]"
                     />
                   </div>
                 </div>
@@ -999,31 +852,22 @@ function EditorContent() {
           </div>
         </aside>
 
-        {/* Center Column: Live Viewport & Multitrack Timeline */}
-        <main className="flex-1 flex flex-col bg-[#EAE1D7]/50 relative overflow-hidden">
-          {/* Viewport Container */}
-          <div className="flex-1 flex items-center justify-center p-6 relative overflow-hidden">
-            {/* Aspect Ratio Canvas Container */}
+        {/* Center: Viewport & Multitrack Timeline */}
+        <main className="flex-1 flex flex-col bg-[#F8F7F4] relative overflow-hidden">
+          {/* Viewport Canvas Stage */}
+          <div className="flex-1 flex items-center justify-center p-4 sm:p-6 relative overflow-hidden">
             <div
-              className={`relative rounded-[28px] overflow-hidden shadow-2xl border-2 border-[#DDD3C7] transition-all flex flex-col items-center justify-center ${
+              className={`relative rounded-xl overflow-hidden border-2 border-black shadow-[5px_5px_0px_#000000] transition-all flex flex-col items-center justify-center ${
                 aspectRatio === "9:16"
-                  ? "w-[270px] sm:w-[290px] h-[490px] sm:h-[520px]"
+                  ? "w-[260px] sm:w-[280px] h-[460px] sm:h-[490px]"
                   : aspectRatio === "1:1"
-                  ? "w-[360px] sm:w-[420px] h-[360px] sm:h-[420px]"
+                  ? "w-[340px] sm:w-[380px] h-[340px] sm:h-[380px]"
                   : aspectRatio === "16:9"
-                  ? "w-[480px] sm:w-[560px] h-[270px] sm:h-[315px]"
-                  : "w-[320px] sm:w-[360px] h-[400px] sm:h-[450px]"
-              } ${
-                canvasBg === "black"
-                  ? "bg-black"
-                  : canvasBg === "sand"
-                  ? "bg-[#F5EFEB]"
-                  : canvasBg === "white"
-                  ? "bg-white"
-                  : "bg-black"
-              }`}
+                  ? "w-[440px] sm:w-[500px] h-[250px] sm:h-[280px]"
+                  : "w-[300px] sm:w-[340px] h-[375px] sm:h-[425px]"
+              } ${canvasBg === "black" ? "bg-black" : canvasBg === "sand" ? "bg-[#F8F7F4]" : "bg-black"}`}
             >
-              {/* Blurred Backdrop if selected */}
+              {/* Blurred Backdrop */}
               {canvasBg === "blur" && clip?.videoUrl && (
                 <video
                   src={clip.renderedVideoUrl || clip.videoUrl}
@@ -1033,74 +877,61 @@ function EditorContent() {
                 />
               )}
 
-              {/* Video Element with live CSS Transforms & Filters */}
+              {/* Video with CSS Transforms & Filters */}
               <div className="relative w-full h-full flex items-center justify-center overflow-hidden">
                 <video
                   ref={videoRef}
                   src={clip?.renderedVideoUrl || clip?.videoUrl || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=600&auto=format&fit=crop&q=80"}
-                  className="w-full h-full object-cover transition-transform duration-100 ease-out"
+                  className="w-full h-full object-cover"
                   style={{
                     transform: `scale(${zoom / 100}) translate(${posX}px, ${posY}px) rotate(${rotation}deg) scaleX(${flipH ? -1 : 1})`,
-                    filter: `brightness(${100 + brightness}%) contrast(${100 + contrast}%) saturate(${100 + saturation}%) sepia(${warmth > 0 ? warmth : 0}%) hue-rotate(${warmth < 0 ? warmth * 2 : 0}deg)`,
+                    filter: `brightness(${100 + brightness}%) contrast(${100 + contrast}%) saturate(${100 + saturation}%)`,
                   }}
                   muted={isMuted}
                   playsInline
                 />
 
-                {/* TikTok / Reels Safe Zone Overlay */}
+                {/* Safe Zone Overlay - Zero Emojis, Clean Lucide SVG Icons */}
                 {safeZoneOverlay && (
-                  <div className="absolute inset-0 pointer-events-none z-30 flex flex-col justify-between p-4 border-2 border-dashed border-amber-400/60 bg-black/10">
-                    <div className="text-[10px] font-bold text-amber-300 bg-black/60 px-2 py-0.5 rounded-full self-start">
-                      Safe Zone Active (UI Overlay)
+                  <div className="absolute inset-0 pointer-events-none z-30 flex flex-col justify-between p-3 border-2 border-dashed border-[#FFC700] bg-black/10">
+                    <div className="text-[9px] font-black uppercase text-black bg-[#FFC700] px-2 py-0.5 border border-black self-start">
+                      SAFE ZONE GUIDE
                     </div>
-                    {/* Simulated Right Icons (Like, Comment, Share) */}
-                    <div className="self-end space-y-3 mr-1 mb-8 opacity-75">
-                      <div className="w-8 h-8 rounded-full bg-white/30 backdrop-blur-md flex items-center justify-center text-[10px]">❤️</div>
-                      <div className="w-8 h-8 rounded-full bg-white/30 backdrop-blur-md flex items-center justify-center text-[10px]">💬</div>
-                      <div className="w-8 h-8 rounded-full bg-white/30 backdrop-blur-md flex items-center justify-center text-[10px]">↗️</div>
+                    <div className="self-end space-y-2.5 mr-1 mb-6 opacity-85">
+                      <div className="w-7 h-7 rounded border border-white bg-black/70 flex items-center justify-center">
+                        <Heart className="w-3.5 h-3.5 text-white" />
+                      </div>
+                      <div className="w-7 h-7 rounded border border-white bg-black/70 flex items-center justify-center">
+                        <MessageSquare className="w-3.5 h-3.5 text-white" />
+                      </div>
+                      <div className="w-7 h-7 rounded border border-white bg-black/70 flex items-center justify-center">
+                        <Share2 className="w-3.5 h-3.5 text-white" />
+                      </div>
                     </div>
-                    <div className="text-[9px] font-bold text-amber-300 bg-black/60 px-2 py-0.5 rounded-full self-center">
-                      Caption Danger Zone (Avoid bottom 15%)
+                    <div className="text-[8px] font-black uppercase text-black bg-[#FFC700] px-2 py-0.5 border border-black self-center">
+                      CAPTION ZONE
                     </div>
                   </div>
                 )}
 
-                {/* Live Dynamic Captions Overlay */}
+                {/* Captions Overlay - Zero Emojis */}
                 {activeWord && (
                   <div
-                    className="absolute left-0 right-0 z-20 px-4 text-center pointer-events-none transition-all"
+                    className="absolute left-0 right-0 z-20 px-3 text-center pointer-events-none"
                     style={{ top: `${captionPositionY}%` }}
                   >
-                    <div
-                      className={`inline-block px-3.5 py-1.5 rounded-2xl ${
-                        bgBox === "pill"
-                          ? "bg-black/75 backdrop-blur-sm"
-                          : bgBox === "box"
-                          ? "bg-black/90"
-                          : ""
-                      }`}
-                    >
+                    <div className="inline-block px-3 py-1 bg-black/85 border border-white/20">
                       <span
                         className="font-black tracking-tight"
                         style={{
                           fontFamily: fontFamily,
-                          fontSize:
-                            fontSize === "sm"
-                              ? "14px"
-                              : fontSize === "md"
-                              ? "18px"
-                              : fontSize === "lg"
-                              ? "22px"
-                              : fontSize === "xl"
-                              ? "26px"
-                              : "30px",
+                          fontSize: fontSize === "sm" ? "14px" : fontSize === "md" ? "18px" : "22px",
                           color: highlightColor,
                           WebkitTextStroke: `${strokeWidth}px ${strokeColor}`,
                           textTransform: isUppercase ? "uppercase" : "none",
                         }}
                       >
-                        {activeWord.text}{" "}
-                        {showEmojis && activeWord.emoji ? activeWord.emoji : ""}
+                        {activeWord.text}
                       </span>
                     </div>
                   </div>
@@ -1109,16 +940,15 @@ function EditorContent() {
             </div>
           </div>
 
-          {/* Bottom Multitrack Timeline & Scrub Bar */}
-          <div className="h-44 bg-white border-t border-[#E8DDD2] flex flex-col p-4 shadow-sm z-30">
-            {/* Playback Controls Bar */}
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-3">
+          {/* Bottom Scrub Timeline */}
+          <div className="bg-white border-t-2 border-black p-3.5 z-30">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
                 <button
                   onClick={togglePlay}
-                  className="w-9 h-9 rounded-full bg-[#2B1D16] hover:bg-[#3D2C24] text-white flex items-center justify-center transition-transform active:scale-95 cursor-pointer shadow-sm"
+                  className="w-8 h-8 bg-black hover:bg-[#FFC700] hover:text-black text-white border-2 border-black flex items-center justify-center transition-colors cursor-pointer"
                 >
-                  {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 ml-0.5" />}
+                  {isPlaying ? <Pause className="w-3.5 h-3.5 stroke-[3]" /> : <Play className="w-3.5 h-3.5 ml-0.5 stroke-[3]" />}
                 </button>
 
                 <button
@@ -1126,51 +956,45 @@ function EditorContent() {
                     setCurrentTime(0);
                     if (videoRef.current) videoRef.current.currentTime = 0;
                   }}
-                  className="p-2 rounded-xl hover:bg-[#FAF6F1] text-[#7A6B63] hover:text-[#2B1D16] transition-colors cursor-pointer"
-                  title="Rewind to start"
+                  className="p-1.5 border-2 border-black bg-white hover:bg-[#F8F7F4] text-black transition cursor-pointer"
+                  title="Rewind"
                 >
-                  <RotateCcw className="w-4 h-4" />
+                  <RotateCcw className="w-3 h-3 stroke-[3]" />
                 </button>
 
-                <div className="font-mono text-xs font-bold text-[#2B1D16]">
+                <div className="font-mono text-xs font-black text-black">
                   {formatTime(currentTime)} / {formatTime(duration)}
                 </div>
               </div>
 
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] font-bold text-[#7A6B63] uppercase">Speed: {playbackSpeed}x</span>
-                <span className="text-[10px] font-bold text-[#7A6B63] uppercase">•</span>
-                <span className="text-[10px] font-bold text-[#3A7D44]">Vol: {volume}%</span>
+              <div className="text-[10px] font-black uppercase text-black">
+                SPEED: {playbackSpeed}X | VOL: {volume}%
               </div>
             </div>
 
-            {/* Master Scrub Bar */}
-            <div className="relative mb-3">
-              <input
-                type="range"
-                min="0"
-                max={duration}
-                step="0.1"
-                value={currentTime}
-                onChange={(e) => {
-                  const val = Number(e.target.value);
-                  setCurrentTime(val);
-                  if (videoRef.current) videoRef.current.currentTime = val;
-                }}
-                className="w-full h-2 bg-[#FAF6F1] border border-[#E8DDD2] rounded-full appearance-none cursor-pointer accent-[#C87A47]"
-              />
-            </div>
+            {/* Scrub Slider */}
+            <input
+              type="range"
+              min="0"
+              max={duration}
+              step="0.1"
+              value={currentTime}
+              onChange={(e) => {
+                const val = Number(e.target.value);
+                setCurrentTime(val);
+                if (videoRef.current) videoRef.current.currentTime = val;
+              }}
+              className="w-full h-2 bg-[#E0DDD5] border border-black appearance-none cursor-pointer accent-[#FFC700] mb-2.5"
+            />
 
-            {/* Word-by-Word Text Cutting Track */}
-            <div className="flex-1 overflow-x-auto flex items-center gap-1.5 pb-1 select-none">
-              <span className="text-[10px] font-bold text-[#7A6B63] uppercase mr-2 flex items-center gap-1 flex-shrink-0">
-                <Scissors className="w-3 h-3 text-[#C87A47]" />
-                <span>Text Cut:</span>
+            {/* Word Trimming Track (Zero Emojis) */}
+            <div className="overflow-x-auto flex items-center gap-1 pb-1 select-none">
+              <span className="text-[10px] font-black uppercase mr-1.5 flex items-center gap-1 flex-shrink-0">
+                <Scissors className="w-3 h-3 stroke-[3]" />
+                <span>CUT:</span>
               </span>
               {transcriptWords.map((word) => {
-                const isCurrent =
-                  currentTime >= word.time &&
-                  currentTime < word.time + 1.2;
+                const isCurrent = currentTime >= word.time && currentTime < word.time + 1.2;
                 return (
                   <div
                     key={word.id}
@@ -1178,25 +1002,24 @@ function EditorContent() {
                       setCurrentTime(word.time);
                       if (videoRef.current) videoRef.current.currentTime = word.time;
                     }}
-                    className={`group relative px-2.5 py-1 rounded-xl text-xs font-bold border transition-all cursor-pointer flex-shrink-0 flex items-center gap-1 ${
+                    className={`group relative px-2 py-0.5 text-xs font-black uppercase border border-black cursor-pointer flex-shrink-0 flex items-center gap-1 ${
                       word.deleted
-                        ? "line-through opacity-40 bg-[#FAF6F1] border-[#E8DDD2] text-[#A09085]"
+                        ? "line-through opacity-30 bg-gray-200 text-gray-500"
                         : isCurrent
-                        ? "bg-[#2B1D16] border-[#2B1D16] text-white shadow-sm"
-                        : "bg-[#FAF6F1] hover:bg-white border-[#E8DDD2] text-[#2B1D16]"
+                        ? "bg-[#FFC700] text-black font-black"
+                        : "bg-[#F8F7F4] text-black hover:bg-white"
                     }`}
                   >
                     <span>{word.text}</span>
-                    {word.emoji && <span>{word.emoji}</span>}
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
                         toggleWordDelete(word.id);
                       }}
-                      className="opacity-0 group-hover:opacity-100 hover:text-red-500 transition-opacity ml-0.5"
-                      title={word.deleted ? "Restore word" : "Cut filler word"}
+                      className="opacity-0 group-hover:opacity-100 hover:text-red-600 transition-opacity ml-0.5"
+                      title={word.deleted ? "Restore" : "Cut word"}
                     >
-                      <Scissors className="w-2.5 h-2.5" />
+                      <Scissors className="w-2.5 h-2.5 stroke-[3]" />
                     </button>
                   </div>
                 );
@@ -1206,29 +1029,29 @@ function EditorContent() {
         </main>
       </div>
 
-      {/* CapCut Style Export Modal */}
+      {/* Export Modal */}
       {showExportModal && (
-        <div className="fixed inset-0 z-50 bg-[#2B1D16]/50 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white max-w-md w-full p-7 rounded-[32px] border border-[#E8DDD2] shadow-2xl animate-in zoom-in-95 duration-200 text-[#2B1D16]">
-            <h3 className="text-xl font-extrabold text-[#2B1D16] mb-1">Export Viral Video</h3>
-            <p className="text-xs text-[#7A695F] mb-5">
-              Render with CapCut manual transforms, color grading, and burned-in subtitles.
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white max-w-sm w-full p-6 rounded-2xl border-2 border-black shadow-[6px_6px_0px_#000000] text-black">
+            <h3 className="text-base font-black uppercase text-black mb-1">Export Video</h3>
+            <p className="text-xs text-[#555555] font-bold mb-4">
+              Render with manual transforms and hardcoded captions.
             </p>
 
-            <div className="space-y-4 mb-6">
+            <div className="space-y-3 mb-5">
               <div>
-                <label className="text-xs font-bold text-[#2B1D16] block mb-1.5">
-                  Render Resolution
+                <label className="text-xs font-black uppercase text-black block mb-1">
+                  Resolution
                 </label>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-3 gap-1.5">
                   {["720p", "1080p", "4K"].map((res) => (
                     <button
                       key={res}
                       onClick={() => setExportResolution(res)}
-                      className={`py-2 rounded-2xl text-xs font-bold border transition-all cursor-pointer ${
+                      className={`py-1.5 border-2 border-black rounded text-xs font-black uppercase cursor-pointer ${
                         exportResolution === res
-                          ? "bg-[#2B1D16] border-[#2B1D16] text-white shadow-sm"
-                          : "bg-[#FAF6F1] border-[#E8DDD2] text-[#7A695F]"
+                          ? "bg-[#FFC700] text-black shadow-[2px_2px_0px_#000000]"
+                          : "bg-[#F8F7F4] text-black"
                       }`}
                     >
                       {res}
@@ -1237,69 +1060,35 @@ function EditorContent() {
                 </div>
               </div>
 
-              <div>
-                <label className="text-xs font-bold text-[#2B1D16] block mb-1.5">
-                  Target Frame Rate
-                </label>
-                <div className="grid grid-cols-2 gap-2">
-                  {[
-                    { id: "30", label: "30 FPS (Standard)" },
-                    { id: "60", label: "60 FPS (Ultra Smooth)" },
-                  ].map((fps) => (
-                    <button
-                      key={fps.id}
-                      onClick={() => setExportFps(fps.id)}
-                      className={`py-2 rounded-2xl text-xs font-bold border transition-all cursor-pointer ${
-                        exportFps === fps.id
-                          ? "bg-[#2B1D16] border-[#2B1D16] text-white shadow-sm"
-                          : "bg-[#FAF6F1] border-[#E8DDD2] text-[#7A695F]"
-                      }`}
-                    >
-                      {fps.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="p-3.5 rounded-2xl bg-[#FAF6F1] border border-[#E8DDD2] text-xs text-[#2B1D16] space-y-1">
+              <div className="p-3 bg-[#F8F7F4] border-2 border-black text-xs font-bold space-y-1">
                 <div className="flex justify-between">
-                  <span className="text-[#7A695F]">Format:</span>
-                  <span className="font-bold text-[#2B1D16]">MP4 (H.264 / AAC)</span>
+                  <span className="text-[#666666]">Format:</span>
+                  <span className="font-black">MP4 (H.264)</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-[#7A695F]">Aspect Ratio:</span>
-                  <span className="font-bold text-[#2B1D16]">{aspectRatio}</span>
+                  <span className="text-[#666666]">Ratio:</span>
+                  <span className="font-black">{aspectRatio}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-[#7A695F]">Hardcoded Subtitles:</span>
-                  <span className="font-bold text-[#3A7D44]">Enabled ({captionStyle})</span>
+                  <span className="text-[#666666]">Watermark:</span>
+                  <span className="font-black text-[#15803D]">None</span>
                 </div>
               </div>
             </div>
 
-            <div className="flex gap-2.5">
+            <div className="flex gap-2">
               <button
                 onClick={() => setShowExportModal(false)}
-                className="flex-1 py-3 rounded-full border border-[#E8DDD2] bg-[#FAF6F1] text-[#2B1D16] text-xs font-bold hover:bg-[#EAE1D7] transition-colors cursor-pointer"
+                className="flex-1 neo-btn-white py-2 rounded-lg text-xs font-black uppercase cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 onClick={handleExport}
                 disabled={isExporting}
-                className="flex-1 warm-btn-terracotta py-3 rounded-full text-white text-xs font-bold flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60 shadow-md shadow-[#C87A47]/20 transition-all"
+                className="flex-1 neo-btn-yellow py-2 rounded-lg text-xs font-black uppercase flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
               >
-                {isExporting ? (
-                  <>
-                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    <span>Rendering Video...</span>
-                  </>
-                ) : (
-                  <>
-                    <Download className="w-4 h-4" />
-                    <span>Download MP4</span>
-                  </>
-                )}
+                {isExporting ? "Rendering..." : "Download"}
               </button>
             </div>
           </div>
@@ -1313,8 +1102,8 @@ export default function EditorPage() {
   return (
     <Suspense
       fallback={
-        <div className="min-h-screen bg-[#F5EFEB] text-[#2B1D16] p-8 flex items-center justify-center font-bold">
-          Loading Opus Studio Pro Editor...
+        <div className="min-h-screen bg-[#F8F7F4] text-black p-8 font-black">
+          Loading Editor...
         </div>
       }
     >

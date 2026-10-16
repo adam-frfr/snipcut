@@ -24,7 +24,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body
-        className={`${jakarta.className} min-h-screen bg-[#F5EFEB] text-[#2B1D16] antialiased selection:bg-[#C87A47] selection:text-white`}
+        className={`${jakarta.className} min-h-screen bg-[#F8F7F4] text-black antialiased selection:bg-[#FFC700] selection:text-black`}
       >
         {children}
       </body>

@@ -29,7 +29,6 @@ export interface GeneratedClip {
     text: string;
     speaker: string;
     highlightWord?: string;
-    emoji?: string;
   }[];
   layout: "single-focus" | "split-screen" | "blurred-fit";
   bRollTrigger?: string;
@@ -40,7 +39,7 @@ export interface GeneratedClip {
 export const SAMPLE_VIDEOS: VideoSample[] = [
   {
     id: "sample-sam-altman",
-    title: "Sam Altman: The Reality of AGI & The Next 5 Years",
+    title: "Sam Altman: The Reality of AGI and The Next 5 Years",
     channel: "Lex Fridman Podcast #419",
     duration: "2:14:30",
     sourceUrl: "https://youtube.com/watch?v=sample-sam-altman",
@@ -52,7 +51,7 @@ export const SAMPLE_VIDEOS: VideoSample[] = [
   },
   {
     id: "sample-alex-hormozi",
-    title: "The $100M Marketing Secret Nobody Talks About",
+    title: "The 100M Marketing Secret Nobody Talks About",
     channel: "Alex Hormozi",
     duration: "48:15",
     sourceUrl: "https://youtube.com/watch?v=sample-alex-hormozi",
@@ -74,7 +73,7 @@ export const SAMPLE_VIDEOS: VideoSample[] = [
   },
   {
     id: "sample-mrbeast",
-    title: "Why 99% of YouTube Videos Fail in the First 5 Seconds",
+    title: "Why 99 Percent of Videos Fail in the First 5 Seconds",
     channel: "The Joe Rogan Experience",
     duration: "2:40:12",
     sourceUrl: "https://youtube.com/watch?v=sample-mrbeast",
@@ -90,7 +89,7 @@ export const MOCK_CLIPS: GeneratedClip[] = [
   {
     id: "clip-1",
     sampleId: "sample-sam-altman",
-    title: "AGI isn't coming in 20 years, it's happening right now 🤯",
+    title: "AGI is not coming in 20 years, it is happening right now",
     viralityScore: 98,
     hookStrength: 99,
     engagementScore: 96,
@@ -105,17 +104,17 @@ export const MOCK_CLIPS: GeneratedClip[] = [
     thumbnailUrl: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=600&auto=format&fit=crop&q=80",
     transcript: [
       { start: 0, end: 3, text: "Most people think", speaker: "Sam Altman", highlightWord: "think" },
-      { start: 3, end: 6, text: "AGI is decades away,", speaker: "Sam Altman", highlightWord: "AGI", emoji: "🤖" },
-      { start: 6, end: 11, text: "but look at the exponential compute curve.", speaker: "Sam Altman", highlightWord: "exponential", emoji: "📈" },
-      { start: 11, end: 17, text: "The systems we are training today are already reasoning.", speaker: "Sam Altman", highlightWord: "reasoning", emoji: "🧠" },
-      { start: 17, end: 24, text: "If you wait until 2030 to adapt, your entire business will be obsolete.", speaker: "Sam Altman", highlightWord: "obsolete", emoji: "⚡" },
-      { start: 24, end: 32, text: "We are entering the steepest inflection point in human history.", speaker: "Sam Altman", highlightWord: "inflection point", emoji: "🚀" },
+      { start: 3, end: 6, text: "AGI is decades away,", speaker: "Sam Altman", highlightWord: "AGI" },
+      { start: 6, end: 11, text: "but look at the exponential compute curve.", speaker: "Sam Altman", highlightWord: "exponential" },
+      { start: 11, end: 17, text: "The systems we are training today are already reasoning.", speaker: "Sam Altman", highlightWord: "reasoning" },
+      { start: 17, end: 24, text: "If you wait until 2030 to adapt, your entire business will be obsolete.", speaker: "Sam Altman", highlightWord: "obsolete" },
+      { start: 24, end: 32, text: "We are entering the steepest inflection point in human history.", speaker: "Sam Altman", highlightWord: "inflection point" },
     ],
   },
   {
     id: "clip-2",
     sampleId: "sample-alex-hormozi",
-    title: "The #1 Reason Why Small Businesses Go Broke 💸",
+    title: "The Number 1 Reason Why Small Businesses Go Broke",
     viralityScore: 94,
     hookStrength: 95,
     engagementScore: 92,
@@ -125,20 +124,20 @@ export const MOCK_CLIPS: GeneratedClip[] = [
     aspectRatio: "9:16",
     captionStyle: "hormozi",
     layout: "single-focus",
-    bRollTrigger: "Stacks of cash & bankruptcy chart",
+    bRollTrigger: "Stacks of cash and bankruptcy chart",
     videoUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4",
     thumbnailUrl: "https://images.unsplash.com/photo-1551836022-d5d88e9218df?w=600&auto=format&fit=crop&q=80",
     transcript: [
-      { start: 0, end: 2.5, text: "Stop competing on price.", speaker: "Alex Hormozi", highlightWord: "Stop", emoji: "🛑" },
-      { start: 2.5, end: 7, text: "When you are the cheapest, you attract the absolute worst customers.", speaker: "Alex Hormozi", highlightWord: "cheapest", emoji: "📉" },
-      { start: 7, end: 14, text: "Instead, 10x your price and deliver a guarantee so ridiculous they can't say no.", speaker: "Alex Hormozi", highlightWord: "10x your price", emoji: "💰" },
-      { start: 14, end: 21, text: "That is how you build a hundred million dollar business overnight.", speaker: "Alex Hormozi", highlightWord: "hundred million", emoji: "🏆" },
+      { start: 0, end: 2.5, text: "Stop competing on price.", speaker: "Alex Hormozi", highlightWord: "Stop" },
+      { start: 2.5, end: 7, text: "When you are the cheapest, you attract the absolute worst customers.", speaker: "Alex Hormozi", highlightWord: "cheapest" },
+      { start: 7, end: 14, text: "Instead, 10x your price and deliver a guarantee so ridiculous they cannot say no.", speaker: "Alex Hormozi", highlightWord: "10x your price" },
+      { start: 14, end: 21, text: "That is how you build a hundred million dollar business overnight.", speaker: "Alex Hormozi", highlightWord: "hundred million" },
     ],
   },
   {
     id: "clip-3",
     sampleId: "sample-huberman",
-    title: "Do this for 10 minutes every morning to fix your focus ☀️",
+    title: "Do this for 10 minutes every morning to fix your focus",
     viralityScore: 91,
     hookStrength: 93,
     engagementScore: 89,
@@ -153,15 +152,15 @@ export const MOCK_CLIPS: GeneratedClip[] = [
     thumbnailUrl: "https://images.unsplash.com/photo-1507679799987-c73779587ccf?w=600&auto=format&fit=crop&q=80",
     transcript: [
       { start: 0, end: 3, text: "Within 30 minutes of waking,", speaker: "Andrew Huberman", highlightWord: "waking" },
-      { start: 3, end: 8, text: "get outside and view direct natural sunlight.", speaker: "Andrew Huberman", highlightWord: "sunlight", emoji: "☀️" },
-      { start: 8, end: 14, text: "It triggers a cortisol pulse that sets your 24-hour circadian clock.", speaker: "Andrew Huberman", highlightWord: "cortisol", emoji: "⏰" },
-      { start: 14, end: 22, text: "Your dopamine baseline stays elevated, and sleep at night becomes effortless.", speaker: "Andrew Huberman", highlightWord: "dopamine", emoji: "🧠" },
+      { start: 3, end: 8, text: "get outside and view direct natural sunlight.", speaker: "Andrew Huberman", highlightWord: "sunlight" },
+      { start: 8, end: 14, text: "It triggers a cortisol pulse that sets your 24-hour circadian clock.", speaker: "Andrew Huberman", highlightWord: "cortisol" },
+      { start: 14, end: 22, text: "Your dopamine baseline stays elevated, and sleep at night becomes effortless.", speaker: "Andrew Huberman", highlightWord: "dopamine" },
     ],
   },
   {
     id: "clip-4",
     sampleId: "sample-mrbeast",
-    title: "MrBeast's Golden Rule for the First 3 Seconds 🎬",
+    title: "MrBeast Golden Rule for the First 3 Seconds",
     viralityScore: 89,
     hookStrength: 94,
     engagementScore: 88,
@@ -176,9 +175,9 @@ export const MOCK_CLIPS: GeneratedClip[] = [
     thumbnailUrl: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=600&auto=format&fit=crop&q=80",
     transcript: [
       { start: 0, end: 3, text: "If the first frame", speaker: "MrBeast", highlightWord: "first frame" },
-      { start: 3, end: 7, text: "doesn't match the thumbnail promise, they swipe.", speaker: "MrBeast", highlightWord: "swipe", emoji: "👆" },
-      { start: 7, end: 13, text: "Never say 'Hey guys welcome back'. Say the craziest sentence first.", speaker: "MrBeast", highlightWord: "craziest", emoji: "🔥" },
-      { start: 13, end: 21, text: "Hook them by second two, or your video is dead on arrival.", speaker: "MrBeast", highlightWord: "dead on arrival", emoji: "💀" },
+      { start: 3, end: 7, text: "does not match the thumbnail promise, they swipe.", speaker: "MrBeast", highlightWord: "swipe" },
+      { start: 7, end: 13, text: "Never say Hey guys welcome back. Say the craziest sentence first.", speaker: "MrBeast", highlightWord: "craziest" },
+      { start: 13, end: 21, text: "Hook them by second two, or your video is dead on arrival.", speaker: "MrBeast", highlightWord: "dead on arrival" },
     ],
   },
 ];
@@ -187,7 +186,7 @@ export const CAPTION_PRESETS = [
   {
     id: "hormozi",
     name: "Alex Hormozi",
-    desc: "Bold punchy yellow & green text, black stroke, all caps",
+    desc: "Bold punchy yellow and green text, black stroke, all caps",
     textColor: "#FACC15",
     highlightColor: "#22C55E",
     bgStyle: "black-stroke",
@@ -196,7 +195,7 @@ export const CAPTION_PRESETS = [
   {
     id: "neon",
     name: "Cyberpunk Neon",
-    desc: "Glowing violet & cyan text with futuristic aesthetic",
+    desc: "Violet and cyan text with high contrast outline",
     textColor: "#FFFFFF",
     highlightColor: "#06B6D4",
     bgStyle: "neon-glow",
@@ -216,35 +215,8 @@ export const CAPTION_PRESETS = [
     name: "Subtle Modern",
     desc: "Clean minimal subtitles with soft pill backdrop",
     textColor: "#FFFFFF",
-    highlightColor: "#A855F7",
+    highlightColor: "#000000",
     bgStyle: "pill-backdrop",
     uppercase: false,
-  },
-];
-
-export const FAQS = [
-  {
-    q: "How does OpusClip work?",
-    a: "OpusClip uses multimodal AI (ClipAnything™) to analyze your long-form video's visual flow, speech cadence, and sentiment. It extracts the most viral moments, automatically reframes landscape 16:9 videos into 9:16 vertical shorts keeping the speaker centered, adds word-by-word dynamic karaoke captions, and assigns an AI Virality Score™.",
-  },
-  {
-    q: "What types of videos can I repurpose?",
-    a: "You can upload podcasts, video interviews, YouTube essays, webinars, commentary videos, gaming streams, tutorials, product demos, or TikTok/IG live recordings up to 10GB or 10 hours in length.",
-  },
-  {
-    q: "What is the AI Virality Score™?",
-    a: "The AI Virality Score™ is a 0 to 100 predictive score based on analysis of over 500,000 viral shorts across TikTok, YouTube Shorts, and Reels. It evaluates hook strength, pacing, emotional resonance, and audience retention potential.",
-  },
-  {
-    q: "Can I customize the caption styling and brand kit?",
-    a: "Yes! You can choose from viral caption presets (like Alex Hormozi style, Neon, MrBeast), customize fonts, add custom brand colors, upload watermarks, toggle auto-emojis, and add intro/outro video bumpers.",
-  },
-  {
-    q: "Which languages are supported?",
-    a: "OpusClip supports 30+ languages including English, Spanish, German, French, Portuguese, Italian, Japanese, Korean, Hindi, Polish, and Dutch with 97%+ transcription accuracy.",
-  },
-  {
-    q: "Can I edit the clips manually?",
-    a: "Absolutely. Our built-in OpusClip Studio Editor allows you to trim clips, edit text-based transcripts directly, change camera angles (single speaker vs split-screen), insert AI B-Roll footage, and remove filler words with 1 click.",
   },
 ];

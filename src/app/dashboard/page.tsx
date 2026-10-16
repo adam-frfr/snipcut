@@ -24,6 +24,8 @@ import {
   Target,
   Layout,
   Eye,
+  Zap,
+  Mic,
 } from "lucide-react";
 import ApiSettingsModal from "@/components/ApiSettingsModal";
 import confetti from "canvas-confetti";
@@ -517,63 +519,57 @@ function DashboardContent() {
     } finally {
       setIsRendering(false);
     }
-  };
-
-  return (
-    <div className="min-h-screen bg-[#F5EFEB] text-[#2B1D16]">
-      {/* Top Header */}
-      <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-[#E8DDD2] px-4 sm:px-6 lg:px-8 py-3.5 shadow-sm">
+  };  return (
+    <div className="min-h-screen bg-[#F8F7F4] text-black font-sans selection:bg-[#FFC700] selection:text-black">
+      {/* Neo-Brutalist Top Header */}
+      <header className="sticky top-0 z-40 bg-white border-b-2 border-black px-4 sm:px-6 lg:px-8 py-3.5 shadow-sm">
         <div className="flex items-center justify-between max-w-7xl mx-auto">
-          <div className="flex items-center gap-5">
-            <Link href="/" className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-full bg-[#C87A47] text-white flex items-center justify-center shadow-sm">
-                <Scissors className="w-4 h-4" />
+          <div className="flex items-center gap-4 sm:gap-6">
+            <Link href="/" className="flex items-center gap-2 group">
+              <div className="w-8 h-8 bg-[#FFC700] border-2 border-black text-black flex items-center justify-center font-black shadow-[2px_2px_0px_#000000] group-hover:translate-x-0.5 group-hover:translate-y-0.5 group-hover:shadow-none transition-all">
+                <Scissors className="w-4 h-4 stroke-[2.5]" />
               </div>
-              <span className="font-extrabold text-base tracking-tight text-[#2B1D16]">
-                Opus<span className="text-[#C87A47]">Studio</span>
+              <span className="font-black text-lg tracking-tight uppercase">
+                OPUS<span className="bg-[#FFC700] px-1 ml-0.5 border border-black">STUDIO</span>
               </span>
             </Link>
 
-            <span className="text-[#DDD3C7] hidden sm:inline">|</span>
-            <div className="hidden sm:flex items-center gap-2 text-xs text-[#7A695F]">
-              <span>Engine Status:</span>
-              <span className="flex items-center gap-1.5 text-[#3A7D44] font-bold">
-                <span className="w-2 h-2 rounded-full bg-[#3A7D44]" />
-                <span>AI Connected ($3.00/day)</span>
-              </span>
+            <div className="hidden sm:flex items-center gap-2 text-xs border-2 border-black px-2.5 py-1 bg-[#F8F7F4] font-bold">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 border border-black animate-pulse" />
+              <span className="uppercase tracking-wider">AI ENGINE READY</span>
             </div>
           </div>
 
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2 sm:gap-3">
             <Link
               href="/editor"
-              className="px-3.5 py-1.5 text-xs font-bold rounded-full bg-[#FAF6F1] hover:bg-[#EAE1D7] border border-[#E8DDD2] text-[#2B1D16] transition-colors flex items-center gap-1.5"
+              className="px-3 py-1.5 text-xs font-black uppercase tracking-wider bg-white hover:bg-[#FFC700] border-2 border-black shadow-[2px_2px_0px_#000000] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all flex items-center gap-1.5"
             >
-              <Sliders className="w-3.5 h-3.5 text-[#C87A47]" />
-              <span>Studio Editor</span>
+              <Sliders className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Studio Editor</span>
             </Link>
 
             <Link
               href="/schedule"
-              className="px-3.5 py-1.5 text-xs font-bold rounded-full bg-[#FAF6F1] hover:bg-[#EAE1D7] border border-[#E8DDD2] text-[#2B1D16] transition-colors flex items-center gap-1.5"
+              className="px-3 py-1.5 text-xs font-black uppercase tracking-wider bg-white hover:bg-[#FFC700] border-2 border-black shadow-[2px_2px_0px_#000000] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all flex items-center gap-1.5"
             >
-              <Calendar className="w-3.5 h-3.5 text-[#3A7D44]" />
-              <span>Scheduler</span>
+              <Calendar className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Scheduler</span>
             </Link>
 
             <button
               onClick={() => setSettingsOpen(true)}
-              className="px-3.5 py-1.5 text-xs font-bold rounded-full bg-[#EAE1D7] hover:bg-[#DDD3C7] border border-[#DDD3C7] text-[#2B1D16] transition-colors flex items-center gap-1.5 cursor-pointer"
+              className="px-3 py-1.5 text-xs font-black uppercase tracking-wider bg-white hover:bg-[#FFC700] border-2 border-black shadow-[2px_2px_0px_#000000] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all flex items-center gap-1.5 cursor-pointer"
             >
-              <Key className="w-3.5 h-3.5 text-[#C87A47]" />
-              <span>API Keys</span>
+              <Key className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">API Keys</span>
             </button>
 
             <button
               onClick={() => setActiveTab("upload")}
-              className="px-4 py-1.5 text-xs font-bold text-white bg-[#2B1D16] hover:bg-[#3D2C24] rounded-full flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
+              className="px-3.5 py-1.5 text-xs font-black uppercase tracking-wider text-black bg-[#FFC700] hover:bg-[#FF5500] hover:text-white border-2 border-black shadow-[2px_2px_0px_#000000] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all flex items-center gap-1.5 cursor-pointer"
             >
-              <Plus className="w-3.5 h-3.5" />
+              <Plus className="w-3.5 h-3.5 stroke-[3]" />
               <span>New Clip</span>
             </button>
           </div>
@@ -586,12 +582,12 @@ function DashboardContent() {
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Error Alert if any */}
         {errorMsg && (
-          <div className="mb-6 p-5 rounded-[24px] bg-[#FDF2F0] border border-[#F5C2B8] text-[#8C2E20] text-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm">
+          <div className="mb-6 p-4 sm:p-5 bg-[#FFE5E5] border-2 border-black shadow-[4px_4px_0px_#000000] text-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
             <div className="flex items-start gap-2.5">
-              <AlertCircle className="w-5 h-5 text-[#C83E2D] flex-shrink-0 mt-0.5" />
+              <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
               <div>
-                <span className="font-bold block text-sm mb-0.5">Video Processing Notice</span>
-                <span className="font-medium text-[#7A281D] leading-relaxed">{errorMsg}</span>
+                <span className="font-black uppercase block text-sm mb-0.5 tracking-tight">System Notice</span>
+                <span className="font-medium text-black leading-relaxed">{errorMsg}</span>
               </div>
             </div>
             <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap flex-shrink-0">
@@ -601,7 +597,7 @@ function DashboardContent() {
                   setErrorMsg("");
                   startRealPipeline({ url: "sample", prompt: "Extract key viral points" });
                 }}
-                className="px-3.5 py-1.5 rounded-full bg-[#3A7D44] hover:bg-[#2F6537] text-white font-bold text-xs transition cursor-pointer shadow-sm flex items-center gap-1.5"
+                className="px-3 py-1.5 bg-[#FFC700] hover:bg-black hover:text-white border-2 border-black font-black text-xs uppercase shadow-[2px_2px_0px_#000000] transition cursor-pointer flex items-center gap-1.5"
               >
                 <Sparkles className="w-3.5 h-3.5" />
                 <span>Load Demo Video</span>
@@ -612,14 +608,14 @@ function DashboardContent() {
                   setErrorMsg("");
                   setActiveTab("upload");
                 }}
-                className="px-3.5 py-1.5 rounded-full bg-[#C87A47] hover:bg-[#B66D3D] text-white font-bold text-xs transition cursor-pointer shadow-sm"
+                className="px-3 py-1.5 bg-white hover:bg-[#FFC700] border-2 border-black font-black text-xs uppercase shadow-[2px_2px_0px_#000000] transition cursor-pointer"
               >
                 Upload File Directly
               </button>
               <button
                 type="button"
                 onClick={() => setErrorMsg("")}
-                className="px-3 py-1.5 rounded-full bg-white hover:bg-[#FAF6F1] border border-[#E8DDD2] text-[#2B1D16] font-bold text-xs transition cursor-pointer"
+                className="px-3 py-1.5 bg-white border-2 border-black text-black font-black text-xs uppercase hover:bg-black hover:text-white transition cursor-pointer"
               >
                 Dismiss
               </button>
@@ -629,52 +625,48 @@ function DashboardContent() {
 
         {/* Processing Modal Overlay */}
         {isProcessing && (
-          <div className="fixed inset-0 z-50 bg-[#2B1D16]/50 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="bg-white max-w-md w-full p-8 rounded-[32px] border border-[#E8DDD2] text-center shadow-2xl animate-in zoom-in-95 duration-200">
-              <div className="w-16 h-16 rounded-full bg-[#FAF6F1] border border-[#E8DDD2] text-[#C87A47] flex items-center justify-center mx-auto mb-6 relative shadow-inner">
-                <Wand2 className="w-8 h-8 animate-pulse text-[#C87A47]" />
-                <span className="absolute -top-1 -right-1 flex h-3 w-3">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#C87A47] opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-3 w-3 bg-[#C87A47]"></span>
-                </span>
+          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-white max-w-md w-full p-8 border-2 border-black shadow-[8px_8px_0px_#000000] text-center">
+              <div className="w-16 h-16 bg-[#FFC700] border-2 border-black text-black flex items-center justify-center mx-auto mb-6 shadow-[3px_3px_0px_#000000]">
+                <Wand2 className="w-8 h-8 animate-spin" />
               </div>
 
-              <h3 className="text-xl font-extrabold text-[#2B1D16] mb-2">Processing Video with AI</h3>
-              <p className="text-xs text-[#C87A47] font-bold mb-6">
+              <h3 className="text-xl font-black uppercase tracking-tight text-black mb-2">Processing Video</h3>
+              <p className="text-xs text-black font-mono font-bold mb-6 uppercase border border-black bg-[#F8F7F4] py-1.5 px-3">
                 {processingStage}
               </p>
 
-              <div className="w-full bg-[#EAE1D7] h-2.5 rounded-full overflow-hidden">
-                <div className="bg-[#C87A47] h-full rounded-full animate-pulse w-3/4" />
+              <div className="w-full bg-[#F8F7F4] h-4 border-2 border-black overflow-hidden p-0.5">
+                <div className="bg-[#FFC700] h-full animate-pulse w-3/4 border-r-2 border-black" />
               </div>
             </div>
           </div>
         )}
 
-        {/* Pill Segmented Tab Switcher */}
+        {/* Neo-Brutalist Segmented Tab Switcher */}
         <div className="flex items-center justify-between mb-8 pb-4">
-          <div className="inline-flex p-1.5 rounded-full bg-[#EAE1D7] border border-[#DDD3C7]">
+          <div className="inline-flex p-1 bg-white border-2 border-black shadow-[3px_3px_0px_#000000] gap-1">
             <button
               onClick={() => setActiveTab("clips")}
-              className={`px-5 py-2 rounded-full text-xs sm:text-sm font-bold transition-all flex items-center gap-2 ${
+              className={`px-4 sm:px-6 py-2 text-xs sm:text-sm font-black uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer ${
                 activeTab === "clips"
-                  ? "bg-[#2B1D16] text-white shadow-sm"
-                  : "text-[#6A5A4E] hover:text-[#2B1D16]"
+                  ? "bg-[#FFC700] text-black border-2 border-black shadow-[2px_2px_0px_#000000]"
+                  : "text-black hover:bg-[#F8F7F4] border-2 border-transparent"
               }`}
             >
-              <Sparkles className="w-4 h-4 text-amber-300" />
-              <span>Your Viral Clips ({clips.length})</span>
+              <Sparkles className="w-4 h-4" />
+              <span>VIRAL CLIPS ({clips.length})</span>
             </button>
             <button
               onClick={() => setActiveTab("upload")}
-              className={`px-5 py-2 rounded-full text-xs sm:text-sm font-bold transition-all flex items-center gap-2 ${
+              className={`px-4 sm:px-6 py-2 text-xs sm:text-sm font-black uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer ${
                 activeTab === "upload"
-                  ? "bg-[#2B1D16] text-white shadow-sm"
-                  : "text-[#6A5A4E] hover:text-[#2B1D16]"
+                  ? "bg-[#FFC700] text-black border-2 border-black shadow-[2px_2px_0px_#000000]"
+                  : "text-black hover:bg-[#F8F7F4] border-2 border-transparent"
               }`}
             >
               <Upload className="w-4 h-4" />
-              <span>Import New Video</span>
+              <span>IMPORT VIDEO</span>
             </button>
           </div>
         </div>
@@ -684,17 +676,17 @@ function DashboardContent() {
           <div>
             {clips.length === 0 ? (
               /* Clean Empty State */
-              <div className="bg-white rounded-[32px] p-12 text-center max-w-xl mx-auto border border-[#E8DDD2] shadow-sm">
-                <div className="w-16 h-16 rounded-full bg-[#FAF6F1] text-[#C87A47] flex items-center justify-center mx-auto mb-4 border border-[#E8DDD2]">
+              <div className="bg-white border-2 border-black shadow-[6px_6px_0px_#000000] p-8 sm:p-12 text-center max-w-xl mx-auto">
+                <div className="w-16 h-16 bg-[#FFC700] border-2 border-black text-black flex items-center justify-center mx-auto mb-4 shadow-[3px_3px_0px_#000000]">
                   <FileVideo className="w-8 h-8" />
                 </div>
-                <h3 className="text-xl font-extrabold text-[#2B1D16] mb-2">No clips generated yet</h3>
-                <p className="text-xs text-[#7A695F] mb-6 leading-relaxed max-w-md mx-auto">
-                  Paste a YouTube URL or upload a video file to run automatic transcription, smart reframing, and AI viral hook curation.
+                <h3 className="text-2xl font-black uppercase tracking-tight text-black mb-2">No clips generated yet</h3>
+                <p className="text-xs text-neutral-700 mb-6 font-medium leading-relaxed max-w-md mx-auto">
+                  Paste a YouTube URL or upload an MP4 video to run automatic transcription, smart reframing, and AI viral hook curation.
                 </p>
                 <button
                   onClick={() => setActiveTab("upload")}
-                  className="bg-[#C87A47] hover:bg-[#B66D3D] px-6 py-3 rounded-full font-bold text-xs text-white cursor-pointer shadow-md shadow-[#C87A47]/20 transition-all"
+                  className="bg-[#FFC700] hover:bg-[#FF5500] hover:text-white px-6 py-3 border-2 border-black font-black text-xs uppercase tracking-wider cursor-pointer shadow-[3px_3px_0px_#000000] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all"
                 >
                   Import Your First Video
                 </button>
@@ -709,44 +701,48 @@ function DashboardContent() {
                       <div
                         key={clip.id}
                         onClick={() => setSelectedClip(clip)}
-                        className={`p-5 rounded-[24px] border transition-all cursor-pointer flex flex-col sm:flex-row items-start sm:items-center gap-4 ${
+                        className={`p-4 sm:p-5 border-2 border-black transition-all cursor-pointer flex flex-col sm:flex-row items-start sm:items-center gap-4 ${
                           isSelected
-                            ? "bg-[#FAF6F1] border-2 border-[#2B1D16] shadow-md"
-                            : "bg-white hover:bg-[#FAF6F1]/60 border-[#E8DDD2] shadow-sm"
+                            ? "bg-[#FFFBEA] shadow-[4px_4px_0px_#000000]"
+                            : "bg-white hover:bg-[#F8F7F4] shadow-[2px_2px_0px_#000000] hover:shadow-[4px_4px_0px_#000000]"
                         }`}
                       >
                         {/* Video Preview Block */}
-                        <div className="relative w-full sm:w-36 h-28 sm:h-24 rounded-2xl overflow-hidden flex-shrink-0 bg-[#2B1D16] flex items-center justify-center">
+                        <div className="relative w-full sm:w-36 h-28 sm:h-24 border-2 border-black overflow-hidden flex-shrink-0 bg-black flex items-center justify-center">
                           <video
                             src={clip.videoUrl}
                             className="w-full h-full object-cover"
                             preload="metadata"
                           />
-                          <div className="absolute top-2 left-2 px-2 py-0.5 rounded-full bg-[#2B1D16]/90 backdrop-blur-md text-[10px] font-black text-[#3A7D44] flex items-center gap-1 border border-white/20">
-                            <Flame className="w-3 h-3 fill-[#3A7D44]" />
+                          <div className="absolute top-1.5 left-1.5 px-2 py-0.5 bg-[#FFC700] border border-black text-[10px] font-black text-black flex items-center gap-1">
+                            <Flame className="w-3 h-3 fill-black text-black" />
                             <span>{clip.viralityScore}</span>
                           </div>
-                          <div className="absolute bottom-2 right-2 px-2 py-0.5 rounded-full bg-[#2B1D16]/90 text-[10px] text-white font-mono">
+                          <div className="absolute bottom-1.5 right-1.5 px-1.5 py-0.5 bg-black text-[10px] text-white font-mono font-bold">
                             {clip.durationFormatted}
                           </div>
                         </div>
 
                         {/* Metadata */}
                         <div className="flex-1 min-w-0">
-                          <span className="text-[10px] font-extrabold px-2.5 py-0.5 rounded-full bg-[#EAE1D7] text-[#2B1D16] uppercase mb-1.5 inline-block">
-                            Clip #{index + 1}
+                          <span className="text-[10px] font-black px-2 py-0.5 bg-black text-white uppercase mb-1.5 inline-block">
+                            CLIP #{index + 1}
                           </span>
-                          <h4 className="text-sm font-bold text-[#2B1D16] truncate mb-1">{clip.title}</h4>
-                          <p className="text-xs text-[#7A695F] line-clamp-2 leading-relaxed mb-3">
+                          <h4 className="text-sm font-black uppercase text-black truncate mb-1">{clip.title}</h4>
+                          <p className="text-xs text-neutral-700 line-clamp-2 leading-relaxed mb-3">
                             {clip.viralityReason}
                           </p>
 
-                          <div className="flex items-center gap-3 text-[11px]">
-                            <span className="text-[#3A7D44] font-bold">Hook: {clip.hookStrength}%</span>
-                            <span className="text-[#DDD3C7]">•</span>
-                            <span className="text-[#C87A47] font-bold">Retention: {clip.engagementScore}%</span>
-                            <span className="text-[#DDD3C7]">•</span>
-                            <span className="text-[#2B1D16] font-bold">Trend: {clip.trendMatch}%</span>
+                          <div className="flex items-center gap-2 text-[10px] font-mono font-bold uppercase flex-wrap">
+                            <span className="px-1.5 py-0.5 bg-[#E6F4EA] border border-black text-emerald-800">
+                              Hook: {clip.hookStrength}%
+                            </span>
+                            <span className="px-1.5 py-0.5 bg-[#FFF0D4] border border-black text-amber-900">
+                              Retention: {clip.engagementScore}%
+                            </span>
+                            <span className="px-1.5 py-0.5 bg-neutral-200 border border-black text-black">
+                              Trend: {clip.trendMatch}%
+                            </span>
                           </div>
                         </div>
 
@@ -758,21 +754,21 @@ function DashboardContent() {
                               handleRenderAndDownload(clip);
                             }}
                             disabled={isRendering}
-                            className="flex-1 sm:flex-none p-2.5 rounded-full bg-[#C87A47] hover:bg-[#B66D3D] text-white text-xs font-bold flex items-center justify-center gap-1.5 transition-all shadow-sm disabled:opacity-50"
+                            className="flex-1 sm:flex-none p-2.5 bg-[#FFC700] hover:bg-[#FF5500] hover:text-white text-black border-2 border-black font-black text-xs uppercase flex items-center justify-center gap-1.5 transition-all shadow-[2px_2px_0px_#000000] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none disabled:opacity-50 cursor-pointer"
                             title="Render real 9:16 MP4 with FFmpeg"
                           >
                             <Download className="w-3.5 h-3.5" />
-                            <span className="sm:hidden">Download</span>
+                            <span className="sm:hidden font-black">Download</span>
                           </button>
 
                           <Link
                             href={`/editor?clipId=${clip.id}`}
                             onClick={(e) => e.stopPropagation()}
-                            className="flex-1 sm:flex-none p-2.5 rounded-full bg-[#FAF6F1] hover:bg-[#EAE1D7] text-[#2B1D16] border border-[#E8DDD2] text-xs font-bold flex items-center justify-center gap-1.5 transition-colors"
+                            className="flex-1 sm:flex-none p-2.5 bg-white hover:bg-black hover:text-white text-black border-2 border-black font-black text-xs uppercase flex items-center justify-center gap-1.5 transition-colors shadow-[2px_2px_0px_#000000] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none"
                             title="Open in Studio Editor"
                           >
-                            <Sliders className="w-3.5 h-3.5 text-[#2B1D16]" />
-                            <span className="sm:hidden">Edit</span>
+                            <Sliders className="w-3.5 h-3.5" />
+                            <span className="sm:hidden font-black">Edit</span>
                           </Link>
                         </div>
                       </div>
@@ -783,29 +779,29 @@ function DashboardContent() {
                 {/* Right Player & Diagnostics */}
                 {selectedClip && (
                   <div className="lg:col-span-5 space-y-5">
-                    <div className="bg-white p-6 rounded-[32px] border border-[#E8DDD2] shadow-sm flex flex-col items-center">
+                    <div className="bg-white p-6 border-2 border-black shadow-[6px_6px_0px_#000000] flex flex-col items-center">
                       {/* Vertical Video Viewport */}
-                      <div className="relative w-[260px] sm:w-[280px] h-[480px] bg-[#1C130E] rounded-[24px] overflow-hidden shadow-lg border border-[#E8DDD2] flex flex-col">
-                        <div className="relative flex-1 bg-[#1C130E] flex flex-col justify-center items-center overflow-hidden">
+                      <div className="relative w-[260px] sm:w-[280px] h-[480px] bg-black border-2 border-black overflow-hidden shadow-[4px_4px_0px_#000000] flex flex-col">
+                        <div className="relative flex-1 bg-black flex flex-col justify-center items-center overflow-hidden">
                           {/* Reframe Mode Floating Tag */}
-                          <div className="absolute top-3 left-3 z-30 flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#2B1D16]/90 backdrop-blur-md border border-white/20 text-[10px] font-bold text-white shadow-md pointer-events-none">
-                            <span className="w-2 h-2 rounded-full bg-[#C87A47] animate-pulse" />
+                          <div className="absolute top-3 left-3 z-30 flex items-center gap-1.5 px-2.5 py-1 bg-black text-[10px] font-black uppercase text-[#FFC700] border-2 border-[#FFC700] pointer-events-none">
+                            <span className="w-1.5 h-1.5 bg-[#FFC700]" />
                             <span>
                               {reframeMode === "auto-tracker"
-                                ? "AI Dynamic Pan 🎯"
+                                ? "DYNAMIC PAN TRACK"
                                 : reframeMode === "split-screen"
-                                ? "Split-Screen Mode 👥"
+                                ? "SPLIT-SCREEN MODE"
                                 : reframeMode === "blurred-fit"
-                                ? "Blurred Backdrop 🌌"
-                                : "Center Crop 📐"}
+                                ? "BLURRED BACKDROP"
+                                : "CENTER CROP"}
                             </span>
                           </div>
 
                           {/* Mode-reactive Player Viewport */}
                           {reframeMode === "split-screen" ? (
-                            <div className="w-full h-full flex flex-col bg-[#1C130E]">
+                            <div className="w-full h-full flex flex-col bg-black">
                               {/* Top Camera: Main Content */}
-                              <div className="relative w-full h-1/2 overflow-hidden border-b border-white/20">
+                              <div className="relative w-full h-1/2 overflow-hidden border-b-2 border-white">
                                 <video
                                   ref={videoTopRef}
                                   src={(selectedClip as any).renderedVideoUrl || selectedClip.videoUrl}
@@ -814,11 +810,12 @@ function DashboardContent() {
                                   muted
                                   playsInline
                                 />
-                                <div className="absolute top-2 left-2 px-2 py-0.5 rounded-full bg-black/80 border border-white/10 text-[9px] font-bold text-amber-200 tracking-wider">
+                                <div className="absolute top-2 left-2 px-2 py-0.5 bg-black border border-white text-[9px] font-bold text-[#FFC700] tracking-wider uppercase">
                                   TOP: CONTENT FOCUS
                                 </div>
                               </div>
-                              {/* Bottom Camera: Reaction / Speaker */}
+
+                              {/* Bottom Camera: Speaker */}
                               <div className="relative w-full h-1/2 overflow-hidden">
                                 <video
                                   ref={videoRef}
@@ -838,13 +835,13 @@ function DashboardContent() {
                                     }
                                   }}
                                 />
-                                <div className="absolute top-2 left-2 px-2 py-0.5 rounded-full bg-black/80 border border-white/10 text-[9px] font-bold text-[#C87A47] tracking-wider">
+                                <div className="absolute top-2 left-2 px-2 py-0.5 bg-black border border-white text-[9px] font-bold text-[#FFC700] tracking-wider uppercase">
                                   BOTTOM: SPEAKER CAM
                                 </div>
                               </div>
                             </div>
                           ) : reframeMode === "blurred-fit" ? (
-                            <div className="relative w-full h-full flex items-center justify-center overflow-hidden bg-[#1C130E]">
+                            <div className="relative w-full h-full flex items-center justify-center overflow-hidden bg-black">
                               {/* Dynamic Blurred Backdrop */}
                               <video
                                 src={(selectedClip as any).renderedVideoUrl || selectedClip.videoUrl}
@@ -873,7 +870,7 @@ function DashboardContent() {
                             </div>
                           ) : (
                             /* AI Subject Track with dynamic smooth camera pan or Center Crop */
-                            <div className="relative w-full h-full overflow-hidden bg-[#1C130E]">
+                            <div className="relative w-full h-full overflow-hidden bg-black">
                               <video
                                 ref={videoRef}
                                 src={(selectedClip as any).renderedVideoUrl || selectedClip.videoUrl}
@@ -903,7 +900,7 @@ function DashboardContent() {
 
                           {/* Dynamic Subtitles Overlay */}
                           <div className="absolute bottom-12 inset-x-2 z-30 text-center pointer-events-none px-2">
-                            <div className="inline-block px-3.5 py-2 rounded-2xl bg-[#2B1D16]/85 backdrop-blur-md border border-white/10 shadow-2xl max-w-[90%]">
+                            <div className="inline-block px-3 py-1.5 bg-black border-2 border-white shadow-[2px_2px_0px_#000000] max-w-[90%]">
                               {selectedClip.transcript && selectedClip.transcript.length > 0 ? (
                                 (() => {
                                   const currentWordIndex = selectedClip.transcript.findIndex(
@@ -922,9 +919,9 @@ function DashboardContent() {
                                         return (
                                           <span
                                             key={idx}
-                                            className={`caption-hormozi text-base sm:text-lg font-black uppercase tracking-wider transition-all duration-100 ${
+                                            className={`font-black text-sm sm:text-base uppercase tracking-wider transition-all duration-100 ${
                                               isWordActive
-                                                ? "text-yellow-400 scale-110 drop-shadow-[0_2px_10px_rgba(250,204,21,0.8)]"
+                                                ? "text-[#FFC700] scale-110 drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]"
                                                 : "text-white"
                                             }`}
                                           >
@@ -936,7 +933,7 @@ function DashboardContent() {
                                   );
                                 })()
                               ) : (
-                                <span className="caption-hormozi text-base text-yellow-300 uppercase font-black">
+                                <span className="text-sm text-[#FFC700] uppercase font-black tracking-wider">
                                   {selectedClip.hookHeadline || selectedClip.title}
                                 </span>
                               )}
@@ -949,23 +946,23 @@ function DashboardContent() {
                             className="absolute inset-0 flex items-center justify-center bg-black/15 hover:bg-black/30 transition-colors z-20 cursor-pointer"
                           >
                             {!isPlaying && (
-                              <div className="p-4 rounded-full bg-[#2B1D16]/80 text-white backdrop-blur-md shadow-lg">
-                                <Play className="w-6 h-6 fill-white" />
+                              <div className="p-4 bg-[#FFC700] border-2 border-black text-black shadow-[3px_3px_0px_#000000]">
+                                <Play className="w-6 h-6 fill-black" />
                               </div>
                             )}
                           </button>
                         </div>
                       </div>
 
-                      {/* OpusClip ReframeAnything Controls */}
-                      <div className="w-full mt-4 p-4 rounded-[24px] bg-[#FAF6F1] border border-[#E8DDD2]">
+                      {/* OpusClip ReframeControls */}
+                      <div className="w-full mt-5 p-4 bg-[#F8F7F4] border-2 border-black shadow-[3px_3px_0px_#000000]">
                         <div className="flex items-center justify-between mb-3">
-                          <span className="text-[11px] font-extrabold uppercase tracking-wider text-[#2B1D16] flex items-center gap-1.5">
-                            <Target className="w-3.5 h-3.5 text-[#C87A47]" />
+                          <span className="text-xs font-black uppercase tracking-wider text-black flex items-center gap-1.5">
+                            <Target className="w-4 h-4" />
                             <span>Reframe Mode</span>
                           </span>
-                          <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-[#EAE1D7] text-[#2B1D16] border border-[#DDD3C7]">
-                            ReframeAnything™
+                          <span className="text-[10px] font-black px-2 py-0.5 bg-black text-white uppercase">
+                            REFRAME ENGINE
                           </span>
                         </div>
 
@@ -1003,21 +1000,17 @@ function DashboardContent() {
                                 key={mode.id}
                                 type="button"
                                 onClick={() => handleModeSelect(mode.id as any)}
-                                className={`p-2.5 rounded-2xl text-left border transition-all cursor-pointer ${
+                                className={`p-2.5 text-left border-2 border-black transition-all cursor-pointer ${
                                   isActive
-                                    ? "bg-[#2B1D16] border-[#2B1D16] text-white shadow-sm"
-                                    : "bg-white border-[#E8DDD2] text-[#7A695F] hover:text-[#2B1D16] hover:bg-white"
+                                    ? "bg-[#FFC700] text-black shadow-[2px_2px_0px_#000000] font-bold"
+                                    : "bg-white text-black hover:bg-[#FFFBEA]"
                                 }`}
                               >
-                                <div className="flex items-center gap-1.5 text-xs font-bold mb-0.5">
-                                  <Icon
-                                    className={`w-3.5 h-3.5 ${
-                                      isActive ? "text-[#C87A47]" : "text-[#7A695F]"
-                                    }`}
-                                  />
+                                <div className="flex items-center gap-1.5 text-xs font-black mb-0.5 uppercase">
+                                  <Icon className="w-3.5 h-3.5 stroke-[2.5]" />
                                   <span>{mode.label}</span>
                                 </div>
-                                <div className={`text-[10px] leading-tight ${isActive ? "text-[#DDD3C7]" : "text-[#A09085]"}`}>
+                                <div className="text-[10px] leading-tight text-neutral-700">
                                   {mode.desc}
                                 </div>
                               </button>
@@ -1027,13 +1020,13 @@ function DashboardContent() {
 
                         {/* Interactive Shot Timeline */}
                         {reframeMode === "auto-tracker" && dynamicShots.length > 0 && (
-                          <div className="mt-4 pt-3 border-t border-[#E8DDD2]">
-                            <div className="flex items-center justify-between mb-2.5">
-                              <span className="text-[10px] font-bold uppercase tracking-wider text-[#7A695F] flex items-center gap-1.5">
-                                <Video className="w-3 h-3 text-[#C87A47]" />
-                                <span>AI Dynamic Shot Timeline</span>
+                          <div className="mt-4 pt-3 border-t-2 border-black">
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-[10px] font-black uppercase tracking-wider text-black flex items-center gap-1.5">
+                                <Video className="w-3 h-3" />
+                                <span>Dynamic Shot Timeline</span>
                               </span>
-                              <span className="text-[9px] text-[#A09085]">Click to seek</span>
+                              <span className="text-[9px] font-mono text-neutral-600">Click to seek</span>
                             </div>
 
                             <div className="space-y-1.5">
@@ -1055,27 +1048,24 @@ function DashboardContent() {
                                         setPlaybackTime(shot.start);
                                       }
                                     }}
-                                    className={`w-full p-2.5 rounded-2xl text-left border text-xs flex items-center justify-between transition-all cursor-pointer ${
+                                    className={`w-full p-2 text-left border-2 border-black text-xs flex items-center justify-between transition-all cursor-pointer ${
                                       isCurrent
-                                        ? "bg-[#2B1D16] border-[#2B1D16] text-white shadow-sm"
-                                        : "bg-white border-[#E8DDD2] text-[#7A695F] hover:bg-white hover:text-[#2B1D16]"
+                                        ? "bg-black text-white shadow-[2px_2px_0px_#000000]"
+                                        : "bg-white text-black hover:bg-[#FFFBEA]"
                                     }`}
                                   >
                                     <div className="flex items-center gap-2">
-                                      <span className={`px-2 py-0.5 rounded-full font-mono text-[10px] ${
-                                        isCurrent ? "bg-[#3D2C24] text-white" : "bg-[#FAF6F1] text-[#2B1D16] border border-[#E8DDD2]"
+                                      <span className={`px-1.5 py-0.2 font-mono text-[10px] border ${
+                                        isCurrent ? "bg-[#FFC700] text-black border-black font-bold" : "bg-[#F8F7F4] text-black border-black"
                                       }`}>
                                         {formatTime(shot.start)} - {formatTime(shot.end)}
                                       </span>
-                                      <span className={`font-bold text-[11px] ${
-                                        isCurrent ? "text-white" : "text-[#2B1D16]"
-                                      }`}>
+                                      <span className="font-bold text-[11px] uppercase">
                                         {shot.label}
                                       </span>
                                     </div>
                                     {isCurrent && (
-                                      <span className="px-2 py-0.5 rounded-full bg-[#3A7D44] text-white text-[9px] font-bold flex items-center gap-1">
-                                        <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping" />
+                                      <span className="px-1.5 py-0.5 bg-[#FFC700] text-black text-[9px] font-black uppercase border border-black">
                                         IN FOCUS
                                       </span>
                                     )}
@@ -1087,8 +1077,8 @@ function DashboardContent() {
                         )}
 
                         {lastTrackingSummary && (
-                          <div className="mt-3 p-2.5 rounded-2xl bg-[#EAE1D7] border border-[#DDD3C7] text-[10px] text-[#2B1D16] flex items-center gap-1.5 font-medium">
-                            <Sparkles className="w-3.5 h-3.5 text-[#C87A47] flex-shrink-0" />
+                          <div className="mt-3 p-2 bg-white border border-black text-[10px] text-black font-mono flex items-center gap-1.5">
+                            <Sparkles className="w-3.5 h-3.5 text-black flex-shrink-0" />
                             <span className="truncate">{lastTrackingSummary}</span>
                           </div>
                         )}
@@ -1099,16 +1089,16 @@ function DashboardContent() {
                         <button
                           onClick={() => handleRenderAndDownload(selectedClip)}
                           disabled={isRendering}
-                          className="w-full bg-[#C87A47] hover:bg-[#B66D3D] py-3.5 rounded-full font-bold text-xs sm:text-sm text-white flex items-center justify-center gap-2 cursor-pointer shadow-md shadow-[#C87A47]/20 transition-all disabled:opacity-50"
+                          className="w-full bg-[#FFC700] hover:bg-[#FF5500] hover:text-white py-3.5 border-2 border-black font-black text-xs sm:text-sm text-black uppercase tracking-wider flex items-center justify-center gap-2 cursor-pointer shadow-[4px_4px_0px_#000000] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all disabled:opacity-50"
                         >
                           {isRendering ? (
                             <>
-                              <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                              <span>Rendering Dynamic 9:16 MP4 with FFmpeg...</span>
+                              <div className="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin" />
+                              <span>Rendering 9:16 MP4 with FFmpeg...</span>
                             </>
                           ) : (
                             <>
-                              <Download className="w-4 h-4" />
+                              <Download className="w-4 h-4 stroke-[2.5]" />
                               <span>
                                 Render & Download{" "}
                                 {reframeMode === "auto-tracker"
@@ -1127,17 +1117,17 @@ function DashboardContent() {
                     </div>
 
                     {/* Virality Card */}
-                    <div className="bg-white p-6 rounded-[32px] border border-[#E8DDD2] shadow-sm">
-                      <div className="flex items-center justify-between mb-3">
-                        <span className="text-xs font-bold text-[#2B1D16] uppercase tracking-wider flex items-center gap-1.5">
-                          <TrendingUp className="w-4 h-4 text-[#3A7D44]" />
-                          <span>AI Virality Diagnostics</span>
+                    <div className="bg-white p-5 border-2 border-black shadow-[4px_4px_0px_#000000]">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs font-black text-black uppercase tracking-wider flex items-center gap-1.5">
+                          <TrendingUp className="w-4 h-4" />
+                          <span>Virality Diagnostics</span>
                         </span>
-                        <span className="text-xs font-extrabold text-[#3A7D44] px-2.5 py-0.5 rounded-full bg-[#FAF6F1] border border-[#E8DDD2]">
+                        <span className="text-xs font-black text-black px-2 py-0.5 bg-[#FFC700] border border-black font-mono">
                           {selectedClip.viralityScore} / 100
                         </span>
                       </div>
-                      <p className="text-xs text-[#7A695F] leading-relaxed">
+                      <p className="text-xs text-neutral-800 leading-relaxed font-medium">
                         {selectedClip.viralityReason}
                       </p>
                     </div>
@@ -1150,10 +1140,10 @@ function DashboardContent() {
 
         {/* View 2: Import Video */}
         {activeTab === "upload" && (
-          <div className="max-w-2xl mx-auto bg-white p-8 rounded-[32px] border border-[#E8DDD2] shadow-sm">
-            <h3 className="text-xl font-extrabold text-[#2B1D16] mb-2">Import Video for AI Processing</h3>
-            <p className="text-xs text-[#7A695F] mb-6">
-              Paste any YouTube URL or drop an MP4 video file to extract viral clips.
+          <div className="max-w-2xl mx-auto bg-white p-6 sm:p-8 border-2 border-black shadow-[6px_6px_0px_#000000]">
+            <h3 className="text-2xl font-black uppercase tracking-tight text-black mb-1">Import Video</h3>
+            <p className="text-xs text-neutral-700 mb-6 font-medium">
+              Paste any YouTube URL or drop an MP4 video file to extract viral short-form clips.
             </p>
 
             <form
@@ -1165,31 +1155,32 @@ function DashboardContent() {
             >
               <div>
                 <div className="flex items-center justify-between mb-1.5">
-                  <label className="block text-xs font-bold text-[#2B1D16]">
-                    YouTube Video Link
+                  <label className="block text-xs font-black uppercase tracking-wider text-black">
+                    YouTube Video URL
                   </label>
-                  <span className="text-[11px] text-[#7A695F] font-medium">Or choose quick sample below</span>
+                  <span className="text-[11px] text-neutral-600 font-medium">Or choose a quick demo</span>
                 </div>
                 <input
                   type="url"
                   value={urlInput}
                   onChange={(e) => setUrlInput(e.target.value)}
                   placeholder="https://www.youtube.com/watch?v=..."
-                  className="w-full bg-[#FAF6F1] text-[#2B1D16] text-sm px-4 py-3 rounded-2xl border border-[#E8DDD2] placeholder:text-[#A09085] focus:outline-none focus:border-[#C87A47] transition-all"
+                  className="w-full bg-[#F8F7F4] text-black text-sm px-4 py-3 border-2 border-black placeholder:text-neutral-500 focus:outline-none focus:bg-white focus:shadow-[3px_3px_0px_#000000] transition-all font-mono"
                 />
-                
-                {/* 1-Click Samples */}
-                <div className="flex items-center gap-2 mt-2 flex-wrap">
-                  <span className="text-[10px] font-bold text-[#7A695F] uppercase">Quick Demos:</span>
+
+                {/* 1-Click Samples (Clean badges without emojis) */}
+                <div className="flex items-center gap-2 mt-2.5 flex-wrap">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-black">Quick Demos:</span>
                   <button
                     type="button"
                     onClick={() => {
                       setUrlInput("sample");
                       startRealPipeline({ url: "sample", prompt: "Extract key viral points" });
                     }}
-                    className="px-2.5 py-1 rounded-full bg-[#EAE1D7] hover:bg-[#DDD3C7] text-[11px] font-bold text-[#2B1D16] transition cursor-pointer flex items-center gap-1"
+                    className="px-2.5 py-1 bg-white hover:bg-[#FFC700] text-[11px] font-black uppercase tracking-wider text-black border border-black shadow-[2px_2px_0px_#000000] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition cursor-pointer flex items-center gap-1.5"
                   >
-                    <span>⚡ AI Tech Keynote</span>
+                    <Zap className="w-3.5 h-3.5 stroke-[2.5]" />
+                    <span>Keynote Demo</span>
                   </button>
                   <button
                     type="button"
@@ -1197,56 +1188,57 @@ function DashboardContent() {
                       setUrlInput("sample-podcast");
                       startRealPipeline({ url: "sample-podcast", prompt: "Funny moment and discussion" });
                     }}
-                    className="px-2.5 py-1 rounded-full bg-[#EAE1D7] hover:bg-[#DDD3C7] text-[11px] font-bold text-[#2B1D16] transition cursor-pointer flex items-center gap-1"
+                    className="px-2.5 py-1 bg-white hover:bg-[#FFC700] text-[11px] font-black uppercase tracking-wider text-black border border-black shadow-[2px_2px_0px_#000000] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition cursor-pointer flex items-center gap-1.5"
                   >
-                    <span>🎙️ Dual Speaker Podcast</span>
+                    <Mic className="w-3.5 h-3.5 stroke-[2.5]" />
+                    <span>Podcast Demo</span>
                   </button>
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-[#2B1D16] mb-1.5">
-                  Or Upload Local Video File (MP4, MOV, WebM)
+                <label className="block text-xs font-black uppercase tracking-wider text-black mb-1.5">
+                  Or Upload Video File (MP4, MOV, WebM)
                 </label>
-                <div className="border-2 border-dashed border-[#D8CCC0] hover:border-[#C87A47] rounded-2xl p-6 text-center cursor-pointer relative bg-[#FAF6F1]">
+                <div className="border-2 border-dashed border-black bg-[#F8F7F4] hover:bg-[#FFFBEA] p-6 text-center cursor-pointer relative transition-colors">
                   <input
                     type="file"
                     accept="video/*"
                     onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
                     className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                   />
-                  <div className="w-12 h-12 rounded-full bg-[#EAE1D7] text-[#C87A47] flex items-center justify-center mx-auto mb-2 pointer-events-none">
-                    <Upload className="w-6 h-6" />
+                  <div className="w-12 h-12 bg-[#FFC700] border-2 border-black text-black flex items-center justify-center mx-auto mb-2 pointer-events-none shadow-[2px_2px_0px_#000000]">
+                    <Upload className="w-6 h-6 stroke-[2.5]" />
                   </div>
-                  <div className="text-xs font-bold text-[#2B1D16]">
+                  <div className="text-xs font-black uppercase text-black">
                     {uploadFile ? uploadFile.name : "Select Video File"}
                   </div>
-                  <div className="text-[11px] text-[#8C7A6D] mt-0.5">
-                    {uploadFile ? `${(uploadFile.size / (1024 * 1024)).toFixed(1)} MB` : "Up to 2GB"}
+                  <div className="text-[11px] font-mono text-neutral-600 mt-0.5">
+                    {uploadFile ? `${(uploadFile.size / (1024 * 1024)).toFixed(1)} MB` : "Up to 2GB MP4 / MOV"}
                   </div>
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-[#2B1D16] mb-1.5">
-                  ClipAnything™ Prompt (Optional)
+                <label className="block text-xs font-black uppercase tracking-wider text-black mb-1.5">
+                  Clip Prompt (Optional)
                 </label>
                 <input
                   type="text"
                   value={promptInput}
                   onChange={(e) => setPromptInput(e.target.value)}
                   placeholder="e.g. Focus on AI discussion, extract the funny story..."
-                  className="w-full bg-[#FAF6F1] text-[#2B1D16] text-sm px-4 py-2.5 rounded-2xl border border-[#E8DDD2] placeholder:text-[#A09085] focus:outline-none focus:border-[#C87A47] transition-all"
+                  className="w-full bg-[#F8F7F4] text-black text-sm px-4 py-2.5 border-2 border-black placeholder:text-neutral-500 focus:outline-none focus:bg-white focus:shadow-[3px_3px_0px_#000000] transition-all"
                 />
               </div>
 
               <button
                 type="submit"
                 disabled={!urlInput.trim() && !uploadFile}
-                className="w-full bg-[#C87A47] hover:bg-[#B66D3D] py-3.5 rounded-full font-bold text-white text-sm mt-4 shadow-md shadow-[#C87A47]/20 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 transition-all"
+                className="w-full bg-[#FFC700] hover:bg-[#FF5500] hover:text-white py-4 border-2 border-black font-black text-black text-sm uppercase tracking-wider shadow-[4px_4px_0px_#000000] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 transition-all"
               >
-                <Sparkles className="w-4 h-4 text-amber-200" />
-                <span>Run Real AI Pipeline</span>
+                <Sparkles className="w-4 h-4 stroke-[2.5]" />
+                <span>Run AI Pipeline</span>
               </button>
             </form>
           </div>
@@ -1258,7 +1250,7 @@ function DashboardContent() {
 
 export default function Dashboard() {
   return (
-    <Suspense fallback={<div className="min-h-screen bg-[#F5EFEB] text-[#2B1D16] p-8 flex items-center justify-center font-bold">Loading Opus Studio...</div>}>
+    <Suspense fallback={<div className="min-h-screen bg-[#F8F7F4] text-black p-8 flex items-center justify-center font-black uppercase">Loading Opus Studio...</div>}>
       <DashboardContent />
     </Suspense>
   );

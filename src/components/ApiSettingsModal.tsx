@@ -6,13 +6,9 @@ import {
   ShieldCheck,
   CheckCircle2,
   XCircle,
-  Sparkles,
   X,
   Bot,
-  Zap,
   Save,
-  DollarSign,
-  AlertCircle,
 } from "lucide-react";
 
 interface ApiSettingsModalProps {
@@ -31,7 +27,6 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
   } | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
-  // Load keys from localStorage or server config on mount & on open
   useEffect(() => {
     async function loadConfig() {
       let storedOpenai = "";
@@ -44,7 +39,6 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
         storedModel = (localStorage.getItem("opus_preferred_model") as any) || "claude-3-5-haiku";
       }
 
-      // If empty in localStorage, fetch from server .env.local
       if (!storedOpenai || !storedClaude) {
         try {
           const res = await fetch("/api/config");
@@ -107,184 +101,139 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-[#2B1D16]/50 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-white max-w-lg w-full p-6 sm:p-8 rounded-[32px] border border-[#E8DDD2] shadow-2xl animate-in zoom-in-95 duration-200 relative text-[#2B1D16]">
+    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+      <div className="bg-white max-w-lg w-full p-6 sm:p-7 rounded-2xl border-2 border-black shadow-[6px_6px_0px_#000000] animate-in zoom-in-95 duration-150 relative text-black">
         {/* Close Button */}
         <button
           onClick={onClose}
-          className="absolute top-5 right-5 p-1.5 rounded-full bg-[#FAF6F1] hover:bg-[#EAE1D7] text-[#7A695F] hover:text-[#2B1D16] border border-[#E8DDD2] transition-colors"
+          className="absolute top-4 right-4 p-1.5 border-2 border-black bg-white hover:bg-[#FFC700] text-black transition-colors cursor-pointer"
         >
-          <X className="w-4 h-4" />
+          <X className="w-4 h-4 stroke-[3]" />
         </button>
 
         {/* Modal Header */}
-        <div className="flex items-center gap-3 mb-2">
-          <div className="p-2.5 rounded-2xl bg-[#FAF6F1] text-[#C87A47] border border-[#E8DDD2]">
-            <Key className="w-5 h-5" />
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-9 h-9 bg-[#FFC700] border-2 border-black flex items-center justify-center font-black text-black shadow-[2px_2px_0px_#000000]">
+            <Key className="w-4 h-4 stroke-[3]" />
           </div>
           <div>
-            <h3 className="text-lg font-extrabold text-[#2B1D16]">AI Engine & API Keys</h3>
-            <p className="text-xs text-[#7A695F]">Configure your personal OpenAI & Claude credentials</p>
+            <h3 className="text-base font-black uppercase text-black">API Key Configuration</h3>
+            <p className="text-[11px] font-bold text-[#555555]">Local OpenAI and Anthropic credentials</p>
           </div>
         </div>
 
-        {/* Quota & Cost Shield Pill */}
-        <div className="my-4 p-3.5 rounded-2xl bg-[#FAF6F1] border border-[#E8DDD2] flex items-start gap-2.5 text-xs text-[#2B1D16]">
-          <ShieldCheck className="w-5 h-5 text-[#3A7D44] flex-shrink-0 mt-0.5" />
-          <div>
-            <span className="font-bold text-[#3A7D44]">Daily Cap Friendly ($3.00/day):</span>
-            <p className="text-[11px] text-[#7A695F] mt-0.5 leading-relaxed">
-              Whisper speech-to-text is ~$0.18 per 30-min video. Claude 3.5 Haiku / GPT-4o-mini is less than 1 cent ($0.008) per video. Your $3.00 cap allows 10–15 full videos daily!
-            </p>
+        {/* Cost Notice */}
+        <div className="mb-4 p-3 bg-[#F8F7F4] border-2 border-black text-xs">
+          <div className="flex items-center gap-2 mb-1">
+            <ShieldCheck className="w-4 h-4 text-black stroke-[2.5]" />
+            <span className="font-black uppercase text-black">Direct API Usage</span>
           </div>
+          <p className="text-[11px] font-bold text-[#555555] leading-relaxed">
+            Whisper transcription is ~18 cents per 30 minutes. Claude 3.5 Haiku is under 1 cent per clip.
+          </p>
         </div>
 
         {/* Form Fields */}
-        <div className="space-y-4">
-          {/* OpenAI API Key */}
+        <div className="space-y-3.5">
           <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <label className="text-xs font-bold text-[#2B1D16] flex items-center gap-1.5">
-                <Bot className="w-3.5 h-3.5 text-[#3A7D44]" />
-                <span>OpenAI API Key (Whisper + GPT)</span>
-              </label>
-              <span className="text-[10px] text-[#A09085] font-mono">sk-...</span>
-            </div>
+            <label className="block text-xs font-black uppercase text-black mb-1">
+              OpenAI API Key (Whisper Audio)
+            </label>
             <input
               type="password"
               value={openaiKey}
               onChange={(e) => setOpenaiKey(e.target.value)}
               placeholder="sk-proj-..."
-              className="w-full bg-[#FAF6F1] text-[#2B1D16] text-xs sm:text-sm px-3.5 py-2.5 rounded-2xl border border-[#E8DDD2] placeholder:text-[#A09085] focus:outline-none focus:border-[#C87A47] font-mono transition-all"
+              className="w-full neo-input py-2.5 px-3 text-xs font-mono"
             />
           </div>
 
-          {/* Anthropic Claude API Key */}
           <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <label className="text-xs font-bold text-[#2B1D16] flex items-center gap-1.5">
-                <Sparkles className="w-3.5 h-3.5 text-[#C87A47]" />
-                <span>Anthropic Claude API Key</span>
-              </label>
-              <span className="text-[10px] text-[#A09085] font-mono">sk-ant-...</span>
-            </div>
+            <label className="block text-xs font-black uppercase text-black mb-1">
+              Anthropic Claude API Key (Curation)
+            </label>
             <input
               type="password"
               value={claudeKey}
               onChange={(e) => setClaudeKey(e.target.value)}
               placeholder="sk-ant-..."
-              className="w-full bg-[#FAF6F1] text-[#2B1D16] text-xs sm:text-sm px-3.5 py-2.5 rounded-2xl border border-[#E8DDD2] placeholder:text-[#A09085] focus:outline-none focus:border-[#C87A47] font-mono transition-all"
+              className="w-full neo-input py-2.5 px-3 text-xs font-mono"
             />
           </div>
 
-          {/* Model Preference */}
+          {/* Model Selector */}
           <div>
-            <label className="text-xs font-bold text-[#2B1D16] block mb-1.5">
-              Preferred Model for Virality Curation
+            <label className="block text-xs font-black uppercase text-black mb-1">
+              Model Preference
             </label>
             <div className="grid grid-cols-3 gap-1.5">
-              <button
-                type="button"
-                onClick={() => setPreferredModel("claude-3-5-haiku")}
-                className={`py-2 px-2 text-[11px] font-bold rounded-2xl border text-center transition-all ${
-                  preferredModel === "claude-3-5-haiku"
-                    ? "bg-[#2B1D16] border-[#2B1D16] text-white shadow-sm"
-                    : "bg-[#FAF6F1] border-[#E8DDD2] text-[#7A695F] hover:text-[#2B1D16]"
-                }`}
-              >
-                Claude 3.5 Haiku
-                <div className={`text-[9px] font-normal ${preferredModel === "claude-3-5-haiku" ? "text-[#DDD3C7]" : "text-[#A09085]"}`}>Fast & cheap</div>
-              </button>
-              <button
-                type="button"
-                onClick={() => setPreferredModel("gpt-4o-mini")}
-                className={`py-2 px-2 text-[11px] font-bold rounded-2xl border text-center transition-all ${
-                  preferredModel === "gpt-4o-mini"
-                    ? "bg-[#2B1D16] border-[#2B1D16] text-white shadow-sm"
-                    : "bg-[#FAF6F1] border-[#E8DDD2] text-[#7A695F] hover:text-[#2B1D16]"
-                }`}
-              >
-                GPT-4o-mini
-                <div className={`text-[9px] font-normal ${preferredModel === "gpt-4o-mini" ? "text-[#DDD3C7]" : "text-[#A09085]"}`}>&lt; 1¢ / clip</div>
-              </button>
-              <button
-                type="button"
-                onClick={() => setPreferredModel("claude-3-5-sonnet")}
-                className={`py-2 px-2 text-[11px] font-bold rounded-2xl border text-center transition-all ${
-                  preferredModel === "claude-3-5-sonnet"
-                    ? "bg-[#2B1D16] border-[#2B1D16] text-white shadow-sm"
-                    : "bg-[#FAF6F1] border-[#E8DDD2] text-[#7A695F] hover:text-[#2B1D16]"
-                }`}
-              >
-                Claude 3.5 Sonnet
-                <div className={`text-[9px] font-normal ${preferredModel === "claude-3-5-sonnet" ? "text-[#DDD3C7]" : "text-[#A09085]"}`}>Top depth</div>
-              </button>
+              {[
+                { id: "claude-3-5-haiku", label: "Claude 3.5 Haiku", note: "Fast" },
+                { id: "gpt-4o-mini", label: "GPT-4o Mini", note: "Budget" },
+                { id: "claude-3-5-sonnet", label: "Claude 3.5 Sonnet", note: "Deep" },
+              ].map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => setPreferredModel(m.id as any)}
+                  className={`py-2 px-1 border-2 border-black text-[11px] font-black uppercase transition-all cursor-pointer ${
+                    preferredModel === m.id
+                      ? "bg-black text-white shadow-[2px_2px_0px_#FFC700]"
+                      : "bg-[#F8F7F4] text-black hover:bg-white"
+                  }`}
+                >
+                  <div>{m.label}</div>
+                  <div className={`text-[9px] ${preferredModel === m.id ? "text-[#FFC700]" : "text-[#777777]"}`}>
+                    {m.note}
+                  </div>
+                </button>
+              ))}
             </div>
           </div>
         </div>
 
-        {/* Verification Status Feedback */}
+        {/* Results feedback */}
         {testResult && (
-          <div className="mt-4 space-y-1.5">
+          <div className="mt-3.5 space-y-1.5">
             {testResult.openai && (
-              <div
-                className={`p-2.5 rounded-2xl text-xs flex items-center gap-2 ${
-                  testResult.openai.valid
-                    ? "bg-[#F0FDF4] border border-[#BBF7D0] text-[#166534]"
-                    : "bg-[#FEF2F2] border border-[#FECACA] text-[#991B1B]"
-                }`}
-              >
-                {testResult.openai.valid ? (
-                  <CheckCircle2 className="w-4 h-4 text-[#16A34A] flex-shrink-0" />
-                ) : (
-                  <XCircle className="w-4 h-4 text-[#DC2626] flex-shrink-0" />
-                )}
+              <div className={`p-2 border-2 border-black text-xs font-bold flex items-center gap-2 ${
+                testResult.openai.valid ? "bg-[#DCFCE7] text-[#14532D]" : "bg-[#FEE2E2] text-[#7F1D1D]"
+              }`}>
+                {testResult.openai.valid ? <CheckCircle2 className="w-3.5 h-3.5" /> : <XCircle className="w-3.5 h-3.5" />}
                 <span>{testResult.openai.message}</span>
               </div>
             )}
             {testResult.claude && (
-              <div
-                className={`p-2.5 rounded-2xl text-xs flex items-center gap-2 ${
-                  testResult.claude.valid
-                    ? "bg-[#F0FDF4] border border-[#BBF7D0] text-[#166534]"
-                    : "bg-[#FEF2F2] border border-[#FECACA] text-[#991B1B]"
-                }`}
-              >
-                {testResult.claude.valid ? (
-                  <CheckCircle2 className="w-4 h-4 text-[#16A34A] flex-shrink-0" />
-                ) : (
-                  <XCircle className="w-4 h-4 text-[#DC2626] flex-shrink-0" />
-                )}
+              <div className={`p-2 border-2 border-black text-xs font-bold flex items-center gap-2 ${
+                testResult.claude.valid ? "bg-[#DCFCE7] text-[#14532D]" : "bg-[#FEE2E2] text-[#7F1D1D]"
+              }`}>
+                {testResult.claude.valid ? <CheckCircle2 className="w-3.5 h-3.5" /> : <XCircle className="w-3.5 h-3.5" />}
                 <span>{testResult.claude.message}</span>
               </div>
             )}
           </div>
         )}
 
-        {/* Action Buttons */}
-        <div className="mt-6 flex gap-2.5">
+        {/* Buttons */}
+        <div className="mt-5 flex gap-2">
           <button
             type="button"
             onClick={handleTestKeys}
             disabled={isTesting || (!openaiKey && !claudeKey)}
-            className="flex-1 py-3 rounded-full border border-[#E8DDD2] bg-[#FAF6F1] hover:bg-[#EAE1D7] text-[#2B1D16] text-xs font-bold transition-all disabled:opacity-50"
+            className="flex-1 neo-btn-white py-2.5 rounded-lg text-xs font-black uppercase transition-all disabled:opacity-50 cursor-pointer"
           >
-            {isTesting ? "Verifying..." : "Test Connection"}
+            {isTesting ? "Testing..." : "Test Keys"}
           </button>
 
           <button
             type="button"
             onClick={handleSave}
-            className="flex-1 bg-[#C87A47] hover:bg-[#B66D3D] py-3 rounded-full font-bold text-xs text-white flex items-center justify-center gap-1.5 cursor-pointer shadow-md shadow-[#C87A47]/20 transition-all"
+            className="flex-1 neo-btn-yellow py-2.5 rounded-lg text-xs font-black uppercase flex items-center justify-center gap-1.5 cursor-pointer"
           >
-            <Save className="w-3.5 h-3.5" />
-            <span>{saveSuccess ? "Saved!" : "Save Keys Locally"}</span>
+            <Save className="w-3.5 h-3.5 stroke-[3]" />
+            <span>{saveSuccess ? "Saved!" : "Save Keys"}</span>
           </button>
         </div>
-
-        <p className="text-[10px] text-[#A09085] text-center mt-3.5">
-          Keys are stored locally in your browser and your local `.env.local` file. They are never sent anywhere else.
-        </p>
       </div>
     </div>
   );
