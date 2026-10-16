@@ -271,6 +271,16 @@ export async function probeVideoFormat(filePath: string): Promise<VideoStreamInf
 
 export type ReframeMode = "auto-tracker" | "split-screen" | "blurred-fit" | "center";
 
+export interface SplitScreenCustomOptions {
+  splitRatio?: number; // 0.2 to 0.8 (default 0.5)
+  topCropXPercent?: number; // 0 to 100% of source width
+  topCropYPercent?: number; // 0 to 100%
+  topZoom?: number; // 1.0 to 2.5
+  botCropXPercent?: number; // 0 to 100% of source width
+  botCropYPercent?: number; // 0 to 100%
+  botZoom?: number; // 1.0 to 2.5
+}
+
 export interface RenderOptions {
   inputPath: string;
   outputPath: string;
@@ -279,6 +289,8 @@ export interface RenderOptions {
   aspectRatio: "9:16" | "1:1" | "16:9";
   reframeMode?: ReframeMode;
   splitScreen?: boolean;
+  splitScreenOptions?: SplitScreenCustomOptions;
+  captionPositionY?: number;
   transcript?: { start: number; end: number; text: string }[];
   headline?: string;
   captionStyle?: "hormozi" | "neon" | "beast" | "clean";
@@ -414,6 +426,8 @@ export async function renderVideoClip({
   aspectRatio = "9:16",
   reframeMode = "auto-tracker",
   splitScreen = false,
+  splitScreenOptions,
+  captionPositionY,
   transcript,
   headline,
   captionStyle = "hormozi",
@@ -428,7 +442,7 @@ export async function renderVideoClip({
     effectiveMode = "split-screen";
   }
 
-  // Run AI Subject Tracking
+  // Run AI Subject Tracking or Custom Layout
   let trackingResult: TrackingResult = {
     status: "success",
     mode: effectiveMode,
@@ -438,15 +452,41 @@ export async function renderVideoClip({
   };
 
   if (aspectRatio === "9:16") {
-    try {
-      trackingResult = await detectSubjectAndReframe(
-        resolvedInput,
-        startTime,
-        duration,
-        effectiveMode
-      );
-    } catch (e) {
-      console.warn("AI Tracking warning:", e);
+    if (effectiveMode === "split-screen") {
+      const opts = splitScreenOptions || {};
+      const ratio = Math.max(0.2, Math.min(0.8, opts.splitRatio ?? 0.5));
+      const topH = Math.round((1920 * ratio) / 2) * 2;
+      const botH = 1920 - topH;
+
+      const topZoom = Math.max(1.0, Math.min(3.0, opts.topZoom ?? 1.0));
+      const botZoom = Math.max(1.0, Math.min(3.0, opts.botZoom ?? 1.0));
+      const topX = Math.max(0, Math.min(100, opts.topCropXPercent ?? 25));
+      const botX = Math.max(0, Math.min(100, opts.botCropXPercent ?? 75));
+
+      // Build precise crop expressions for top and bottom speakers
+      const filterValue =
+        `[0:v]crop=w='min(iw,iw/${topZoom})':h='min(ih,ih/${topZoom})':x='max(0,min(iw-iw/${topZoom},(iw*${topX}/100)-iw/(2*${topZoom})))':y='(ih-ih/${topZoom})/2',scale=1080:${topH}:force_original_aspect_ratio=increase,crop=1080:${topH}[top];` +
+        `[0:v]crop=w='min(iw,iw/${botZoom})':h='min(ih,ih/${botZoom})':x='max(0,min(iw-iw/${botZoom},(iw*${botX}/100)-iw/(2*${botZoom})))':y='(ih-ih/${botZoom})/2',scale=1080:${botH}:force_original_aspect_ratio=increase,crop=1080:${botH}[bot];` +
+        `[top][bot]vstack=inputs=2`;
+
+      trackingResult = {
+        status: "success",
+        mode: "split-screen",
+        filter_type: "filter_complex",
+        filter_value: filterValue,
+        summary: `Custom Dual-Speaker Split: Top ${Math.round(ratio * 100)}% (pan ${topX}%, zoom ${topZoom}x), Bottom ${Math.round((1 - ratio) * 100)}% (pan ${botX}%, zoom ${botZoom}x)`,
+      };
+    } else {
+      try {
+        trackingResult = await detectSubjectAndReframe(
+          resolvedInput,
+          startTime,
+          duration,
+          effectiveMode
+        );
+      } catch (e) {
+        console.warn("AI Tracking warning:", e);
+      }
     }
   }
 
@@ -528,17 +568,22 @@ export async function renderVideoClip({
         `[Stage: Subtitle Alignment] Burning ${srtEntries.length} words into clip: first="${srtEntries[0]?.text}" at relative ${srtEntries[0]?.start.toFixed(2)}s, last="${srtEntries[srtEntries.length - 1]?.text}" at relative ${srtEntries[srtEntries.length - 1]?.end.toFixed(2)}s`
       );
 
+      let marginV = 130;
+      if (captionPositionY !== undefined) {
+        marginV = Math.max(40, Math.min(1800, Math.round(1920 * (1 - captionPositionY / 100))));
+      }
+
       let forceStyle =
-        "Fontname=Arial,Fontsize=24,PrimaryColour=&H0000FFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=3,Alignment=2,MarginV=130";
+        `Fontname=Arial,Fontsize=24,PrimaryColour=&H0000FFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=3,Alignment=2,MarginV=${marginV}`;
       if (captionStyle === "neon") {
         forceStyle =
-          "Fontname=Arial,Fontsize=24,PrimaryColour=&H0000FF00,OutlineColour=&H00000000,BorderStyle=1,Outline=3,Alignment=2,MarginV=130";
+          `Fontname=Arial,Fontsize=24,PrimaryColour=&H0000FF00,OutlineColour=&H00000000,BorderStyle=1,Outline=3,Alignment=2,MarginV=${marginV}`;
       } else if (captionStyle === "beast") {
         forceStyle =
-          "Fontname=Arial,Fontsize=26,PrimaryColour=&H0000FFFF,OutlineColour=&H000000FF,BorderStyle=1,Outline=4,Alignment=2,MarginV=130";
+          `Fontname=Arial,Fontsize=26,PrimaryColour=&H0000FFFF,OutlineColour=&H000000FF,BorderStyle=1,Outline=4,Alignment=2,MarginV=${marginV}`;
       } else if (captionStyle === "clean") {
         forceStyle =
-          "Fontname=Arial,Fontsize=22,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Alignment=2,MarginV=130";
+          `Fontname=Arial,Fontsize=22,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Alignment=2,MarginV=${marginV}`;
       }
 
       const srtEscaped = tempSrtPath.replace(/\\/g, "/").replace(/:/g, "\\:");
