@@ -46,24 +46,39 @@ export async function POST(req: NextRequest) {
     );
 
     try {
-      let ffmpegCmd = "";
+      const transcodeCmd = `"${ffmpegBin}" -y -i "${rawPath}" -c:v libx264 -preset veryfast -crf 23 -pix_fmt yuv420p -vf "scale='min(1920,iw)':-2" -c:a aac -b:a 128k -movflags +faststart "${webMp4Path}"`;
+
       if (streamInfo.isH264Yuv420p8Bit) {
         console.log(
-          `[Stage: Upload Media Prep] Video is already H.264 8-bit yuv420p. Remuxing with -c copy -movflags +faststart...`
+          `[Stage: Upload Media Prep] Video is already H.264 8-bit yuv420p. Attempting copy remux with -c copy -movflags +faststart...`
         );
-        ffmpegCmd = `"${ffmpegBin}" -y -i "${rawPath}" -c copy -movflags +faststart "${webMp4Path}"`;
+        const remuxCmd = `"${ffmpegBin}" -y -i "${rawPath}" -c copy -movflags +faststart "${webMp4Path}"`;
+        try {
+          const prepStartTime = Date.now();
+          await execPromise(remuxCmd, { timeout: 180000 });
+          console.log(
+            `[Stage: Upload Media Prep] Copy remux succeeded in ${Date.now() - prepStartTime}ms -> ${webMp4Path}`
+          );
+        } catch (remuxErr: any) {
+          console.warn(
+            `[Stage: Upload Media Prep] Copy remux failed (${remuxErr.message}). Incompatible container or audio codec detected. Falling back to full transcode...`
+          );
+          const transcodeStartTime = Date.now();
+          await execPromise(transcodeCmd, { timeout: 180000 });
+          console.log(
+            `[Stage: Upload Media Prep] Transcode fallback completed in ${Date.now() - transcodeStartTime}ms -> ${webMp4Path}`
+          );
+        }
       } else {
         console.log(
           `[Stage: Upload Media Prep] Video is ${streamInfo.codecName} (${streamInfo.pixFmt}). Transcoding to standard H.264 8-bit yuv420p with -preset veryfast...`
         );
-        ffmpegCmd = `"${ffmpegBin}" -y -i "${rawPath}" -c:v libx264 -preset veryfast -crf 23 -pix_fmt yuv420p -vf "scale='min(1920,iw)':-2" -c:a aac -b:a 128k -movflags +faststart "${webMp4Path}"`;
+        const prepStartTime = Date.now();
+        await execPromise(transcodeCmd, { timeout: 180000 });
+        console.log(
+          `[Stage: Upload Media Prep] Transcode completed in ${Date.now() - prepStartTime}ms -> ${webMp4Path}`
+        );
       }
-
-      const prepStartTime = Date.now();
-      await execPromise(ffmpegCmd, { timeout: 180000 });
-      console.log(
-        `[Stage: Upload Media Prep] Media prep completed in ${Date.now() - prepStartTime}ms -> ${webMp4Path}`
-      );
 
       // Clean up raw temp file
       if (fs.existsSync(rawPath) && fs.existsSync(webMp4Path)) {

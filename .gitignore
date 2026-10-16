@@ -31,6 +31,9 @@
 /public/rendered_clips/*
 !/public/rendered_clips/.gitkeep
 
+# Intermediate processing data (offline, not reachable by URL)
+/data/
+
 # debug
 npm-debug.log*
 yarn-debug.log*

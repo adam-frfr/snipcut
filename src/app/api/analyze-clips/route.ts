@@ -49,8 +49,8 @@ export async function POST(req: NextRequest) {
       `[Stage: AI Clip Curation] Word boundary snapping and validation finished in ${snapElapsed}ms. Final clips: ${snappedClips.length}`
     );
 
-    // 3. Save Intermediate Clips JSON
-    const debugDir = path.join(process.cwd(), "public", "uploads", "debug");
+    // 3. Save Intermediate Clips JSON to data/debug/ (offline, not reachable by URL)
+    const debugDir = path.join(process.cwd(), "data", "debug");
     if (!fs.existsSync(debugDir)) {
       fs.mkdirSync(debugDir, { recursive: true });
     }
@@ -85,7 +85,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       success: true,
       clips: snappedClips,
-      debugFile: `/api/media?file=uploads/debug/${path.basename(debugFile)}`,
+      debugPath: debugFile,
       timingMs: Date.now() - analysisStartTime,
     });
   } catch (error: any) {

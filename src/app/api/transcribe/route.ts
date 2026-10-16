@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getOpenAIClient } from "@/lib/aiService";
-import { extractAudioForWhisper } from "@/lib/videoService";
+import { extractAudioForWhisper, getFfmpegBinary } from "@/lib/videoService";
 import fs from "fs";
 import path from "path";
 
@@ -21,10 +21,10 @@ export async function POST(req: NextRequest) {
 
     let audioPath = filePath;
 
-    // If it's a video file (.mp4, .mov, .mkv, .webm), extract compressed audio first
+    // Intermediate audio stored in data/audio (not exposed via public/)
     const ext = path.extname(filePath).toLowerCase();
     if ([".mp4", ".mov", ".mkv", ".webm", ".avi"].includes(ext)) {
-      const audioOutputDir = path.join(process.cwd(), "public", "extracted_audio");
+      const audioOutputDir = path.join(process.cwd(), "data", "audio");
       if (!fs.existsSync(audioOutputDir)) {
         fs.mkdirSync(audioOutputDir, { recursive: true });
       }
@@ -64,8 +64,8 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Ensure debug output directory exists for intermediate saving
-    const debugDir = path.join(process.cwd(), "public", "uploads", "debug");
+    // Intermediate debug output stored in data/debug (not exposed via public/)
+    const debugDir = path.join(process.cwd(), "data", "debug");
     if (!fs.existsSync(debugDir)) {
       fs.mkdirSync(debugDir, { recursive: true });
     }
@@ -75,7 +75,7 @@ export async function POST(req: NextRequest) {
       const segments = transcription.segments || [];
       const debugFile = path.join(debugDir, `transcript-${Date.now()}.json`);
 
-      // Save intermediate transcript JSON
+      // Save intermediate transcript JSON to data/debug/
       fs.writeFileSync(
         debugFile,
         JSON.stringify(
@@ -107,14 +107,13 @@ export async function POST(req: NextRequest) {
         segments,
         duration: transcription.duration,
         audioPath,
-        debugFile: `/api/media?file=uploads/debug/${path.basename(debugFile)}`,
+        debugPath: debugFile,
         timingMs: Date.now() - transcribeStartTime,
       });
     }
 
-    // Fallback: Detect video duration using local FFmpeg and generate structured segments
-    const ffmpegPath = path.join(process.cwd(), "bin", "ffmpeg.exe");
-    const bin = fs.existsSync(ffmpegPath) ? `"${ffmpegPath}"` : "ffmpeg";
+    // Fallback: Detect video duration using resolved FFmpeg binary
+    const ffmpegBin = getFfmpegBinary();
     let durationSeconds = 60;
 
     try {
@@ -122,7 +121,7 @@ export async function POST(req: NextRequest) {
       const util = await import("util");
       const execPromise = util.promisify(exec);
       try {
-        await execPromise(`${bin} -i "${filePath}"`);
+        await execPromise(`"${ffmpegBin}" -i "${filePath}"`);
       } catch (ffErr: any) {
         const match = (ffErr?.stderr || "").match(/Duration: (\d{2}):(\d{2}):(\d{2})\.(\d{2})/);
         if (match) {
@@ -190,7 +189,7 @@ export async function POST(req: NextRequest) {
       segments: fallbackSegments,
       duration: durationSeconds,
       audioPath,
-      debugFile: `/api/media?file=uploads/debug/${path.basename(debugFile)}`,
+      debugPath: debugFile,
       timingMs: Date.now() - transcribeStartTime,
     });
   } catch (err: any) {

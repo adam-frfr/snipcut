@@ -81,7 +81,7 @@ export function snapAndValidateClips(
     }
 
     // --- 1. Snap Start Time ---
-    // Search window within +/- 3.0s around rawStart
+    // Search window within +/- 3.5s around rawStart
     let startIdx = 0;
     let minStartDiff = Infinity;
     let preferredSentenceStartIdx: number | null = null;
@@ -108,22 +108,25 @@ export function snapAndValidateClips(
       }
     }
 
-    // Prefer sentence beginning if found within 2.5s
-    const chosenStartIdx = preferredSentenceStartIdx !== null ? preferredSentenceStartIdx : startIdx;
-    const startWord = sortedWords[chosenStartIdx];
+    let snappedStart = rawStart;
+    // Only snap if nearest word is in range (<= 3.5s). If no words in range, preserve rawStart.
+    if (minStartDiff <= 3.5) {
+      const chosenStartIdx = preferredSentenceStartIdx !== null ? preferredSentenceStartIdx : startIdx;
+      const startWord = sortedWords[chosenStartIdx];
 
-    // Padding calculation: clamp to at most half the gap to the previous word
-    let startPad = 0;
-    if (chosenStartIdx > 0) {
-      const prevWord = sortedWords[chosenStartIdx - 1];
-      const gap = Math.max(0, startWord.start - prevWord.end);
-      startPad = Math.min(targetPadding, gap / 2);
-    } else {
-      const gapToZero = Math.max(0, startWord.start);
-      startPad = Math.min(targetPadding, gapToZero / 2);
+      // Padding calculation: clamp to at most half the gap to the previous word
+      let startPad = 0;
+      if (chosenStartIdx > 0) {
+        const prevWord = sortedWords[chosenStartIdx - 1];
+        const gap = Math.max(0, startWord.start - prevWord.end);
+        startPad = Math.min(targetPadding, gap / 2);
+      } else {
+        const gapToZero = Math.max(0, startWord.start);
+        startPad = Math.min(targetPadding, gapToZero / 2);
+      }
+
+      snappedStart = Math.max(0, startWord.start - startPad);
     }
-
-    let snappedStart = Math.max(0, startWord.start - startPad);
 
     // --- 2. Snap End Time ---
     // Search window within +/- 3.5s around rawEnd
@@ -132,8 +135,9 @@ export function snapAndValidateClips(
     let preferredSentenceEndIdx: number | null = null;
     let minSentenceEndDiff = Infinity;
 
-    for (let i = chosenStartIdx; i < sortedWords.length; i++) {
+    for (let i = 0; i < sortedWords.length; i++) {
       const w = sortedWords[i];
+      if (w.end < snappedStart) continue;
       const diff = Math.abs(w.end - rawEnd);
 
       if (diff < minEndDiff) {
@@ -150,26 +154,34 @@ export function snapAndValidateClips(
       }
     }
 
-    // Prefer sentence ending if found within 3.0s
-    const chosenEndIdx = preferredSentenceEndIdx !== null ? preferredSentenceEndIdx : endIdx;
-    const endWord = sortedWords[chosenEndIdx];
+    let snappedEnd = rawEnd;
+    // Only snap if nearest word is in range (<= 3.5s). If no words in range, preserve rawEnd.
+    if (minEndDiff <= 3.5) {
+      const chosenEndIdx = preferredSentenceEndIdx !== null ? preferredSentenceEndIdx : endIdx;
+      const endWord = sortedWords[chosenEndIdx];
 
-    // Padding calculation: clamp to at most half the gap to the next word
-    let endPad = 0;
-    if (chosenEndIdx < sortedWords.length - 1) {
-      const nextWord = sortedWords[chosenEndIdx + 1];
-      const gap = Math.max(0, nextWord.start - endWord.end);
-      endPad = Math.min(targetPadding, gap / 2);
-    } else {
-      endPad = targetPadding;
+      // Padding calculation: clamp to at most half the gap to the next word
+      let endPad = 0;
+      if (chosenEndIdx < sortedWords.length - 1) {
+        const nextWord = sortedWords[chosenEndIdx + 1];
+        const gap = Math.max(0, nextWord.start - endWord.end);
+        endPad = Math.min(targetPadding, gap / 2);
+      } else {
+        endPad = targetPadding;
+      }
+
+      snappedEnd = endWord.end + endPad;
     }
-
-    let snappedEnd = endWord.end + endPad;
 
     // --- 3. Validate Boundaries & Constraints ---
     if (totalDuration && totalDuration > 0) {
-      snappedStart = Math.min(snappedStart, Math.max(0, totalDuration - minDuration));
-      snappedEnd = Math.min(snappedEnd, totalDuration);
+      if (snappedStart >= totalDuration) {
+        snappedStart = Math.max(0, totalDuration - minDuration);
+        snappedEnd = totalDuration;
+      } else {
+        snappedStart = Math.min(snappedStart, Math.max(0, totalDuration - minDuration));
+        snappedEnd = Math.min(snappedEnd, totalDuration);
+      }
     }
 
     let clipDuration = snappedEnd - snappedStart;

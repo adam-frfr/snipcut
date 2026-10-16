@@ -5,42 +5,87 @@ import fs from "fs";
 import { spawn } from "child_process";
 
 // Set fluent-ffmpeg binary path to local bin or system/static ffmpeg
+function checkBinaryRunnable(binPath: string): boolean {
+  try {
+    const { execFileSync } = require("child_process");
+    execFileSync(binPath, ["-version"], { stdio: "ignore", timeout: 3000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Resolution order: 1. Env override -> 2. ./bin (platform matching) -> 3. static package -> 4. system PATH -> Clear error
 export function getFfmpegBinary(): string {
-  if (process.platform === "win32") {
-    const localWinBin = path.join(process.cwd(), "bin", "ffmpeg.exe");
-    if (fs.existsSync(localWinBin)) {
-      return localWinBin;
+  if (process.env.FFMPEG_PATH && fs.existsSync(process.env.FFMPEG_PATH)) {
+    return process.env.FFMPEG_PATH;
+  }
+
+  const isWin = process.platform === "win32";
+  const binName = isWin ? "ffmpeg.exe" : "ffmpeg";
+  const localBin = path.join(process.cwd(), "bin", binName);
+  if (fs.existsSync(localBin)) {
+    return localBin;
+  }
+
+  try {
+    const staticPath = typeof ffmpegStatic === "string" ? ffmpegStatic : (ffmpegStatic as any)?.path;
+    if (staticPath && fs.existsSync(staticPath)) {
+      return staticPath;
     }
+  } catch {}
+
+  if (checkBinaryRunnable("ffmpeg")) {
+    return "ffmpeg";
   }
-  const localLinuxBin = path.join(process.cwd(), "bin", "ffmpeg");
-  if (fs.existsSync(localLinuxBin)) {
-    return localLinuxBin;
-  }
-  return ffmpegStatic || "ffmpeg";
+
+  throw new Error(
+    `FFmpeg binary not found for platform "${process.platform}". Checked FFMPEG_PATH env, ./bin/${binName}, ffmpeg-static, and system PATH.`
+  );
 }
 
 export function getFfprobeBinary(): string {
-  if (process.platform === "win32") {
-    const localWinBin = path.join(process.cwd(), "bin", "ffprobe.exe");
-    if (fs.existsSync(localWinBin)) {
-      return localWinBin;
-    }
+  if (process.env.FFPROBE_PATH && fs.existsSync(process.env.FFPROBE_PATH)) {
+    return process.env.FFPROBE_PATH;
   }
-  const localLinuxBin = path.join(process.cwd(), "bin", "ffprobe");
-  if (fs.existsSync(localLinuxBin)) {
-    return localLinuxBin;
+
+  const isWin = process.platform === "win32";
+  const binName = isWin ? "ffprobe.exe" : "ffprobe";
+  const localBin = path.join(process.cwd(), "bin", binName);
+  if (fs.existsSync(localBin)) {
+    return localBin;
   }
+
   try {
-    const ffprobeStatic = require("ffprobe-static");
-    if (ffprobeStatic?.path && fs.existsSync(ffprobeStatic.path)) {
-      return ffprobeStatic.path;
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const ffprobePkg = require("ffprobe-static");
+    const staticPath =
+      ffprobePkg?.path || ffprobePkg?.default?.path || ffprobePkg?.default || ffprobePkg;
+    if (typeof staticPath === "string" && fs.existsSync(staticPath)) {
+      return staticPath;
     }
-  } catch (e) {}
-  return "ffprobe";
+  } catch {}
+
+  if (checkBinaryRunnable("ffprobe")) {
+    return "ffprobe";
+  }
+
+  throw new Error(
+    `ffprobe binary not found for platform "${process.platform}". Checked FFPROBE_PATH env, ./bin/${binName}, ffprobe-static, and system PATH.`
+  );
 }
 
-ffmpeg.setFfmpegPath(getFfmpegBinary());
-ffmpeg.setFfprobePath(getFfprobeBinary());
+try {
+  ffmpeg.setFfmpegPath(getFfmpegBinary());
+} catch (e: any) {
+  console.warn("FFmpeg path init notice:", e?.message || e);
+}
+
+try {
+  ffmpeg.setFfprobePath(getFfprobeBinary());
+} catch (e: any) {
+  console.warn("ffprobe path init notice:", e?.message || e);
+}
 
 export interface VideoStreamInfo {
   codecName: string;
@@ -82,19 +127,20 @@ export async function probeVideoFormat(filePath: string): Promise<VideoStreamInf
 
     const isH264 = codecName === "h264" || codecName === "avc1";
     const isYuv420p = pixFmt === "yuv420p";
-    const is8Bit = !bits || bits === "8";
+    // bits_per_raw_sample is often missing for H.264. Only check if present. Treat missing as OK.
+    const is8Bit = !bits || bits === "8" || bits === 8;
 
     return {
       codecName,
       pixFmt,
-      bitsPerRawSample: bits,
+      bitsPerRawSample: bits ? String(bits) : undefined,
       width: stream.width,
       height: stream.height,
       duration: stream.duration ? parseFloat(stream.duration) : undefined,
       isH264Yuv420p8Bit: isH264 && isYuv420p && is8Bit,
     };
-  } catch (err) {
-    console.warn("ffprobe inspection warning, falling back to transcode:", err);
+  } catch (err: any) {
+    console.warn("ffprobe inspection warning, falling back to transcode:", err?.message || err);
     return {
       codecName: "unknown",
       pixFmt: "unknown",
@@ -312,11 +358,23 @@ export async function renderVideoClip({
     let srtEntries: { start: number; end: number; text: string }[] = [];
 
     if (transcript && transcript.length > 0) {
-      srtEntries = transcript.map((t) => ({
-        start: Math.max(0, t.start),
-        end: Math.max(t.start + 0.4, t.end),
-        text: t.text.toUpperCase(),
-      }));
+      // Input seeking (-ss before -i) resets output video timeline to 0.
+      // If timestamps are absolute (e.g. word starts at 32s for a clip starting at 30s),
+      // shift them by startTime so subtitles align with the trimmed audio.
+      const minStart = Math.min(...transcript.map((t) => t.start));
+      const isAbsolute = startTime > 0.5 && minStart >= startTime - 1.0;
+
+      srtEntries = transcript
+        .map((t) => {
+          const rawStart = isAbsolute ? t.start - startTime : t.start;
+          const rawEnd = isAbsolute ? t.end - startTime : t.end;
+          return {
+            start: Math.max(0, rawStart),
+            end: Math.max(rawStart + 0.3, rawEnd),
+            text: t.text.toUpperCase(),
+          };
+        })
+        .filter((entry) => entry.start < duration);
     } else if (headline) {
       srtEntries = [
         {

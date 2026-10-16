@@ -362,8 +362,8 @@ function DashboardContent() {
         fullTranscript = transData.text || "";
         rawWords = transData.words || [];
         videoTotalDuration = transData.duration || 60;
-        if (transData.debugFile) {
-          console.log(`[Stage 2: Transcribe] Intermediate output: ${transData.debugFile}`);
+        if (transData.debugPath || transData.debugFile) {
+          console.log(`[Stage 2: Transcribe] Intermediate output: ${transData.debugPath || transData.debugFile}`);
         }
       }
 
@@ -386,8 +386,8 @@ function DashboardContent() {
       if (!analyzeRes.ok || analyzeData.error) {
         throw new Error(analyzeData.error || "AI Virality analysis failed.");
       }
-      if (analyzeData.debugFile) {
-        console.log(`[Stage 3: AI Curation] Intermediate output: ${analyzeData.debugFile}`);
+      if (analyzeData.debugPath || analyzeData.debugFile) {
+        console.log(`[Stage 3: AI Curation] Intermediate output: ${analyzeData.debugPath || analyzeData.debugFile}`);
       }
 
       // Stage 4: Assemble clips with precise snapped timestamps
