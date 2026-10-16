@@ -98,7 +98,7 @@ export async function analyzeTranscriptForViralClips({
   openaiKey?: string;
   claudeKey?: string;
 }): Promise<CuratedClipResult[]> {
-  const activeKey = (openaiKey || claudeKey || process.env.OPENAI_API_KEY || process.env.ANTHROPIC_API_KEY || "").trim();
+  const activeKey = (openaiKey || claudeKey || process.env.HACKCLUB_API_KEY || process.env.OPENAI_API_KEY || process.env.ANTHROPIC_API_KEY || "").trim();
 
   const systemPrompt = `You are OpusClip AI, the world's #1 video curation intelligence algorithm for TikTok, YouTube Shorts, and Instagram Reels.
 Your task is to analyze video transcripts and extract 1 to 6 standalone viral short clips (ALWAYS return at least 1 clip, even if the transcript is short or concise).

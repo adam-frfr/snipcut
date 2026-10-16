@@ -24,14 +24,10 @@
 # misc
 .DS_Store
 *.pem
-/public/downloads/*
-!/public/downloads/.gitkeep
-/public/extracted_audio/*
-!/public/extracted_audio/.gitkeep
-/public/rendered_clips/*
-!/public/rendered_clips/.gitkeep
-/public/uploads/*
-!/public/uploads/.gitkeep
+public/downloads/
+public/extracted_audio/
+public/rendered_clips/
+public/uploads/
 __pycache__/
 *.pyc
 

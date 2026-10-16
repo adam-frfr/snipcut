@@ -18,7 +18,7 @@ export async function GET(req: NextRequest) {
       targetPath = path.join(process.cwd(), "public", cleanRelative);
     }
 
-    const resolved = path.resolve(targetPath);
+    const resolved = path.resolve(/*turbopackIgnore: true*/ targetPath);
     const allowedRoot = path.resolve(process.cwd(), "public");
     const allowedRootWithSep = allowedRoot.endsWith(path.sep) ? allowedRoot : allowedRoot + path.sep;
 
@@ -27,11 +27,11 @@ export async function GET(req: NextRequest) {
       return new NextResponse("Access denied: path traversal forbidden", { status: 403 });
     }
 
-    if (!fs.existsSync(resolved)) {
+    if (!fs.existsSync(/*turbopackIgnore: true*/ resolved)) {
       return new NextResponse("Video file not found", { status: 404 });
     }
 
-    const stat = fs.statSync(resolved);
+    const stat = fs.statSync(/*turbopackIgnore: true*/ resolved);
     const fileSize = stat.size;
     const rangeHeader = req.headers.get("range");
 
@@ -90,7 +90,7 @@ export async function GET(req: NextRequest) {
       // Clamp end to file boundaries
       end = Math.min(end, fileSize - 1);
       const chunkSize = end - start + 1;
-      const fileStream = fs.createReadStream(resolved, { start, end });
+      const fileStream = fs.createReadStream(/*turbopackIgnore: true*/ resolved, { start, end });
 
       const stream = new ReadableStream({
         start(controller) {
@@ -112,7 +112,7 @@ export async function GET(req: NextRequest) {
       });
     } else {
       // Full file stream
-      const fileStream = fs.createReadStream(resolved);
+      const fileStream = fs.createReadStream(/*turbopackIgnore: true*/ resolved);
       const stream = new ReadableStream({
         start(controller) {
           fileStream.on("data", (chunk) => controller.enqueue(chunk));

@@ -94,8 +94,66 @@ console.log(`-> Snapped start: ${snapped.startTime}s, end: ${snapped.endTime}s`)
 assert.ok(snapped.startTime >= 9.5 && snapped.startTime <= 12.0, "Start snapped to nearby sentence or word boundary");
 assert.ok(snapped.endTime >= 14.0, "End snapped near boundary");
 assert.ok(snapped.snappedWords && snapped.snappedWords.length > 0, "Snapped words must be populated");
-// Verify words are shifted relative to snappedStart
 assert.ok(snapped.snappedWords[0].start >= 0, "First word relative start must be >= 0");
 console.log("-> PASS: Valid clip snapped accurately with relative words");
+
+// Test 5: Start prefers sentence boundary at or before raw start (within 2.5s)
+console.log("\n[Test 5] Preferring sentence boundary at or before raw start within 2.5s...");
+// In words: "world." ends at 11.0s. Index 2 "This" at 12.0s is a sentence start.
+// rawStart = 12.5s. Closest word is "is" (12.4s, diff 0.1s).
+// But "This" (12.0s) is a sentence start at or before rawStart within 2.5s (diff 0.5s <= 2.5s).
+// The algorithm should choose "This" (12.0s) instead of mid-sentence "is" (12.4s).
+const test5Clips: CuratedClipResult[] = [
+  makeClip({
+    title: "Sentence Start Preference",
+    startTime: 12.5,
+    endTime: 18.0,
+  }),
+];
+const result5 = snapAndValidateClips(test5Clips, words, { totalDuration: 30.0 });
+assert.strictEqual(result5.length, 1);
+console.log(`-> Snapped start: ${result5[0].startTime}s (expected <= 12.0s before "This")`);
+assert.ok(result5[0].startTime <= 12.0, "Must choose sentence start 'This' at 12.0s rather than mid-sentence at 12.4s");
+console.log("-> PASS: Sentence start at or before raw start correctly preferred");
+
+// Test 6: End prefers sentence boundary at or after raw end
+console.log("\n[Test 6] Preferring sentence boundary at or after raw end...");
+// In words: "test" is 12.9 - 13.5s. "video." is 13.6 - 14.2s (ends with period).
+// rawEnd = 13.2s. Closest word is "test" (diff 0.3s).
+// But "video." is a sentence end at or after rawEnd within range (14.2s >= 13.2s).
+// The algorithm should choose "video." (14.2s) to cleanly conclude the thought.
+const test6Clips: CuratedClipResult[] = [
+  makeClip({
+    title: "Sentence End Preference",
+    startTime: 10.0,
+    endTime: 13.2,
+  }),
+];
+const result6 = snapAndValidateClips(test6Clips, words, { totalDuration: 30.0, minDuration: 3.0 });
+assert.strictEqual(result6.length, 1);
+console.log(`-> Snapped end: ${result6[0].endTime}s (expected >= 14.2s after 'video.')`);
+assert.ok(result6[0].endTime >= 14.2, "Must choose sentence end 'video.' at 14.2s rather than cutting off at 'test'");
+console.log("-> PASS: Sentence end at or after raw end correctly preferred");
+
+// Test 7: Never shift start later than raw start by more than word-snap padding
+console.log("\n[Test 7] Ensuring start is never shifted later than rawStart by > targetPadding...");
+// rawStart = 11.1s. "world." ended at 11.0s. Next word "This" starts at 12.0s.
+// targetPadding = 0.2s. Max allowed start is 11.1 + 0.2 = 11.3s.
+// Snapped start must NOT jump ahead to 11.9s.
+const test7Clips: CuratedClipResult[] = [
+  makeClip({
+    title: "No Late Start Shift",
+    startTime: 11.1,
+    endTime: 15.0,
+  }),
+];
+const result7 = snapAndValidateClips(test7Clips, words, { totalDuration: 30.0, targetPaddingSec: 0.2 });
+assert.strictEqual(result7.length, 1);
+console.log(`-> Snapped start: ${result7[0].startTime}s (rawStart: 11.1s, max allowed: 11.3s)`);
+assert.ok(
+  result7[0].startTime <= 11.1 + 0.2001,
+  `Snapped start (${result7[0].startTime}s) must not exceed rawStart + padding (11.3s)`
+);
+console.log("-> PASS: Start never shifted later than rawStart by more than padding");
 
 console.log("\nALL WORD SNAPPING TESTS PASSED!\n");

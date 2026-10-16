@@ -102,6 +102,99 @@ export interface VideoStreamInfo {
   isH264Yuv420p8Bit: boolean;
 }
 
+let isZscaleAvailableCache: boolean | null = null;
+export function checkZscaleSupported(): boolean {
+  if (isZscaleAvailableCache !== null) return isZscaleAvailableCache;
+  try {
+    const { execFileSync } = require("child_process");
+    const bin = getFfmpegBinary();
+    const stdout = execFileSync(/*turbopackIgnore: true*/ bin, ["-filters"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 5000,
+    });
+    isZscaleAvailableCache = stdout.includes("zscale");
+  } catch {
+    isZscaleAvailableCache = false;
+  }
+  return isZscaleAvailableCache ?? false;
+}
+
+const ALLOWED_DIRECTORIES = [
+  path.resolve(process.cwd(), "public", "uploads"),
+  path.resolve(process.cwd(), "public", "downloads"),
+  path.resolve(process.cwd(), "public", "rendered_clips"),
+  path.resolve(process.cwd(), "data"),
+];
+
+/**
+ * Resolves an upload id, relative path, or filename safely strictly within allowed server directories.
+ * Prevents arbitrary filesystem traversal attacks.
+ */
+export function resolveSafeFilePath(input: string): string {
+  if (!input || typeof input !== "string") {
+    throw new Error("Invalid file identifier provided");
+  }
+
+  // Strip media query prefix if passed as /api/media?file=...
+  let clean = input.trim();
+  if (clean.includes("/api/media?file=")) {
+    clean = decodeURIComponent(clean.split("/api/media?file=")[1] || "");
+  }
+
+  const baseOnly = path.basename(clean);
+  const candidates: string[] = [];
+
+  if (path.isAbsolute(clean)) {
+    candidates.push(path.resolve(/*turbopackIgnore: true*/ clean));
+  } else {
+    candidates.push(path.resolve(/*turbopackIgnore: true*/ process.cwd(), clean));
+    candidates.push(path.resolve(/*turbopackIgnore: true*/ process.cwd(), "public", clean));
+    candidates.push(path.resolve(/*turbopackIgnore: true*/ process.cwd(), "public", "uploads", baseOnly));
+    candidates.push(path.resolve(/*turbopackIgnore: true*/ process.cwd(), "public", "downloads", baseOnly));
+    candidates.push(path.resolve(/*turbopackIgnore: true*/ process.cwd(), "public", "rendered_clips", baseOnly));
+    candidates.push(path.resolve(/*turbopackIgnore: true*/ process.cwd(), "data", baseOnly));
+  }
+
+  for (const candidate of candidates) {
+    const isAllowed = ALLOWED_DIRECTORIES.some((allowed) => {
+      const allowedWithSep = allowed.endsWith(path.sep) ? allowed : allowed + path.sep;
+      return candidate === allowed || candidate.startsWith(allowedWithSep);
+    });
+
+    if (isAllowed && fs.existsSync(/*turbopackIgnore: true*/ candidate)) {
+      return candidate;
+    }
+  }
+
+  const primary = candidates[0];
+  const isPrimaryAllowed = ALLOWED_DIRECTORIES.some((allowed) => {
+    const allowedWithSep = allowed.endsWith(path.sep) ? allowed : allowed + path.sep;
+    return primary === allowed || primary.startsWith(allowedWithSep);
+  });
+
+  if (!isPrimaryAllowed) {
+    throw new Error("Access denied: requested path resolves outside allowed media directories");
+  }
+
+  return primary;
+}
+
+/**
+ * Converts a server filesystem path into a safe, client-facing relative fileId/URL
+ */
+export function toSafeFileIdentifier(absolutePath: string): { fileId: string; fileUrl: string } {
+  const publicDir = path.resolve(process.cwd(), "public");
+  let relative = path.relative(publicDir, absolutePath).replace(/\\/g, "/");
+  if (relative.startsWith("..")) {
+    relative = path.relative(process.cwd(), absolutePath).replace(/\\/g, "/");
+  }
+  return {
+    fileId: relative,
+    fileUrl: `/api/media?file=${encodeURIComponent(relative)}`,
+  };
+}
+
 /**
  * Inspect video streams using ffprobe to check format, VFR, and HDR transfer
  */
@@ -133,11 +226,11 @@ export async function probeVideoFormat(filePath: string): Promise<VideoStreamInf
     const rFrameRate = stream.r_frame_rate;
     const avgFrameRate = stream.avg_frame_rate;
 
+    // Rule: Decide isHdr ONLY from color_transfer (smpte2084 / arib-std-b67), not from pixel format or bit depth
     const isHdr =
       colorTransfer === "arib-std-b67" ||
-      colorTransfer === "smpte2084" ||
-      pixFmt.includes("10") ||
-      bits === "10";
+      colorTransfer === "smpte2084";
+
     const isVfr = Boolean(
       rFrameRate && avgFrameRate && rFrameRate !== avgFrameRate
     );
@@ -147,7 +240,7 @@ export async function probeVideoFormat(filePath: string): Promise<VideoStreamInf
     // bits_per_raw_sample is often missing for H.264. Only check if present. Treat missing as OK.
     const is8Bit = !bits || bits === "8" || bits === 8;
 
-    // HDR requires SDR tone mapping, so HDR cannot be copy-remuxed directly.
+    // Direct copy-remux eligible only if H.264 8-bit yuv420p SDR
     const isH264Yuv420p8Bit = isH264 && isYuv420p && is8Bit && !isHdr;
 
     return {
@@ -248,7 +341,7 @@ export async function detectSubjectAndReframe(
     const pythonBin =
       process.env.PYTHON_BIN || (process.platform === "win32" ? "python" : "python3");
 
-    const py = spawn(pythonBin, [
+    const py = spawn(/*turbopackIgnore: true*/ pythonBin, [
       scriptPath,
       "--video",
       videoPath,
@@ -325,14 +418,9 @@ export async function renderVideoClip({
   headline,
   captionStyle = "hormozi",
 }: RenderOptions): Promise<{ outputPath: string; tracking: TrackingResult }> {
-  // Resolve input path if relative or web public path
-  let resolvedInput = inputPath;
-  if (!fs.existsSync(resolvedInput)) {
-    const publicCandidate = path.join(process.cwd(), "public", inputPath.replace(/^\//, ""));
-    if (fs.existsSync(publicCandidate)) {
-      resolvedInput = publicCandidate;
-    }
-  }
+  // Resolve input and output paths safely strictly within allowed directories
+  const resolvedInput = resolveSafeFilePath(inputPath);
+  const resolvedOutput = resolveSafeFilePath(outputPath);
 
   // Determine actual reframe mode
   let effectiveMode: ReframeMode = reframeMode;
@@ -510,15 +598,15 @@ export async function renderVideoClip({
         "-b:a 192k",
         "-movflags +faststart",
       ])
-      .output(outputPath)
+      .output(resolvedOutput)
       .on("end", () => {
         cleanup();
         const elapsedMs = Date.now() - renderStartTime;
-        const sizeBytes = fs.existsSync(outputPath) ? fs.statSync(outputPath).size : 0;
+        const sizeBytes = fs.existsSync(resolvedOutput) ? fs.statSync(resolvedOutput).size : 0;
         console.log(
-          `[Stage: FFmpeg Render] Finished rendering in ${elapsedMs}ms -> ${outputPath} (${sizeBytes} bytes)`
+          `[Stage: FFmpeg Render] Finished rendering in ${elapsedMs}ms -> ${resolvedOutput} (${sizeBytes} bytes)`
         );
-        resolve({ outputPath, tracking: trackingResult });
+        resolve({ outputPath: resolvedOutput, tracking: trackingResult });
       })
       .on("error", (err) => {
         cleanup();

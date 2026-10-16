@@ -88,11 +88,14 @@ export function snapAndValidateClips(
     }
 
     // --- 1. Snap Start Time ---
-    // Search window within +/- 3.5s around rawStart
+    // Rule: Prefer a sentence boundary at or before rawStart (within 2.5s).
+    // Word i is a sentence start if i === 0 or sortedWords[i - 1] ends with sentence punctuation.
     let startIdx = 0;
     let minStartDiff = Infinity;
     let preferredSentenceStartIdx: number | null = null;
-    let minSentenceStartDiff = Infinity;
+    let minSentenceBeforeDiff = Infinity;
+    let fallbackSentenceStartIdx: number | null = null;
+    let minFallbackSentenceDiff = Infinity;
 
     for (let i = 0; i < sortedWords.length; i++) {
       const w = sortedWords[i];
@@ -103,14 +106,20 @@ export function snapAndValidateClips(
         startIdx = i;
       }
 
-      // If previous word ends with punctuation, index `i` is the start of a sentence
-      if (i > 0) {
-        const prevW = sortedWords[i - 1];
-        if (SENTENCE_END_REGEX.test(prevW.word.trim())) {
-          if (diff < 2.5 && diff < minSentenceStartDiff) {
-            minSentenceStartDiff = diff;
+      const isSentenceStart =
+        i === 0 || SENTENCE_END_REGEX.test(sortedWords[i - 1].word.trim());
+
+      if (isSentenceStart) {
+        // Preferred: sentence boundary at or before rawStart within 2.5s
+        if (w.start <= rawStart && rawStart - w.start <= 2.5) {
+          const beforeDiff = rawStart - w.start;
+          if (beforeDiff < minSentenceBeforeDiff) {
+            minSentenceBeforeDiff = beforeDiff;
             preferredSentenceStartIdx = i;
           }
+        } else if (diff <= 2.5 && diff < minFallbackSentenceDiff) {
+          minFallbackSentenceDiff = diff;
+          fallbackSentenceStartIdx = i;
         }
       }
     }
@@ -123,7 +132,12 @@ export function snapAndValidateClips(
       return null;
     }
 
-    const chosenStartIdx = preferredSentenceStartIdx !== null ? preferredSentenceStartIdx : startIdx;
+    const chosenStartIdx =
+      preferredSentenceStartIdx !== null
+        ? preferredSentenceStartIdx
+        : fallbackSentenceStartIdx !== null
+        ? fallbackSentenceStartIdx
+        : startIdx;
     const startWord = sortedWords[chosenStartIdx];
 
     // Padding calculation: clamp to at most half the gap to the previous word
@@ -139,12 +153,35 @@ export function snapAndValidateClips(
 
     let snappedStart = Math.max(0, startWord.start - startPad);
 
+    // Rule: Never shift the start later than the raw start by more than the word-snap padding
+    const maxAllowedStart = rawStart + targetPadding;
+    if (snappedStart > maxAllowedStart) {
+      // Find the closest preceding word starting <= maxAllowedStart
+      let earlierIdx = chosenStartIdx;
+      while (earlierIdx > 0 && sortedWords[earlierIdx].start > maxAllowedStart) {
+        earlierIdx--;
+      }
+      if (sortedWords[earlierIdx].start <= maxAllowedStart) {
+        const fallbackWord = sortedWords[earlierIdx];
+        const gap =
+          earlierIdx > 0
+            ? Math.max(0, fallbackWord.start - sortedWords[earlierIdx - 1].end)
+            : fallbackWord.start;
+        const pad = Math.min(targetPadding, gap / 2);
+        snappedStart = Math.max(0, fallbackWord.start - pad);
+      } else {
+        snappedStart = Math.max(0, rawStart);
+      }
+    }
+
     // --- 2. Snap End Time ---
-    // Search window within +/- 3.5s around rawEnd
+    // Rule: For the end, prefer a sentence boundary at or after the raw end.
     let endIdx = sortedWords.length - 1;
     let minEndDiff = Infinity;
     let preferredSentenceEndIdx: number | null = null;
-    let minSentenceEndDiff = Infinity;
+    let minSentenceAfterDiff = Infinity;
+    let fallbackSentenceEndIdx: number | null = null;
+    let minFallbackSentenceEndDiff = Infinity;
 
     for (let i = 0; i < sortedWords.length; i++) {
       const w = sortedWords[i];
@@ -158,16 +195,28 @@ export function snapAndValidateClips(
 
       // If this word ends with punctuation, it is a clean sentence ending
       if (SENTENCE_END_REGEX.test(w.word.trim())) {
-        if (diff < 3.0 && diff < minSentenceEndDiff) {
-          minSentenceEndDiff = diff;
-          preferredSentenceEndIdx = i;
+        // Preferred: sentence boundary at or after rawEnd within 3.5s
+        if (w.end >= rawEnd && w.end - rawEnd <= 3.5) {
+          const afterDiff = w.end - rawEnd;
+          if (afterDiff < minSentenceAfterDiff) {
+            minSentenceAfterDiff = afterDiff;
+            preferredSentenceEndIdx = i;
+          }
+        } else if (diff <= 3.0 && diff < minFallbackSentenceEndDiff) {
+          minFallbackSentenceEndDiff = diff;
+          fallbackSentenceEndIdx = i;
         }
       }
     }
 
     let snappedEnd = rawEnd;
     if (minEndDiff <= 3.5) {
-      const chosenEndIdx = preferredSentenceEndIdx !== null ? preferredSentenceEndIdx : endIdx;
+      const chosenEndIdx =
+        preferredSentenceEndIdx !== null
+          ? preferredSentenceEndIdx
+          : fallbackSentenceEndIdx !== null
+          ? fallbackSentenceEndIdx
+          : endIdx;
       const endWord = sortedWords[chosenEndIdx];
 
       // Padding calculation: clamp to at most half the gap to the next word

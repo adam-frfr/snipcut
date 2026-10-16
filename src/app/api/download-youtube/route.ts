@@ -126,10 +126,12 @@ export async function POST(req: NextRequest) {
       const existingSample = sampleFiles.find((s) => fs.existsSync(path.join(downloadDir, s))) || sampleFiles[0];
       const fullSamplePath = path.join(downloadDir, existingSample);
 
+      const safeSampleId = `downloads/${existingSample}`;
       return NextResponse.json({
         success: true,
-        filePath: fullSamplePath,
-        fileUrl: `/api/media?file=downloads/${existingSample}`,
+        fileId: safeSampleId,
+        filePath: safeSampleId,
+        fileUrl: `/api/media?file=${encodeURIComponent(safeSampleId)}`,
         fileName: existingSample,
         transcriptText:
           "[00:00] In the next decade, AI compute will scale by more than ten thousand times.\n[00:15] The companies that fail to reframe their entire workflow around artificial intelligence will simply cease to exist.\n[00:30] This is not an incremental shift. It is the greatest technological inflection point in modern history.",
@@ -183,14 +185,19 @@ export async function POST(req: NextRequest) {
     }
 
     // Multi-tier download strategies
+    // Prioritize H.264 (avc1) up to 1080p so downloads rarely need transcoding.
+    // Falls back to generic <=1080p video if avc1 is unavailable.
+    const preferredFormat =
+      "bestvideo[vcodec^=avc1][height<=1080]+bestaudio[ext=m4a]/bestvideo[vcodec^=avc1][height<=1080]+bestaudio/best[vcodec^=avc1][height<=1080]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best";
+
     // Strategy 1: JS runtime enabled + VisionOS & iOS clients (most effective against datacenter bot walls)
-    const strategy1 = `${ytDlp} --js-runtimes node --ffmpeg-location "${binDir}" ${cookieArg} ${proxyArg} --extractor-args "youtube:player_client=visionos,ios,mweb" -f "bestvideo[height<=720]+bestaudio/best[height<=720]/best" --no-warnings --ignore-errors --merge-output-format mp4 -o "${outputTemplate}" "${url}"`;
+    const strategy1 = `${ytDlp} --js-runtimes node --ffmpeg-location "${binDir}" ${cookieArg} ${proxyArg} --extractor-args "youtube:player_client=visionos,ios,mweb" -f "${preferredFormat}" --no-warnings --ignore-errors --merge-output-format mp4 -o "${outputTemplate}" "${url}"`;
 
     // Strategy 2: JS runtime enabled + iOS & Android clients
-    const strategy2 = `${ytDlp} --js-runtimes node --ffmpeg-location "${binDir}" ${cookieArg} ${proxyArg} --extractor-args "youtube:player_client=ios,android" -f "bestvideo[height<=720]+bestaudio/best[height<=720]/best" --no-warnings --ignore-errors --merge-output-format mp4 -o "${outputTemplate}" "${url}"`;
+    const strategy2 = `${ytDlp} --js-runtimes node --ffmpeg-location "${binDir}" ${cookieArg} ${proxyArg} --extractor-args "youtube:player_client=ios,android" -f "${preferredFormat}" --no-warnings --ignore-errors --merge-output-format mp4 -o "${outputTemplate}" "${url}"`;
 
     // Strategy 3: Standard client with fallback format
-    const strategy3 = `${ytDlp} --js-runtimes node --ffmpeg-location "${binDir}" ${cookieArg} ${proxyArg} -f "best[height<=720]/best" --no-warnings --ignore-errors --merge-output-format mp4 -o "${outputTemplate}" "${url}"`;
+    const strategy3 = `${ytDlp} --js-runtimes node --ffmpeg-location "${binDir}" ${cookieArg} ${proxyArg} -f "${preferredFormat}" --no-warnings --ignore-errors --merge-output-format mp4 -o "${outputTemplate}" "${url}"`;
 
     let downloadSucceeded = false;
     let lastError: any = null;
@@ -266,10 +273,13 @@ export async function POST(req: NextRequest) {
       console.warn("Subtitles could not be auto-extracted, falling back to Whisper AI transcription:", subErr);
     }
 
+    const safeRelativePath = `downloads/${videoFilename}`;
+
     return NextResponse.json({
       success: true,
-      filePath: fullVideoPath,
-      fileUrl: `/api/media?file=downloads/${videoFilename}`,
+      fileId: safeRelativePath,
+      filePath: safeRelativePath,
+      fileUrl: `/api/media?file=${encodeURIComponent(safeRelativePath)}`,
       fileName: videoFilename,
       transcriptText,
       transcriptSegments,

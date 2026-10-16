@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node tests/run-all-tests.js"
+    "test": "node tests/run-all-tests.js",
+    "test:benchmark": "npx tsx tests/benchmark_transcode.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.134.0",

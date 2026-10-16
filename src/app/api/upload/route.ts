@@ -3,7 +3,7 @@ import path from "path";
 import fs from "fs";
 import { execFile } from "child_process";
 import util from "util";
-import { getFfmpegBinary, probeVideoFormat } from "@/lib/videoService";
+import { getFfmpegBinary, probeVideoFormat, checkZscaleSupported } from "@/lib/videoService";
 
 const execFilePromise = util.promisify(execFile);
 
@@ -56,10 +56,18 @@ export async function POST(req: NextRequest) {
       // Determine filters for transcode path: CFR + HDR tone mapping if HDR detected
       let vfFilter = "scale='min(1920,iw)':-2";
       if (streamInfo.isHdr) {
-        console.log(
-          `[Stage: Upload Media Prep] HDR detected (transfer=${streamInfo.colorTransfer}). Applying tone-mapping to SDR...`
-        );
-        vfFilter = "scale='min(1920,iw)':-2,zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p";
+        const zscaleAvailable = checkZscaleSupported();
+        if (zscaleAvailable) {
+          console.log(
+            `[Stage: Upload Media Prep] HDR detected (transfer=${streamInfo.colorTransfer}). Applying zscale tone-mapping to SDR...`
+          );
+          vfFilter = "scale='min(1920,iw)':-2,zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p";
+        } else {
+          console.warn(
+            `[Stage: Upload Media Prep] HDR detected (transfer=${streamInfo.colorTransfer}), but zscale is unavailable in ffmpeg. Using standard SDR conversion.`
+          );
+          vfFilter = "scale='min(1920,iw)':-2";
+        }
       }
 
       // Safe argument arrays for execFile
@@ -112,7 +120,23 @@ export async function POST(req: NextRequest) {
           `[Stage: Upload Media Prep] Video is ${streamInfo.codecName} (${streamInfo.pixFmt}, transfer=${streamInfo.colorTransfer || "standard"}). Transcoding to CFR 30fps H.264 8-bit yuv420p SDR...`
         );
         const prepStartTime = Date.now();
-        await execFilePromise(ffmpegBin, transcodeArgs, { timeout: 180000 });
+        try {
+          await execFilePromise(ffmpegBin, transcodeArgs, { timeout: 180000 });
+        } catch (transcodeErr: any) {
+          if (streamInfo.isHdr && vfFilter.includes("zscale")) {
+            console.warn(
+              `[Stage: Upload Media Prep] Tone-mapping filter failed (${transcodeErr.message}). Retrying with plain conversion...`
+            );
+            const fallbackArgs = [...transcodeArgs];
+            const vfIdx = fallbackArgs.indexOf("-vf");
+            if (vfIdx !== -1) {
+              fallbackArgs[vfIdx + 1] = "scale='min(1920,iw)':-2";
+            }
+            await execFilePromise(ffmpegBin, fallbackArgs, { timeout: 180000 });
+          } else {
+            throw transcodeErr;
+          }
+        }
         console.log(
           `[Stage: Upload Media Prep] Transcode completed in ${Date.now() - prepStartTime}ms -> ${webMp4Path}`
         );
@@ -126,21 +150,25 @@ export async function POST(req: NextRequest) {
       }
 
       const totalElapsed = Date.now() - uploadStartTime;
+      const safeRelative = `uploads/${webMp4Filename}`;
+      const cleanFileName = file.name.toLowerCase().endsWith(".mp4") ? file.name : `${file.name}.mp4`;
+
       return NextResponse.json({
         success: true,
-        filePath: webMp4Path,
-        fileUrl: `/api/media?file=uploads/${webMp4Filename}`,
-        fileName: `${file.name}.mp4`,
-        sizeBytes: fs.statSync(webMp4Path).size,
+        fileId: safeRelative,
+        fileUrl: `/api/media?file=${encodeURIComponent(safeRelative)}`,
+        fileName: cleanFileName,
+        sizeBytes: fs.statSync(/*turbopackIgnore: true*/ webMp4Path).size,
         streamInfo,
         timingMs: totalElapsed,
       });
     } catch (ffmpegErr) {
       console.warn("Media prep fallback to raw file:", ffmpegErr);
+      const safeRelativeRaw = `uploads/${path.basename(rawPath)}`;
       return NextResponse.json({
         success: true,
-        filePath: rawPath,
-        fileUrl: `/api/media?file=uploads/${path.basename(rawPath)}`,
+        fileId: safeRelativeRaw,
+        fileUrl: `/api/media?file=${encodeURIComponent(safeRelativeRaw)}`,
         fileName: file.name,
         sizeBytes: file.size,
         streamInfo,
