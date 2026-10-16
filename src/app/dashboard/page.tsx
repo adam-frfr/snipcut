@@ -451,7 +451,14 @@ function DashboardContent() {
               duration: topClip.duration,
               aspectRatio: "9:16",
               reframeMode: "auto-tracker",
-              transcript: topClip.transcript,
+              transcript:
+                rawWords && rawWords.length > 0
+                  ? rawWords.map((w: any) => ({
+                      start: w.start,
+                      end: w.end,
+                      text: w.word || w.text,
+                    }))
+                  : topClip.transcript,
               headline: topClip.hookHeadline || topClip.title,
               captionStyle: topClip.captionStyle || "hormozi",
             }),

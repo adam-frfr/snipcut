@@ -30,6 +30,10 @@
 !/public/extracted_audio/.gitkeep
 /public/rendered_clips/*
 !/public/rendered_clips/.gitkeep
+/public/uploads/*
+!/public/uploads/.gitkeep
+__pycache__/
+*.pyc
 
 # Intermediate processing data (offline, not reachable by URL)
 /data/

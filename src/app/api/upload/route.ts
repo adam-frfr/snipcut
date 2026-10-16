@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import path from "path";
 import fs from "fs";
-import { exec } from "child_process";
+import { execFile } from "child_process";
 import util from "util";
 import { getFfmpegBinary, probeVideoFormat } from "@/lib/videoService";
 
-const execPromise = util.promisify(exec);
+const execFilePromise = util.promisify(execFile);
 
 export async function POST(req: NextRequest) {
   const uploadStartTime = Date.now();
@@ -25,8 +25,15 @@ export async function POST(req: NextRequest) {
     const bytes = await file.arrayBuffer();
     const buffer = Buffer.from(bytes);
 
-    const baseName = `${Date.now()}-${file.name.replace(/\.[^/.]+$/, "").replace(/[^a-zA-Z0-9_-]/g, "_")}`;
-    const rawPath = path.join(uploadsDir, `raw-${baseName}${path.extname(file.name)}`);
+    // Sanitize the stored filename strictly
+    const rawExt = path.extname(file.name).toLowerCase();
+    const safeExt = /^\.[a-z0-9]{1,8}$/.test(rawExt) ? rawExt : ".mp4";
+    const rawBase = path.basename(file.name, rawExt);
+    const safeBaseName = rawBase.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 60) || "upload";
+    const timestamp = Date.now();
+    const baseName = `${timestamp}-${safeBaseName}`;
+
+    const rawPath = path.join(uploadsDir, `raw-${baseName}${safeExt}`);
     fs.writeFileSync(rawPath, buffer);
 
     console.log(
@@ -38,43 +45,74 @@ export async function POST(req: NextRequest) {
 
     const ffmpegBin = getFfmpegBinary();
 
-    // Probe the file stream: Remux only if ffprobe says H.264, 8-bit, yuv420p. Anything else: transcode.
+    // Probe the file stream: Remux only if ffprobe says H.264, 8-bit, yuv420p, not HDR. Anything else: transcode.
     const probeStartTime = Date.now();
     const streamInfo = await probeVideoFormat(rawPath);
     console.log(
-      `[Stage: Upload Probe] ffprobe result in ${Date.now() - probeStartTime}ms: codec=${streamInfo.codecName}, pix_fmt=${streamInfo.pixFmt}, bits=${streamInfo.bitsPerRawSample || "8"}, isH264Yuv420p8Bit=${streamInfo.isH264Yuv420p8Bit}`
+      `[Stage: Upload Probe] ffprobe result in ${Date.now() - probeStartTime}ms: codec=${streamInfo.codecName}, pix_fmt=${streamInfo.pixFmt}, bits=${streamInfo.bitsPerRawSample || "8"}, transfer=${streamInfo.colorTransfer || "unknown"}, isHdr=${streamInfo.isHdr}, isVfr=${streamInfo.isVfr}, isH264Yuv420p8Bit=${streamInfo.isH264Yuv420p8Bit}`
     );
 
     try {
-      const transcodeCmd = `"${ffmpegBin}" -y -i "${rawPath}" -c:v libx264 -preset veryfast -crf 23 -pix_fmt yuv420p -vf "scale='min(1920,iw)':-2" -c:a aac -b:a 128k -movflags +faststart "${webMp4Path}"`;
-
-      if (streamInfo.isH264Yuv420p8Bit) {
+      // Determine filters for transcode path: CFR + HDR tone mapping if HDR detected
+      let vfFilter = "scale='min(1920,iw)':-2";
+      if (streamInfo.isHdr) {
         console.log(
-          `[Stage: Upload Media Prep] Video is already H.264 8-bit yuv420p. Attempting copy remux with -c copy -movflags +faststart...`
+          `[Stage: Upload Media Prep] HDR detected (transfer=${streamInfo.colorTransfer}). Applying tone-mapping to SDR...`
         );
-        const remuxCmd = `"${ffmpegBin}" -y -i "${rawPath}" -c copy -movflags +faststart "${webMp4Path}"`;
+        vfFilter = "scale='min(1920,iw)':-2,zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p";
+      }
+
+      // Safe argument arrays for execFile
+      const transcodeArgs = [
+        "-y",
+        "-i", rawPath,
+        "-c:v", "libx264",
+        "-preset", "veryfast",
+        "-crf", "23",
+        "-fps_mode", "cfr",
+        "-r", "30",
+        "-vf", vfFilter,
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac",
+        "-b:a", "128k",
+        "-movflags", "+faststart",
+        webMp4Path,
+      ];
+
+      const remuxArgs = [
+        "-y",
+        "-i", rawPath,
+        "-c", "copy",
+        "-movflags", "+faststart",
+        webMp4Path,
+      ];
+
+      if (streamInfo.isH264Yuv420p8Bit && !streamInfo.isHdr) {
+        console.log(
+          `[Stage: Upload Media Prep] Video is already H.264 8-bit yuv420p SDR. Attempting copy remux with -c copy -movflags +faststart...`
+        );
         try {
           const prepStartTime = Date.now();
-          await execPromise(remuxCmd, { timeout: 180000 });
+          await execFilePromise(ffmpegBin, remuxArgs, { timeout: 180000 });
           console.log(
             `[Stage: Upload Media Prep] Copy remux succeeded in ${Date.now() - prepStartTime}ms -> ${webMp4Path}`
           );
         } catch (remuxErr: any) {
           console.warn(
-            `[Stage: Upload Media Prep] Copy remux failed (${remuxErr.message}). Incompatible container or audio codec detected. Falling back to full transcode...`
+            `[Stage: Upload Media Prep] Copy remux failed (${remuxErr.message}). Falling back to full transcode...`
           );
           const transcodeStartTime = Date.now();
-          await execPromise(transcodeCmd, { timeout: 180000 });
+          await execFilePromise(ffmpegBin, transcodeArgs, { timeout: 180000 });
           console.log(
             `[Stage: Upload Media Prep] Transcode fallback completed in ${Date.now() - transcodeStartTime}ms -> ${webMp4Path}`
           );
         }
       } else {
         console.log(
-          `[Stage: Upload Media Prep] Video is ${streamInfo.codecName} (${streamInfo.pixFmt}). Transcoding to standard H.264 8-bit yuv420p with -preset veryfast...`
+          `[Stage: Upload Media Prep] Video is ${streamInfo.codecName} (${streamInfo.pixFmt}, transfer=${streamInfo.colorTransfer || "standard"}). Transcoding to CFR 30fps H.264 8-bit yuv420p SDR...`
         );
         const prepStartTime = Date.now();
-        await execPromise(transcodeCmd, { timeout: 180000 });
+        await execFilePromise(ffmpegBin, transcodeArgs, { timeout: 180000 });
         console.log(
           `[Stage: Upload Media Prep] Transcode completed in ${Date.now() - prepStartTime}ms -> ${webMp4Path}`
         );

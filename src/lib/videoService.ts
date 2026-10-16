@@ -94,11 +94,16 @@ export interface VideoStreamInfo {
   width?: number;
   height?: number;
   duration?: number;
+  colorTransfer?: string;
+  rFrameRate?: string;
+  avgFrameRate?: string;
+  isVfr: boolean;
+  isHdr: boolean;
   isH264Yuv420p8Bit: boolean;
 }
 
 /**
- * Inspect video streams using ffprobe to check if it's already web-standard H.264 8-bit yuv420p
+ * Inspect video streams using ffprobe to check format, VFR, and HDR transfer
  */
 export async function probeVideoFormat(filePath: string): Promise<VideoStreamInfo> {
   const ffprobeBin = getFfprobeBinary();
@@ -113,7 +118,7 @@ export async function probeVideoFormat(filePath: string): Promise<VideoStreamInf
       "-select_streams",
       "v:0",
       "-show_entries",
-      "stream=codec_name,pix_fmt,bits_per_raw_sample,width,height,duration",
+      "stream=codec_name,pix_fmt,bits_per_raw_sample,width,height,duration,r_frame_rate,avg_frame_rate,color_transfer,color_space,color_primaries",
       "-of",
       "json",
       filePath,
@@ -124,11 +129,26 @@ export async function probeVideoFormat(filePath: string): Promise<VideoStreamInf
     const codecName = (stream.codec_name || "").toLowerCase();
     const pixFmt = (stream.pix_fmt || "").toLowerCase();
     const bits = stream.bits_per_raw_sample;
+    const colorTransfer = (stream.color_transfer || "").toLowerCase();
+    const rFrameRate = stream.r_frame_rate;
+    const avgFrameRate = stream.avg_frame_rate;
+
+    const isHdr =
+      colorTransfer === "arib-std-b67" ||
+      colorTransfer === "smpte2084" ||
+      pixFmt.includes("10") ||
+      bits === "10";
+    const isVfr = Boolean(
+      rFrameRate && avgFrameRate && rFrameRate !== avgFrameRate
+    );
 
     const isH264 = codecName === "h264" || codecName === "avc1";
     const isYuv420p = pixFmt === "yuv420p";
     // bits_per_raw_sample is often missing for H.264. Only check if present. Treat missing as OK.
     const is8Bit = !bits || bits === "8" || bits === 8;
+
+    // HDR requires SDR tone mapping, so HDR cannot be copy-remuxed directly.
+    const isH264Yuv420p8Bit = isH264 && isYuv420p && is8Bit && !isHdr;
 
     return {
       codecName,
@@ -137,13 +157,20 @@ export async function probeVideoFormat(filePath: string): Promise<VideoStreamInf
       width: stream.width,
       height: stream.height,
       duration: stream.duration ? parseFloat(stream.duration) : undefined,
-      isH264Yuv420p8Bit: isH264 && isYuv420p && is8Bit,
+      colorTransfer: colorTransfer || undefined,
+      rFrameRate,
+      avgFrameRate,
+      isVfr,
+      isHdr,
+      isH264Yuv420p8Bit,
     };
   } catch (err: any) {
     console.warn("ffprobe inspection warning, falling back to transcode:", err?.message || err);
     return {
       codecName: "unknown",
       pixFmt: "unknown",
+      isVfr: false,
+      isHdr: false,
       isH264Yuv420p8Bit: false,
     };
   }
@@ -358,23 +385,26 @@ export async function renderVideoClip({
     let srtEntries: { start: number; end: number; text: string }[] = [];
 
     if (transcript && transcript.length > 0) {
-      // Input seeking (-ss before -i) resets output video timeline to 0.
-      // If timestamps are absolute (e.g. word starts at 32s for a clip starting at 30s),
-      // shift them by startTime so subtitles align with the trimmed audio.
-      const minStart = Math.min(...transcript.map((t) => t.start));
-      const isAbsolute = startTime > 0.5 && minStart >= startTime - 1.0;
+      // Subtitle time base: Always assume absolute time base from source video.
+      // Filter strictly to words within [startTime, startTime + duration] and shift by startTime.
+      const clipEndTime = startTime + duration;
+      const relevantWords = transcript.filter(
+        (t) => t.end > startTime && t.start < clipEndTime
+      );
 
-      srtEntries = transcript
-        .map((t) => {
-          const rawStart = isAbsolute ? t.start - startTime : t.start;
-          const rawEnd = isAbsolute ? t.end - startTime : t.end;
-          return {
-            start: Math.max(0, rawStart),
-            end: Math.max(rawStart + 0.3, rawEnd),
-            text: t.text.toUpperCase(),
-          };
-        })
-        .filter((entry) => entry.start < duration);
+      srtEntries = relevantWords.map((t) => {
+        const shiftedStart = Math.max(0, t.start - startTime);
+        const shiftedEnd = Math.min(
+          duration,
+          Math.max(shiftedStart + 0.2, t.end - startTime)
+        );
+        const wordText = t.text || (t as any).word || "";
+        return {
+          start: shiftedStart,
+          end: shiftedEnd,
+          text: wordText.toUpperCase(),
+        };
+      });
     } else if (headline) {
       srtEntries = [
         {
@@ -397,6 +427,17 @@ export async function renderVideoClip({
 
       tempSrtPath = path.join(dir, `sub-${Date.now()}-${Math.floor(Math.random() * 1000)}.srt`);
       fs.writeFileSync(tempSrtPath, srtLines.join("\n"), "utf-8");
+
+      // Save a debug copy to data/debug for validation/testing
+      try {
+        const debugDir = path.join(process.cwd(), "data", "debug");
+        if (!fs.existsSync(debugDir)) fs.mkdirSync(debugDir, { recursive: true });
+        fs.writeFileSync(path.join(debugDir, "last_subtitles.srt"), srtLines.join("\n"), "utf-8");
+      } catch {}
+
+      console.log(
+        `[Stage: Subtitle Alignment] Burning ${srtEntries.length} words into clip: first="${srtEntries[0]?.text}" at relative ${srtEntries[0]?.start.toFixed(2)}s, last="${srtEntries[srtEntries.length - 1]?.text}" at relative ${srtEntries[srtEntries.length - 1]?.end.toFixed(2)}s`
+      );
 
       let forceStyle =
         "Fontname=Arial,Fontsize=24,PrimaryColour=&H0000FFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=3,Alignment=2,MarginV=130";
