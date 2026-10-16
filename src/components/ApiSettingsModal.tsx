@@ -28,6 +28,7 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
     claude?: { valid: boolean; message: string };
   } | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [appAccessToken, setAppAccessToken] = useState("");
 
   useEffect(() => {
     async function loadConfig() {
@@ -36,6 +37,7 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
       let storedModel = "claude-3-5-haiku";
       let storedCookies = "";
       let storedProxy = "";
+      let storedToken = "";
 
       if (typeof window !== "undefined") {
         storedOpenai = localStorage.getItem("opus_openai_key") || "";
@@ -43,6 +45,7 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
         storedModel = (localStorage.getItem("opus_preferred_model") as any) || "claude-3-5-haiku";
         storedCookies = localStorage.getItem("opus_youtube_cookies") || "";
         storedProxy = localStorage.getItem("opus_youtube_proxy") || "";
+        storedToken = localStorage.getItem("app_access_token") || "";
       }
 
       if (!storedOpenai || !storedClaude) {
@@ -65,6 +68,7 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
       setPreferredModel(storedModel as any);
       setYoutubeCookies(storedCookies);
       setYoutubeProxy(storedProxy);
+      setAppAccessToken(storedToken);
     }
 
     loadConfig();
@@ -79,6 +83,7 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
       localStorage.setItem("opus_preferred_model", preferredModel);
       localStorage.setItem("opus_youtube_cookies", youtubeCookies.trim());
       localStorage.setItem("opus_youtube_proxy", youtubeProxy.trim());
+      localStorage.setItem("app_access_token", appAccessToken.trim());
     }
     setSaveSuccess(true);
     setTimeout(() => {
@@ -91,9 +96,13 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
     setIsTesting(true);
     setTestResult(null);
     try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (appAccessToken.trim()) {
+        headers["x-app-access-token"] = appAccessToken.trim();
+      }
       const res = await fetch("/api/test-keys", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({
           openaiKey: openaiKey.trim(),
           claudeKey: claudeKey.trim(),
@@ -227,6 +236,19 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
               value={youtubeProxy}
               onChange={(e) => setYoutubeProxy(e.target.value)}
               placeholder="http://user:pass@proxy.example.com:8080"
+              className="w-full neo-input py-2 px-3 text-xs font-mono"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-black uppercase text-black mb-1">
+              App Access Token (Shared Secret)
+            </label>
+            <input
+              type="password"
+              value={appAccessToken}
+              onChange={(e) => setAppAccessToken(e.target.value)}
+              placeholder="APP_ACCESS_TOKEN if configured on server"
               className="w-full neo-input py-2 px-3 text-xs font-mono"
             />
           </div>

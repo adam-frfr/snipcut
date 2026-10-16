@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getOpenAIClient, isHackClubKey } from "@/lib/aiService";
+import { verifyAuthAndRateLimit } from "@/lib/authRateLimit";
 
 export async function POST(req: NextRequest) {
+  const authError = verifyAuthAndRateLimit(req);
+  if (authError) return authError;
   try {
     const { openaiKey, claudeKey } = await req.json();
     const key = (openaiKey || claudeKey || process.env.OPENAI_API_KEY || "").trim();

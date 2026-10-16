@@ -8,6 +8,13 @@ import {
 } from "@/lib/videoService";
 import fs from "fs";
 import path from "path";
+import { verifyAuthAndRateLimit } from "@/lib/authRateLimit";
+import {
+  GROQ_CHUNK_THRESHOLD_BYTES,
+  probeAudioDuration,
+  splitAudioIntoChunks,
+  mergeAndDeduplicateChunkTranscripts,
+} from "@/lib/groqChunking";
 
 /**
  * Parses WebVTT subtitles into clean timecoded narrative blocks and word-level timings
@@ -69,6 +76,9 @@ function parseVttCaptions(vttContent: string, maxDuration?: number) {
 }
 
 export async function POST(req: NextRequest) {
+  const authError = verifyAuthAndRateLimit(req);
+  if (authError) return authError;
+
   const transcribeStartTime = Date.now();
   try {
     const body = await req.json();
@@ -133,13 +143,67 @@ export async function POST(req: NextRequest) {
           apiKey: activeGroqKey,
           baseURL: "https://api.groq.com/openai/v1",
         });
-        transcription = await groq.audio.transcriptions.create({
-          file: fs.createReadStream(/*turbopackIgnore: true*/ audioPath),
-          model: "whisper-large-v3-turbo",
-          response_format: "verbose_json",
-          timestamp_granularities: ["word", "segment"],
-        });
-        providerUsed = "groq-whisper-large-v3-turbo";
+
+        const audioSize = fs.existsSync(/*turbopackIgnore: true*/ audioPath)
+          ? fs.statSync(/*turbopackIgnore: true*/ audioPath).size
+          : 0;
+        if (audioSize > GROQ_CHUNK_THRESHOLD_BYTES) {
+          console.log(
+            `[Stage: Transcribe] Audio size ${(audioSize / (1024 * 1024)).toFixed(2)} MB exceeds Groq 25MB threshold. Splitting into overlapping chunks...`
+          );
+          const totalDur = await probeAudioDuration(audioPath);
+          const chunkDir = path.join(path.dirname(audioPath), `chunks_${Date.now()}`);
+          const chunks = await splitAudioIntoChunks({
+            audioPath,
+            totalDuration: totalDur || 600,
+            chunkDurationSec: 600, // 10 min chunks
+            overlapSec: 1.0,
+            outputDir: chunkDir,
+          });
+
+          const chunkOutputs = [];
+          for (const slice of chunks) {
+            console.log(
+              `[Stage: Transcribe] Transcribing chunk ${slice.index + 1}/${chunks.length} (${slice.startTime.toFixed(1)}s - ${(slice.startTime + slice.duration).toFixed(1)}s)...`
+            );
+            const chunkRes = await groq.audio.transcriptions.create({
+              file: fs.createReadStream(/*turbopackIgnore: true*/ slice.chunkPath),
+              model: "whisper-large-v3-turbo",
+              response_format: "verbose_json",
+              timestamp_granularities: ["word", "segment"],
+            });
+            chunkOutputs.push({
+              startTime: slice.startTime,
+              words: (chunkRes as any).words || [],
+              segments: (chunkRes as any).segments || [],
+              text: (chunkRes as any).text || "",
+            });
+            try {
+              fs.unlinkSync(slice.chunkPath);
+            } catch (e) {}
+          }
+          try {
+            fs.rmdirSync(chunkDir);
+          } catch (e) {}
+
+          const merged = mergeAndDeduplicateChunkTranscripts(chunkOutputs, totalDur);
+          transcription = {
+            text: merged.text,
+            words: merged.words,
+            segments: merged.segments,
+            duration: merged.duration,
+          };
+          providerUsed = `groq-whisper-large-v3-turbo (${chunks.length} chunks)`;
+        } else {
+          transcription = await groq.audio.transcriptions.create({
+            file: fs.createReadStream(/*turbopackIgnore: true*/ audioPath),
+            model: "whisper-large-v3-turbo",
+            response_format: "verbose_json",
+            timestamp_granularities: ["word", "segment"],
+          });
+          providerUsed = "groq-whisper-large-v3-turbo";
+        }
+
         console.log(
           `[Stage: Transcribe] Groq Whisper API finished in ${Date.now() - whisperApiStartTime}ms`
         );

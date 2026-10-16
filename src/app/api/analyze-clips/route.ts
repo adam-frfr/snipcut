@@ -3,8 +3,12 @@ import { analyzeTranscriptForViralClips } from "@/lib/aiService";
 import { snapAndValidateClips } from "@/lib/wordSnapping";
 import fs from "fs";
 import path from "path";
+import { verifyAuthAndRateLimit } from "@/lib/authRateLimit";
 
 export async function POST(req: NextRequest) {
+  const authError = verifyAuthAndRateLimit(req);
+  if (authError) return authError;
+
   const analysisStartTime = Date.now();
   try {
     const body = await req.json();

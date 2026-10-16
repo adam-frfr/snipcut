@@ -104,7 +104,12 @@ function parseVttToTranscript(vttContent: string) {
   };
 }
 
+import { verifyAuthAndRateLimit } from "@/lib/authRateLimit";
+
 export async function POST(req: NextRequest) {
+  const authError = verifyAuthAndRateLimit(req);
+  if (authError) return authError;
+
   let tempCookiePath: string | null = null;
 
   try {

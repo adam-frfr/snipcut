@@ -4,10 +4,14 @@ import fs from "fs";
 import { execFile } from "child_process";
 import util from "util";
 import { getFfmpegBinary, probeVideoFormat, checkZscaleSupported } from "@/lib/videoService";
+import { verifyAuthAndRateLimit } from "@/lib/authRateLimit";
 
 const execFilePromise = util.promisify(execFile);
 
 export async function POST(req: NextRequest) {
+  const authError = verifyAuthAndRateLimit(req);
+  if (authError) return authError;
+
   const uploadStartTime = Date.now();
   try {
     const formData = await req.formData();

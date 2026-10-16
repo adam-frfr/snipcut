@@ -31,6 +31,11 @@ const tests = [
     cmd: "npx",
     args: ["tsx", path.join(__dirname, "test-phone-formats.ts")],
   },
+  {
+    name: "Groq Audio Limit & Overlap Chunking (Item 3)",
+    cmd: "npx",
+    args: ["tsx", path.join(__dirname, "test-groq-chunking.ts")],
+  },
 ];
 
 let failed = 0;

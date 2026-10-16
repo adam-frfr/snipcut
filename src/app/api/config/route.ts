@@ -6,6 +6,7 @@ export async function GET() {
   const hasClaude = Boolean(process.env.ANTHROPIC_API_KEY || process.env.HACKCLUB_API_KEY);
 
   return NextResponse.json({
+    requiresAuth: Boolean(process.env.APP_ACCESS_TOKEN),
     hasKey: hasGroq || hasOpenai || hasClaude,
     hasGroqKey: hasGroq,
     hasOpenaiKey: hasOpenai,

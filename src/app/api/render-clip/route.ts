@@ -2,8 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { renderVideoClip } from "@/lib/videoService";
 import path from "path";
 import os from "os";
+import { verifyAuthAndRateLimit } from "@/lib/authRateLimit";
 
 export async function POST(req: NextRequest) {
+  const authError = verifyAuthAndRateLimit(req);
+  if (authError) return authError;
+
   const renderStartTime = Date.now();
   try {
     const {

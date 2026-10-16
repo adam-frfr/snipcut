@@ -205,7 +205,7 @@ def run_tracking(video_path, start_time, duration, mode="auto-tracker", ai_shots
 
     # Generate dynamic crop expression
     dynamic_x_expr = build_dynamic_crop_expr(shots, max_x)
-    vf_value = f"crop={crop_w}:{crop_h}:{dynamic_x_expr}:0,scale=1080:1920"
+    vf_value = f"crop={crop_w}:{crop_h}:'{dynamic_x_expr}':0,scale=1080:1920"
 
     # Human-readable summary
     shot_descs = [f"{s['label']} ({s['start']}s-{s['end']}s)" for s in shots]

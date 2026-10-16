@@ -26,6 +26,7 @@ import {
   Eye,
   Zap,
   Mic,
+  Lock,
 } from "lucide-react";
 import ApiSettingsModal from "@/components/ApiSettingsModal";
 import confetti from "canvas-confetti";
@@ -81,6 +82,15 @@ function DashboardContent() {
   const [isRendering, setIsRendering] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const [hasServerKey, setHasServerKey] = useState(true);
+  const [tokenPromptOpen, setTokenPromptOpen] = useState(false);
+  const [inputToken, setInputToken] = useState("");
+
+  const getAuthHeaders = (): Record<string, string> => {
+    if (typeof window === "undefined") return {};
+    const t = localStorage.getItem("app_access_token");
+    return t ? { "x-app-access-token": t } : {};
+  };
+
   const [reframeMode, setReframeMode] = useState<"auto-tracker" | "split-screen" | "blurred-fit" | "center">("auto-tracker");
   const [lastTrackingSummary, setLastTrackingSummary] = useState<string>("");
   const [dynamicShots, setDynamicShots] = useState<
@@ -226,12 +236,11 @@ function DashboardContent() {
       try {
         const res = await fetch("/api/config");
         const data = await res.json();
-        if (data.hasKey && data.apiKey) {
-          setHasServerKey(true);
-          localStorage.setItem("opus_openai_key", data.apiKey);
-          localStorage.setItem("opus_claude_key", data.apiKey);
-          if (data.preferredModel) {
-            localStorage.setItem("opus_preferred_model", data.preferredModel);
+        setHasServerKey(Boolean(data.hasKey));
+        if (data.requiresAuth) {
+          const storedToken = localStorage.getItem("app_access_token");
+          if (!storedToken) {
+            setTokenPromptOpen(true);
           }
         }
       } catch (err) {
@@ -304,9 +313,13 @@ function DashboardContent() {
           typeof window !== "undefined" ? localStorage.getItem("opus_youtube_proxy") || "" : "";
         const ytRes = await fetch("/api/download-youtube", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
           body: JSON.stringify({ url, cookies: storedCookies, proxy: storedProxy }),
         });
+        if (ytRes.status === 401) {
+          setTokenPromptOpen(true);
+          throw new Error("Access token required or invalid. Please provide APP_ACCESS_TOKEN.");
+        }
         const ytData = await ytRes.json();
         if (!ytRes.ok || ytData.error) {
           throw new Error(ytData.error || "Failed to download YouTube video. Please check the URL.");
@@ -328,13 +341,18 @@ function DashboardContent() {
         formData.append("file", uploadFile);
         const upRes = await fetch("/api/upload", {
           method: "POST",
+          headers: { ...getAuthHeaders() },
           body: formData,
         });
+        if (upRes.status === 401) {
+          setTokenPromptOpen(true);
+          throw new Error("Access token required or invalid. Please provide APP_ACCESS_TOKEN.");
+        }
         const upData = await upRes.json();
         if (!upRes.ok || upData.error) {
           throw new Error(upData.error || "Failed to upload video");
         }
-        resolvedFilePath = upData.filePath;
+        resolvedFilePath = upData.fileId || upData.filePath;
         resolvedFileUrl = upData.fileUrl;
       }
 
@@ -349,12 +367,16 @@ function DashboardContent() {
         setProcessingStage("Transcribing speech with OpenAI Whisper (Word Timestamps)...");
         const transRes = await fetch("/api/transcribe", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
           body: JSON.stringify({
             filePath: resolvedFilePath,
             openaiKey: clientKey,
           }),
         });
+        if (transRes.status === 401) {
+          setTokenPromptOpen(true);
+          throw new Error("Access token required or invalid. Please provide APP_ACCESS_TOKEN.");
+        }
         const transData = await transRes.json();
         if (!transRes.ok || transData.error) {
           throw new Error(transData.error || "Audio transcription failed.");
@@ -371,7 +393,7 @@ function DashboardContent() {
       setProcessingStage("OpusClip AI: Curating viral hooks and snapping word boundaries...");
       const analyzeRes = await fetch("/api/analyze-clips", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({
           transcriptText: fullTranscript,
           words: rawWords,
@@ -382,6 +404,10 @@ function DashboardContent() {
           claudeKey: clientKey,
         }),
       });
+      if (analyzeRes.status === 401) {
+        setTokenPromptOpen(true);
+        throw new Error("Access token required or invalid. Please provide APP_ACCESS_TOKEN.");
+      }
       const analyzeData = await analyzeRes.json();
       if (!analyzeRes.ok || analyzeData.error) {
         throw new Error(analyzeData.error || "AI Virality analysis failed.");
@@ -444,7 +470,7 @@ function DashboardContent() {
           const topClip = generatedClips[0];
           const renderRes = await fetch("/api/render-clip", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json", ...getAuthHeaders() },
             body: JSON.stringify({
               inputPath: resolvedFilePath,
               startTime: topClip.startTime,
@@ -505,7 +531,7 @@ function DashboardContent() {
     try {
       const res = await fetch("/api/render-clip", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({
           inputPath: clip.videoFilePath,
           startTime: clip.startTime,
@@ -1308,6 +1334,48 @@ function DashboardContent() {
                 <span>Run AI Pipeline</span>
               </button>
             </form>
+          </div>
+        )}
+
+        {tokenPromptOpen && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+            <div className="bg-[#F8F7F4] border-4 border-black p-6 max-w-md w-full shadow-[8px_8px_0px_#000000]">
+              <div className="flex items-center gap-2 mb-3">
+                <Lock className="w-5 h-5 text-[#FF5500]" />
+                <h3 className="text-lg font-black uppercase text-black">Access Token Required</h3>
+              </div>
+              <p className="text-xs text-neutral-600 mb-4 font-medium">
+                This server requires a shared secret access token (<code className="bg-black/10 px-1 py-0.5 rounded font-mono">APP_ACCESS_TOKEN</code>) to execute processing tasks.
+              </p>
+              <input
+                type="password"
+                value={inputToken}
+                onChange={(e) => setInputToken(e.target.value)}
+                placeholder="Enter access token..."
+                className="w-full bg-white border-2 border-black px-4 py-2 text-sm text-black mb-4 focus:outline-none focus:shadow-[3px_3px_0px_#000000]"
+              />
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setTokenPromptOpen(false)}
+                  className="px-4 py-2 border-2 border-black text-xs font-black uppercase hover:bg-neutral-200"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (inputToken.trim()) {
+                      localStorage.setItem("app_access_token", inputToken.trim());
+                      setTokenPromptOpen(false);
+                    }
+                  }}
+                  className="px-4 py-2 bg-[#FFC700] hover:bg-[#FF5500] hover:text-white border-2 border-black text-xs font-black uppercase shadow-[3px_3px_0px_#000000] active:translate-x-0.5 active:translate-y-0.5"
+                >
+                  Save Token
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </main>
