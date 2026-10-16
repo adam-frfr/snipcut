@@ -63,28 +63,34 @@ export function verifyAuthAndRateLimit(req: NextRequest): NextResponse | null {
   const clientIp = getClientIp(req);
 
   // 1. Per-IP Sliding Rate Limit
+  // Job status polling (GET /api/jobs/[id]) is allowed up to 180 req/min (3 req/sec)
+  // so polling every 2-3s never trips the rate limit.
+  const isPolling = req.nextUrl.pathname.startsWith("/api/jobs") && req.method === "GET";
+  const effectiveMax = isPolling ? 180 : MAX_REQUESTS_PER_WINDOW;
+
   const now = Date.now();
-  let record = rateLimitMap.get(clientIp);
+  const bucketKey = isPolling ? `${clientIp}:poll` : clientIp;
+  let record = rateLimitMap.get(bucketKey);
   if (!record || now > record.resetAt) {
     record = { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS };
-    rateLimitMap.set(clientIp, record);
+    rateLimitMap.set(bucketKey, record);
   } else {
     record.count++;
   }
 
   // Periodic cleanup
   if (rateLimitMap.size > 5000) {
-    for (const [ip, rec] of rateLimitMap.entries()) {
+    for (const [key, rec] of rateLimitMap.entries()) {
       if (now > rec.resetAt) {
-        rateLimitMap.delete(ip);
+        rateLimitMap.delete(key);
       }
     }
   }
 
-  if (record.count > MAX_REQUESTS_PER_WINDOW) {
+  if (record.count > effectiveMax) {
     const retryAfter = Math.ceil((record.resetAt - now) / 1000);
     return NextResponse.json(
-      { error: "Too many requests. Rate limit is 60 requests per minute." },
+      { error: "Too many requests. Rate limit exceeded." },
       {
         status: 429,
         headers: {

@@ -41,6 +41,11 @@ const tests = [
     cmd: "npx",
     args: ["tsx", path.join(__dirname, "test-access-gate.ts")],
   },
+  {
+    name: "Async Job Queue, SHA-256 Caching & 24h Cleanup (Phase 4)",
+    cmd: "npx",
+    args: ["tsx", path.join(__dirname, "test-job-queue.ts")],
+  },
 ];
 
 let failed = 0;

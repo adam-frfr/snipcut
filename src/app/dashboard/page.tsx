@@ -85,6 +85,26 @@ function DashboardContent() {
   const [tokenPromptOpen, setTokenPromptOpen] = useState(false);
   const [inputToken, setInputToken] = useState("");
 
+  // Phase 4: Async Job State & Worker Polling
+  const [currentJobId, setCurrentJobId] = useState<string | null>(null);
+  const [jobProgress, setJobProgress] = useState<number>(0);
+  const [jobStatus, setJobStatus] = useState<string>("");
+  const [isRetrying, setIsRetrying] = useState<boolean>(false);
+  const pollIntervalRef = React.useRef<NodeJS.Timeout | null>(null);
+
+  const stopPolling = () => {
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      stopPolling();
+    };
+  }, []);
+
   const getAuthHeaders = (): Record<string, string> => {
     if (typeof window === "undefined") return {};
     const t = localStorage.getItem("app_access_token");
@@ -262,6 +282,12 @@ function DashboardContent() {
         }
       } catch (e) {}
     }
+
+    // Resume in-progress job if user reloaded the page
+    const activeJobId = localStorage.getItem("active_job_id");
+    if (activeJobId) {
+      pollJob(activeJobId);
+    }
   }, []);
 
   // 2. Handle autostart from hero when query params exist
@@ -279,7 +305,152 @@ function DashboardContent() {
     }
   }, [searchParams]);
 
-  // Real AI Processing Pipeline
+  // Phase 4: Job Polling & Worker Synchronization
+  const pollJob = (jobId: string) => {
+    stopPolling();
+    setCurrentJobId(jobId);
+    setIsProcessing(true);
+
+    const checkJob = async () => {
+      try {
+        const res = await fetch(`/api/jobs/${jobId}`, {
+          headers: { ...getAuthHeaders() },
+        });
+
+        if (res.status === 401) {
+          setTokenPromptOpen(true);
+          return;
+        }
+
+        if (res.status === 404) {
+          stopPolling();
+          setIsProcessing(false);
+          localStorage.removeItem("active_job_id");
+          setErrorMsg(`Job ${jobId} not found`);
+          return;
+        }
+
+        const data = await res.json();
+        if (!data.success || !data.job) {
+          return;
+        }
+
+        const job = data.job;
+        setJobProgress(job.progress || 0);
+        setJobStatus(job.status);
+        setProcessingStage(job.stageMessage || "Processing...");
+
+        if (job.status === "failed") {
+          stopPolling();
+          setErrorMsg(job.error || "Job processing failed.");
+        } else if (job.status === "done") {
+          stopPolling();
+          localStorage.removeItem("active_job_id");
+
+          const rawClips = job.output?.curatedClips || [];
+          const renderedMap = new Map<string, any>();
+          if (Array.isArray(job.output?.renderedClips)) {
+            for (const r of job.output.renderedClips) {
+              renderedMap.set(String(Number(r.startTime).toFixed(2)), r);
+            }
+          }
+
+          const generatedClips: RealClip[] = rawClips.map((c: any, index: number) => {
+            const startKey = String(Number(c.startTime).toFixed(2));
+            const rendered = renderedMap.get(startKey);
+
+            const clipWords =
+              c.snappedWords && c.snappedWords.length > 0
+                ? c.snappedWords.map((cw: any) => ({
+                    start: Math.max(0, Number((cw.start - c.startTime).toFixed(2))),
+                    end: Math.max(0.3, Number((cw.end - c.startTime).toFixed(2))),
+                    text: cw.word || cw.text,
+                  }))
+                : [
+                    { start: 0, end: 3, text: c.hookHeadline || c.title },
+                    { start: 3, end: 7, text: "Key insight" },
+                  ];
+
+            const initialVideoUrl = rendered
+              ? rendered.downloadUrl
+              : job.output?.fileId
+              ? `/api/media?file=${encodeURIComponent(job.output.fileId)}`
+              : "/placeholder.mp4";
+
+            return {
+              id: rendered?.clipId || `clip-${Date.now()}-${index}`,
+              videoFilePath: job.output?.filePath || "",
+              videoUrl: initialVideoUrl,
+              renderedVideoUrl: rendered ? rendered.downloadUrl : undefined,
+              title: c.title || `Viral Short #${index + 1}`,
+              hookHeadline: c.hookHeadline || "",
+              startTime: c.startTime || 0,
+              endTime: c.endTime || 30,
+              duration: Number(Math.max(5, c.endTime - c.startTime).toFixed(2)),
+              durationFormatted: c.durationFormatted || "0:30",
+              viralityScore: c.viralityScore || 92,
+              hookStrength: c.hookStrength || 94,
+              engagementScore: c.engagementScore || 90,
+              trendMatch: c.trendMatch || 92,
+              viralityReason: c.viralityReason || "High-retention narrative segment",
+              aspectRatio: job.options?.aspectRatio || "9:16",
+              captionStyle: job.options?.captionStyle || "hormozi",
+              transcript: clipWords,
+            };
+          });
+
+          if (generatedClips.length > 0) {
+            setClips(generatedClips);
+            setSelectedClip(generatedClips[0]);
+            localStorage.setItem("opus_user_clips", JSON.stringify(generatedClips));
+            setActiveTab("clips");
+            try {
+              confetti({
+                particleCount: 90,
+                spread: 70,
+                origin: { y: 0.6 },
+              });
+            } catch (e) {}
+          }
+          setIsProcessing(false);
+        }
+      } catch (err: any) {
+        console.warn("[Dashboard] Polling error:", err.message);
+      }
+    };
+
+    // Execute immediately, then every 2500ms
+    checkJob();
+    pollIntervalRef.current = setInterval(checkJob, 2500);
+  };
+
+  // Phase 4: Retry failed job from last completed stage
+  const handleRetryJob = async () => {
+    if (!currentJobId) return;
+    setIsRetrying(true);
+    setErrorMsg("");
+    try {
+      const res = await fetch(`/api/jobs/${currentJobId}/retry`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+      });
+      if (res.status === 401) {
+        setTokenPromptOpen(true);
+        return;
+      }
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        throw new Error(data.error || "Failed to retry job");
+      }
+      pollJob(currentJobId);
+    } catch (err: any) {
+      setErrorMsg(err.message || "Retry failed");
+    } finally {
+      setIsRetrying(false);
+    }
+  };
+
+  // Phase 4: Real Async Job Pipeline Trigger
   const startRealPipeline = async ({
     url,
     filePath,
@@ -293,236 +464,78 @@ function DashboardContent() {
   }) => {
     setErrorMsg("");
     setIsProcessing(true);
-
-    const clientKey =
-      (typeof window !== "undefined"
-        ? localStorage.getItem("opus_openai_key") ||
-          localStorage.getItem("opus_claude_key")
-        : "") || "";
+    setJobProgress(5);
+    setJobStatus("QUEUED");
+    setProcessingStage("Submitting job to async worker queue...");
 
     try {
-      let resolvedFilePath = filePath;
-      let resolvedFileUrl = fileUrl;
-      let fullTranscript = "";
-      let rawWords: any[] = [];
+      let res: Response;
 
-      // Stage 1: Download YouTube URL if URL was provided
-      if (url && !resolvedFilePath) {
-        setProcessingStage("Downloading video stream with yt-dlp...");
-        const storedCookies =
-          typeof window !== "undefined" ? localStorage.getItem("opus_youtube_cookies") || "" : "";
-        const storedProxy =
-          typeof window !== "undefined" ? localStorage.getItem("opus_youtube_proxy") || "" : "";
-        const ytRes = await fetch("/api/download-youtube", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-          body: JSON.stringify({ url, cookies: storedCookies, proxy: storedProxy }),
-        });
-        if (ytRes.status === 401) {
-          setTokenPromptOpen(true);
-          throw new Error("Access token required or invalid. Please provide APP_ACCESS_TOKEN.");
-        }
-        const ytData = await ytRes.json();
-        if (!ytRes.ok || ytData.error) {
-          throw new Error(ytData.error || "Failed to download YouTube video. Please check the URL.");
-        }
-        resolvedFilePath = ytData.filePath;
-        resolvedFileUrl = ytData.fileUrl;
-
-        // If subtitles were auto-extracted from YouTube, use them
-        if (ytData.transcriptText) {
-          fullTranscript = ytData.transcriptText;
-          rawWords = ytData.transcriptWords || ytData.transcriptSegments || [];
-        }
-      }
-
-      // If local file was selected in upload form
-      if (!resolvedFilePath && uploadFile) {
-        setProcessingStage("Uploading video file to local server...");
+      if (uploadFile) {
+        setProcessingStage("Uploading video file to server...");
         const formData = new FormData();
         formData.append("file", uploadFile);
-        const upRes = await fetch("/api/upload", {
+        if (prompt || promptInput) formData.append("customPrompt", prompt || promptInput);
+        formData.append("aspectRatio", "9:16");
+        formData.append("reframeMode", reframeMode);
+        formData.append("captionStyle", "hormozi");
+
+        res = await fetch("/api/jobs", {
           method: "POST",
           headers: { ...getAuthHeaders() },
           body: formData,
         });
-        if (upRes.status === 401) {
-          setTokenPromptOpen(true);
-          throw new Error("Access token required or invalid. Please provide APP_ACCESS_TOKEN.");
-        }
-        const upData = await upRes.json();
-        if (!upRes.ok || upData.error) {
-          throw new Error(upData.error || "Failed to upload video");
-        }
-        resolvedFilePath = upData.fileId || upData.filePath;
-        resolvedFileUrl = upData.fileUrl;
-      }
-
-      if (!resolvedFilePath) {
-        throw new Error("No video file or URL provided.");
-      }
-
-      let videoTotalDuration = 60;
-
-      // Stage 2: If we don't have transcript yet, transcribe via Whisper
-      if (!fullTranscript) {
-        setProcessingStage("Transcribing speech with OpenAI Whisper (Word Timestamps)...");
-        const transRes = await fetch("/api/transcribe", {
+      } else if (url) {
+        setProcessingStage("Enqueuing video URL for download and AI processing...");
+        res = await fetch("/api/jobs", {
           method: "POST",
           headers: { "Content-Type": "application/json", ...getAuthHeaders() },
           body: JSON.stringify({
-            filePath: resolvedFilePath,
-            openaiKey: clientKey,
+            youtubeUrl: url,
+            customPrompt: prompt || promptInput,
+            aspectRatio: "9:16",
+            reframeMode,
+            captionStyle: "hormozi",
           }),
         });
-        if (transRes.status === 401) {
-          setTokenPromptOpen(true);
-          throw new Error("Access token required or invalid. Please provide APP_ACCESS_TOKEN.");
-        }
-        const transData = await transRes.json();
-        if (!transRes.ok || transData.error) {
-          throw new Error(transData.error || "Audio transcription failed.");
-        }
-        fullTranscript = transData.text || "";
-        rawWords = transData.words || [];
-        videoTotalDuration = transData.duration || 60;
-        if (transData.debugPath || transData.debugFile) {
-          console.log(`[Stage 2: Transcribe] Intermediate output: ${transData.debugPath || transData.debugFile}`);
-        }
+      } else if (filePath) {
+        setProcessingStage("Enqueuing video file for AI processing...");
+        res = await fetch("/api/jobs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+          body: JSON.stringify({
+            fileId: filePath,
+            filePath,
+            customPrompt: prompt || promptInput,
+            aspectRatio: "9:16",
+            reframeMode,
+            captionStyle: "hormozi",
+          }),
+        });
+      } else {
+        throw new Error("No video file or URL provided.");
       }
 
-      // Stage 3: Viral Curation with Claude 3.5 Sonnet / Haiku
-      setProcessingStage("OpusClip AI: Curating viral hooks and snapping word boundaries...");
-      const analyzeRes = await fetch("/api/analyze-clips", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-        body: JSON.stringify({
-          transcriptText: fullTranscript,
-          words: rawWords,
-          duration: videoTotalDuration,
-          customPrompt: prompt || promptInput,
-          model: "~anthropic/claude-sonnet-latest",
-          openaiKey: clientKey,
-          claudeKey: clientKey,
-        }),
-      });
-      if (analyzeRes.status === 401) {
+      if (res.status === 401) {
         setTokenPromptOpen(true);
         throw new Error("Access token required or invalid. Please provide APP_ACCESS_TOKEN.");
       }
-      const analyzeData = await analyzeRes.json();
-      if (!analyzeRes.ok || analyzeData.error) {
-        throw new Error(analyzeData.error || "AI Virality analysis failed.");
-      }
-      if (analyzeData.debugPath || analyzeData.debugFile) {
-        console.log(`[Stage 3: AI Curation] Intermediate output: ${analyzeData.debugPath || analyzeData.debugFile}`);
+
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        throw new Error(data.error || "Failed to create processing job");
       }
 
-      // Stage 4: Assemble clips with precise snapped timestamps
-      const rawClips = analyzeData.clips || [];
-      const generatedClips: RealClip[] = rawClips.map((c: any, index: number) => {
-        const clipWords =
-          c.snappedWords && c.snappedWords.length > 0
-            ? c.snappedWords.map((cw: any) => ({
-                start: cw.start,
-                end: cw.end,
-                text: cw.word || cw.text,
-              }))
-            : rawWords
-                .filter(
-                  (w: any) => w.start >= c.startTime - 0.05 && w.end <= c.endTime + 0.05
-                )
-                .map((cw: any) => ({
-                  start: Math.max(0, Number((cw.start - c.startTime).toFixed(2))),
-                  end: Math.max(0.3, Number((cw.end - c.startTime).toFixed(2))),
-                  text: cw.text || cw.word,
-                }));
+      const jobId = data.jobId;
+      localStorage.setItem("active_job_id", jobId);
+      setCurrentJobId(jobId);
+      setJobProgress(data.progress || 5);
+      setJobStatus(data.status || "uploaded");
+      setProcessingStage(data.stageMessage || "Job queued for processing...");
 
-        return {
-          id: `clip-${Date.now()}-${index}`,
-          videoFilePath: resolvedFilePath!,
-          videoUrl: resolvedFileUrl || "/placeholder.mp4",
-          title: c.title || `Viral Short #${index + 1}`,
-          hookHeadline: c.hookHeadline || "",
-          startTime: c.startTime || 0,
-          endTime: c.endTime || 30,
-          duration: Number(Math.max(5, c.endTime - c.startTime).toFixed(2)),
-          durationFormatted: c.durationFormatted || "0:30",
-          viralityScore: c.viralityScore || 92,
-          hookStrength: c.hookStrength || 94,
-          engagementScore: c.engagementScore || 90,
-          trendMatch: c.trendMatch || 92,
-          viralityReason: c.viralityReason || "High-retention narrative segment",
-          aspectRatio: "9:16",
-          captionStyle: "hormozi",
-          transcript:
-            clipWords.length > 0
-              ? clipWords
-              : [
-                  { start: 0, end: 3, text: c.hookHeadline || c.title },
-                  { start: 3, end: 7, text: "Key insight" },
-                ],
-        };
-      });
-
-      // Stage 5: Auto-render top viral clip to 9:16 vertical MP4 via FFmpeg
-      if (generatedClips.length > 0) {
-        setProcessingStage("OpusClip FFmpeg: Precision-trimming and 9:16 vertical reframing...");
-        try {
-          const topClip = generatedClips[0];
-          const renderRes = await fetch("/api/render-clip", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-            body: JSON.stringify({
-              inputPath: resolvedFilePath,
-              startTime: topClip.startTime,
-              duration: topClip.duration,
-              aspectRatio: "9:16",
-              reframeMode: "auto-tracker",
-              transcript:
-                rawWords && rawWords.length > 0
-                  ? rawWords.map((w: any) => ({
-                      start: w.start,
-                      end: w.end,
-                      text: w.word || w.text,
-                    }))
-                  : topClip.transcript,
-              headline: topClip.hookHeadline || topClip.title,
-              captionStyle: topClip.captionStyle || "hormozi",
-            }),
-          });
-          const renderData = await renderRes.json();
-          if (renderData.success && renderData.downloadUrl) {
-            topClip.videoUrl = renderData.downloadUrl;
-            (topClip as any).renderedVideoUrl = renderData.downloadUrl;
-            if (renderData.tracking?.summary) {
-              setLastTrackingSummary(renderData.tracking.summary);
-            }
-            if (renderData.tracking?.shots && renderData.tracking.shots.length > 0) {
-              setDynamicShots(renderData.tracking.shots);
-            }
-          }
-        } catch (renderErr) {
-          console.warn("Auto-render notice:", renderErr);
-        }
-
-        setClips(generatedClips);
-        setSelectedClip(generatedClips[0]);
-        localStorage.setItem("opus_user_clips", JSON.stringify(generatedClips));
-        setActiveTab("clips");
-        try {
-          confetti({
-            particleCount: 90,
-            spread: 70,
-            origin: { y: 0.6 },
-          });
-        } catch (e) {}
-      } else {
-        throw new Error("No clips could be extracted from this video segment.");
-      }
+      pollJob(jobId);
     } catch (err: any) {
       setErrorMsg(err.message || "An unexpected error occurred during processing.");
-    } finally {
       setIsProcessing(false);
     }
   };
@@ -703,22 +716,107 @@ function DashboardContent() {
           </div>
         )}
 
+        {/* Phase 4: Active Job Floating Banner if modal is dismissed while in progress */}
+        {!isProcessing && currentJobId && jobStatus && jobStatus !== "done" && jobStatus !== "failed" && (
+          <div className="mb-6 p-3 bg-[#FFFBEA] border-2 border-black shadow-[4px_4px_0px_#000000] flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="w-6 h-6 bg-[#FFC700] border border-black flex items-center justify-center">
+                <Wand2 className="w-3.5 h-3.5 animate-spin text-black" />
+              </div>
+              <div className="text-xs">
+                <span className="font-black uppercase mr-2 tracking-wider">Background Task:</span>
+                <span className="font-mono text-neutral-800 font-bold">{processingStage} ({jobProgress}%)</span>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsProcessing(true)}
+              className="px-3 py-1 bg-black text-white hover:bg-[#FFC700] hover:text-black font-black text-xs uppercase border border-black transition cursor-pointer"
+            >
+              View Progress
+            </button>
+          </div>
+        )}
+
         {/* Processing Modal Overlay */}
         {isProcessing && (
           <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="bg-white max-w-md w-full p-8 border-2 border-black shadow-[8px_8px_0px_#000000] text-center">
-              <div className="w-16 h-16 bg-[#FFC700] border-2 border-black text-black flex items-center justify-center mx-auto mb-6 shadow-[3px_3px_0px_#000000]">
-                <Wand2 className="w-8 h-8 animate-spin" />
-              </div>
+            <div className="bg-white max-w-md w-full p-8 border-4 border-black shadow-[8px_8px_0px_#000000] text-center">
+              {jobStatus === "failed" ? (
+                <div>
+                  <div className="w-16 h-16 bg-[#FFE5E5] border-2 border-black text-red-600 flex items-center justify-center mx-auto mb-4 shadow-[3px_3px_0px_#000000]">
+                    <AlertCircle className="w-8 h-8 stroke-[2.5]" />
+                  </div>
+                  <h3 className="text-xl font-black uppercase tracking-tight text-black mb-1">
+                    Processing Halted
+                  </h3>
+                  <div className="text-xs text-red-700 font-mono font-bold mb-5 p-3 border-2 border-black bg-[#FFE5E5] text-left break-words">
+                    {errorMsg || "An error occurred during stage execution."}
+                  </div>
+                  <div className="flex gap-2 justify-center">
+                    <button
+                      type="button"
+                      disabled={isRetrying}
+                      onClick={handleRetryJob}
+                      className="px-4 py-2.5 bg-[#FFC700] hover:bg-[#FF5500] hover:text-white border-2 border-black font-black text-xs uppercase shadow-[3px_3px_0px_#000000] active:translate-x-0.5 active:translate-y-0.5 transition cursor-pointer flex items-center gap-2"
+                    >
+                      <Sparkles className="w-4 h-4" />
+                      <span>{isRetrying ? "Resuming..." : "Retry From Failed Stage"}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        stopPolling();
+                        setIsProcessing(false);
+                        localStorage.removeItem("active_job_id");
+                        setErrorMsg("");
+                      }}
+                      className="px-4 py-2.5 bg-white hover:bg-black hover:text-white border-2 border-black font-black text-xs uppercase transition cursor-pointer"
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <div className="w-16 h-16 bg-[#FFC700] border-2 border-black text-black flex items-center justify-center mx-auto mb-4 shadow-[3px_3px_0px_#000000]">
+                    <Wand2 className="w-8 h-8 animate-spin" />
+                  </div>
 
-              <h3 className="text-xl font-black uppercase tracking-tight text-black mb-2">Processing Video</h3>
-              <p className="text-xs text-black font-mono font-bold mb-6 uppercase border border-black bg-[#F8F7F4] py-1.5 px-3">
-                {processingStage}
-              </p>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 bg-black text-white font-mono">
+                      {jobStatus ? `STAGE: ${jobStatus.toUpperCase()}` : "QUEUED"}
+                    </span>
+                    <span className="text-sm font-black font-mono text-black">
+                      {jobProgress}%
+                    </span>
+                  </div>
 
-              <div className="w-full bg-[#F8F7F4] h-4 border-2 border-black overflow-hidden p-0.5">
-                <div className="bg-[#FFC700] h-full animate-pulse w-3/4 border-r-2 border-black" />
-              </div>
+                  <h3 className="text-xl font-black uppercase tracking-tight text-black mb-2">
+                    Processing Video
+                  </h3>
+                  <p className="text-xs text-black font-mono font-bold mb-4 uppercase border-2 border-black bg-[#F8F7F4] py-2 px-3 min-h-[44px] flex items-center justify-center text-center">
+                    {processingStage}
+                  </p>
+
+                  <div className="w-full bg-[#F8F7F4] h-5 border-2 border-black overflow-hidden p-0.5 mb-4">
+                    <div
+                      className="bg-[#FFC700] h-full transition-all duration-300 border-r-2 border-black"
+                      style={{ width: `${Math.max(5, Math.min(100, jobProgress))}%` }}
+                    />
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsProcessing(false);
+                    }}
+                    className="text-[11px] font-bold text-neutral-600 hover:text-black uppercase underline cursor-pointer"
+                  >
+                    Run in Background (Resume anytime)
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         )}
