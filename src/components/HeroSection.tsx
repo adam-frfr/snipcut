@@ -128,9 +128,12 @@ export default function HeroSection() {
             {/* Tab 1: URL input */}
             {activeTab === "url" && (
               <div>
-                <label className="block text-xs font-bold text-[#2B1D16] mb-1.5">
-                  Paste YouTube, Twitch, Vimeo, or Google Drive URL
-                </label>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-xs font-bold text-[#2B1D16]">
+                    Paste YouTube, Twitch, or Google Drive URL
+                  </label>
+                  <span className="text-[11px] text-[#7A695F] font-medium">Or try quick sample</span>
+                </div>
                 <div className="relative">
                   <input
                     type="url"
@@ -140,6 +143,29 @@ export default function HeroSection() {
                     className="w-full bg-[#FAF6F1] text-[#2B1D16] text-sm sm:text-base px-4 py-3 pl-11 rounded-2xl border border-[#E8DDD2] placeholder:text-[#A09085] focus:outline-none focus:border-[#C87A47] transition-all"
                   />
                   <Link2 className="w-5 h-5 text-[#8C7A6D] absolute left-3.5 top-1/2 -translate-y-1/2" />
+                </div>
+                
+                {/* 1-Click Samples */}
+                <div className="flex items-center gap-2 mt-2.5 flex-wrap">
+                  <span className="text-[10px] font-bold text-[#7A695F] uppercase">Quick Demos:</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setUrlInput("sample");
+                    }}
+                    className="px-2.5 py-1 rounded-full bg-[#EAE1D7] hover:bg-[#DDD3C7] text-[11px] font-bold text-[#2B1D16] transition cursor-pointer flex items-center gap-1"
+                  >
+                    <span>⚡ AI Keynote (1-Click)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setUrlInput("sample-podcast");
+                    }}
+                    className="px-2.5 py-1 rounded-full bg-[#EAE1D7] hover:bg-[#DDD3C7] text-[11px] font-bold text-[#2B1D16] transition cursor-pointer flex items-center gap-1"
+                  >
+                    <span>🎙️ Dual Speaker Podcast</span>
+                  </button>
                 </div>
               </div>
             )}

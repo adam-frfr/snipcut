@@ -50,12 +50,10 @@ function parseVttToTranscript(vttContent: string) {
         let cueText = "";
         while (i < lines.length && lines[i].trim() !== "") {
           const raw = lines[i].trim();
-          // Extract newly spoken words from lines containing <c> tags or regular lines
           if (raw.includes("<c>")) {
             const clean = raw.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
             if (clean) cueText += (cueText ? " " : "") + clean;
           } else if (!raw.includes("<") && raw.length > 0 && segments.length === 0) {
-            // Include opening cue
             cueText += (cueText ? " " : "") + raw;
           }
           i++;
@@ -78,7 +76,6 @@ function parseVttToTranscript(vttContent: string) {
     }
   }
 
-  // Format into compact timecoded blocks: [00:15] Hello everyone...
   const blocks: string[] = [];
   let curBlock = { start: 0, text: "" };
   for (const seg of segments) {
@@ -119,21 +116,89 @@ export async function POST(req: NextRequest) {
       fs.mkdirSync(downloadDir, { recursive: true });
     }
 
+    // 0. Instant Sample Video Handler (Offline & 100% reliable bypass)
+    if (url === "sample" || url.includes("sample-podcast") || url.includes("sample-keynote")) {
+      const sampleFiles = ["test_dynamic_pan.mp4", "test_split_screen.mp4", "test_tracked_crop.mp4"];
+      const existingSample = sampleFiles.find((s) => fs.existsSync(path.join(downloadDir, s))) || sampleFiles[0];
+      const fullSamplePath = path.join(downloadDir, existingSample);
+
+      return NextResponse.json({
+        success: true,
+        filePath: fullSamplePath,
+        fileUrl: `/downloads/${existingSample}`,
+        fileName: existingSample,
+        transcriptText:
+          "[00:00] In the next decade, AI compute will scale by more than ten thousand times.\n[00:15] The companies that fail to reframe their entire workflow around artificial intelligence will simply cease to exist.\n[00:30] This is not an incremental shift. It is the greatest technological inflection point in modern history.",
+        transcriptSegments: [
+          { start: 0, end: 12, text: "In the next decade, AI compute will scale by more than ten thousand times." },
+          { start: 12, end: 26, text: "The companies that fail to reframe their entire workflow around artificial intelligence will simply cease to exist." },
+          { start: 26, end: 40, text: "This is not an incremental shift. It is the greatest technological inflection point in modern history." },
+        ],
+        transcriptWords: [
+          { word: "In", start: 0.1, end: 0.5 },
+          { word: "the", start: 0.5, end: 0.8 },
+          { word: "next", start: 0.8, end: 1.2 },
+          { word: "decade,", start: 1.2, end: 1.8 },
+          { word: "AI", start: 1.8, end: 2.3 },
+          { word: "compute", start: 2.3, end: 2.9 },
+          { word: "will", start: 2.9, end: 3.3 },
+          { word: "scale", start: 3.3, end: 3.8 },
+          { word: "by", start: 3.8, end: 4.1 },
+          { word: "more", start: 4.1, end: 4.5 },
+          { word: "than", start: 4.5, end: 4.8 },
+          { word: "ten", start: 4.8, end: 5.2 },
+          { word: "thousand", start: 5.2, end: 5.8 },
+          { word: "times.", start: 5.8, end: 6.4 },
+        ],
+      });
+    }
+
     const filePrefix = `yt-${Date.now()}`;
     const outputTemplate = path.join(downloadDir, `${filePrefix}.%(ext)s`);
     const ytDlp = getYtDlpCommand();
     const binDir = path.join(process.cwd(), "bin");
 
-    // 1. Download video & write English subtitles with ffmpeg audio/video merging
-    const cmd = `${ytDlp} --ffmpeg-location "${binDir}" -f "bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4]/best" --no-warnings --ignore-errors --write-sub --write-auto-sub --sub-lang "en.*,en-orig,en" --convert-subs vtt --merge-output-format mp4 -o "${outputTemplate}" "${url}"`;
+    // 1. Download video & write English subtitles with Android/mweb client extractor args
+    // to bypass YouTube datacenter bot detection
+    const primaryCmd = `${ytDlp} --ffmpeg-location "${binDir}" --extractor-args "youtube:player_client=android,mweb,web" -f "bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4]/best" --no-warnings --ignore-errors --write-sub --write-auto-sub --sub-lang "en.*,en-orig,en" --convert-subs vtt --merge-output-format mp4 -o "${outputTemplate}" "${url}"`;
 
-    await execPromise(cmd, { timeout: 240000 });
+    try {
+      await execPromise(primaryCmd, { timeout: 240000 });
+    } catch (primaryErr: any) {
+      console.warn("Primary yt-dlp attempt failed, trying fallback client:", primaryErr?.message);
+      
+      const fallbackCmd = `${ytDlp} --ffmpeg-location "${binDir}" --extractor-args "youtube:player_client=ios,android" -f "bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4]/best" --no-warnings --ignore-errors --merge-output-format mp4 -o "${outputTemplate}" "${url}"`;
+      
+      try {
+        await execPromise(fallbackCmd, { timeout: 240000 });
+      } catch (fallbackErr: any) {
+        const errorMsg = fallbackErr?.message || primaryErr?.message || "";
+        const isBotBlocked =
+          errorMsg.includes("Sign in to confirm you're not a bot") ||
+          errorMsg.includes("bot") ||
+          errorMsg.includes("cookies") ||
+          errorMsg.includes("429");
+
+        if (isBotBlocked) {
+          return NextResponse.json(
+            {
+              error:
+                "YouTube has bot-checked this cloud server IP for that specific video. Please upload your video file directly (drag & drop below) or click 'Try Demo Video' to test immediately!",
+              isBotBlocked: true,
+              suggestion: "upload_direct",
+            },
+            { status: 422 }
+          );
+        }
+
+        throw fallbackErr;
+      }
+    }
 
     // Look for downloaded mp4 (either merged or single)
     let videoFilename = `${filePrefix}.mp4`;
     let fullVideoPath = path.join(downloadDir, videoFilename);
 
-    // If merged mp4 doesn't exist, search for any downloaded video format with this prefix
     if (!fs.existsSync(fullVideoPath)) {
       const files = fs.readdirSync(downloadDir);
       const vidFile = files.find(
@@ -143,6 +208,17 @@ export async function POST(req: NextRequest) {
         videoFilename = vidFile;
         fullVideoPath = path.join(downloadDir, videoFilename);
       }
+    }
+
+    if (!fs.existsSync(fullVideoPath)) {
+      return NextResponse.json(
+        {
+          error:
+            "Video stream was blocked or unavailable on YouTube. Please upload your video file directly or use a sample clip.",
+          isBotBlocked: true,
+        },
+        { status: 422 }
+      );
     }
 
     // Look for downloaded vtt subtitle
@@ -173,7 +249,12 @@ export async function POST(req: NextRequest) {
   } catch (err: any) {
     console.error("YouTube download error:", err);
     return NextResponse.json(
-      { error: err?.message || "Failed to download YouTube video. Please check the URL." },
+      {
+        error:
+          err?.message ||
+          "Failed to download YouTube video. Cloud datacenter IP may be restricted. Please upload your MP4 file directly.",
+        isBotBlocked: true,
+      },
       { status: 500 }
     );
   }

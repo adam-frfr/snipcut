@@ -586,26 +586,42 @@ function DashboardContent() {
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Error Alert if any */}
         {errorMsg && (
-          <div className="mb-6 p-4 rounded-2xl bg-[#FDF2F0] border border-[#F5C2B8] text-[#8C2E20] text-xs flex items-center justify-between gap-4">
-            <div className="flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 text-[#C83E2D] flex-shrink-0" />
-              <span className="font-medium">{errorMsg}</span>
+          <div className="mb-6 p-5 rounded-[24px] bg-[#FDF2F0] border border-[#F5C2B8] text-[#8C2E20] text-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm">
+            <div className="flex items-start gap-2.5">
+              <AlertCircle className="w-5 h-5 text-[#C83E2D] flex-shrink-0 mt-0.5" />
+              <div>
+                <span className="font-bold block text-sm mb-0.5">Video Processing Notice</span>
+                <span className="font-medium text-[#7A281D] leading-relaxed">{errorMsg}</span>
+              </div>
             </div>
-            <div className="flex items-center gap-2 flex-shrink-0">
+            <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap flex-shrink-0">
               <button
-                onClick={() => setErrorMsg("")}
-                className="px-3 py-1.5 rounded-full bg-white hover:bg-[#FAF6F1] border border-[#E8DDD2] text-[#2B1D16] font-bold text-xs transition"
+                type="button"
+                onClick={() => {
+                  setErrorMsg("");
+                  startRealPipeline({ url: "sample", prompt: "Extract key viral points" });
+                }}
+                className="px-3.5 py-1.5 rounded-full bg-[#3A7D44] hover:bg-[#2F6537] text-white font-bold text-xs transition cursor-pointer shadow-sm flex items-center gap-1.5"
               >
-                Dismiss
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>Load Demo Video</span>
               </button>
               <button
+                type="button"
                 onClick={() => {
                   setErrorMsg("");
                   setActiveTab("upload");
                 }}
-                className="px-3 py-1.5 rounded-full bg-[#C87A47] hover:bg-[#B66D3D] text-white font-bold text-xs transition"
+                className="px-3.5 py-1.5 rounded-full bg-[#C87A47] hover:bg-[#B66D3D] text-white font-bold text-xs transition cursor-pointer shadow-sm"
               >
-                Try Another Video
+                Upload File Directly
+              </button>
+              <button
+                type="button"
+                onClick={() => setErrorMsg("")}
+                className="px-3 py-1.5 rounded-full bg-white hover:bg-[#FAF6F1] border border-[#E8DDD2] text-[#2B1D16] font-bold text-xs transition cursor-pointer"
+              >
+                Dismiss
               </button>
             </div>
           </div>
@@ -1148,9 +1164,12 @@ function DashboardContent() {
               className="space-y-4"
             >
               <div>
-                <label className="block text-xs font-bold text-[#2B1D16] mb-1.5">
-                  YouTube Video Link
-                </label>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-xs font-bold text-[#2B1D16]">
+                    YouTube Video Link
+                  </label>
+                  <span className="text-[11px] text-[#7A695F] font-medium">Or choose quick sample below</span>
+                </div>
                 <input
                   type="url"
                   value={urlInput}
@@ -1158,6 +1177,31 @@ function DashboardContent() {
                   placeholder="https://www.youtube.com/watch?v=..."
                   className="w-full bg-[#FAF6F1] text-[#2B1D16] text-sm px-4 py-3 rounded-2xl border border-[#E8DDD2] placeholder:text-[#A09085] focus:outline-none focus:border-[#C87A47] transition-all"
                 />
+                
+                {/* 1-Click Samples */}
+                <div className="flex items-center gap-2 mt-2 flex-wrap">
+                  <span className="text-[10px] font-bold text-[#7A695F] uppercase">Quick Demos:</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setUrlInput("sample");
+                      startRealPipeline({ url: "sample", prompt: "Extract key viral points" });
+                    }}
+                    className="px-2.5 py-1 rounded-full bg-[#EAE1D7] hover:bg-[#DDD3C7] text-[11px] font-bold text-[#2B1D16] transition cursor-pointer flex items-center gap-1"
+                  >
+                    <span>⚡ AI Tech Keynote</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setUrlInput("sample-podcast");
+                      startRealPipeline({ url: "sample-podcast", prompt: "Funny moment and discussion" });
+                    }}
+                    className="px-2.5 py-1 rounded-full bg-[#EAE1D7] hover:bg-[#DDD3C7] text-[11px] font-bold text-[#2B1D16] transition cursor-pointer flex items-center gap-1"
+                  >
+                    <span>🎙️ Dual Speaker Podcast</span>
+                  </button>
+                </div>
               </div>
 
               <div>
