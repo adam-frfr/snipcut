@@ -5,7 +5,7 @@ import fs from "fs";
 import { spawn } from "child_process";
 
 // Set fluent-ffmpeg binary path to local bin or system/static ffmpeg
-function getFfmpegBinary(): string {
+export function getFfmpegBinary(): string {
   if (process.platform === "win32") {
     const localWinBin = path.join(process.cwd(), "bin", "ffmpeg.exe");
     if (fs.existsSync(localWinBin)) {
@@ -317,6 +317,7 @@ export async function renderVideoClip({
         "-c:v libx264",
         "-preset ultrafast",
         "-crf 23",
+        "-pix_fmt yuv420p",
         "-c:a aac",
         "-b:a 192k",
         "-movflags +faststart",

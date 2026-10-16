@@ -43,7 +43,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      downloadUrl: `/rendered_clips/${outputFilename}`,
+      downloadUrl: `/api/media?file=rendered_clips/${outputFilename}`,
       filename: outputFilename,
       tracking: renderResult.tracking,
     });

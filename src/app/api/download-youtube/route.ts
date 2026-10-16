@@ -129,7 +129,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({
         success: true,
         filePath: fullSamplePath,
-        fileUrl: `/downloads/${existingSample}`,
+        fileUrl: `/api/media?file=downloads/${existingSample}`,
         fileName: existingSample,
         transcriptText:
           "[00:00] In the next decade, AI compute will scale by more than ten thousand times.\n[00:15] The companies that fail to reframe their entire workflow around artificial intelligence will simply cease to exist.\n[00:30] This is not an incremental shift. It is the greatest technological inflection point in modern history.",
@@ -269,7 +269,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       success: true,
       filePath: fullVideoPath,
-      fileUrl: `/downloads/${videoFilename}`,
+      fileUrl: `/api/media?file=downloads/${videoFilename}`,
       fileName: videoFilename,
       transcriptText,
       transcriptSegments,

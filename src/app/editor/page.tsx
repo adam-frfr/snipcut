@@ -881,12 +881,14 @@ function EditorContent() {
               <div className="relative w-full h-full flex items-center justify-center overflow-hidden">
                 <video
                   ref={videoRef}
+                  key={`editor-${clip?.id}-${clip?.renderedVideoUrl || clip?.videoUrl || ""}`}
                   src={clip?.renderedVideoUrl || clip?.videoUrl || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=600&auto=format&fit=crop&q=80"}
                   className="w-full h-full object-cover"
                   style={{
                     transform: `scale(${zoom / 100}) translate(${posX}px, ${posY}px) rotate(${rotation}deg) scaleX(${flipH ? -1 : 1})`,
                     filter: `brightness(${100 + brightness}%) contrast(${100 + contrast}%) saturate(${100 + saturation}%)`,
                   }}
+                  preload="auto"
                   muted={isMuted}
                   playsInline
                 />

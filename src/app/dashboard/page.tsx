@@ -153,6 +153,18 @@ function DashboardContent() {
     }
   };
 
+  const handleLoadedMetadata = () => {
+    if (videoRef.current && selectedClip) {
+      if ((selectedClip as any).renderedVideoUrl) {
+        videoRef.current.currentTime = 0;
+        if (videoTopRef.current) videoTopRef.current.currentTime = 0;
+      } else {
+        videoRef.current.currentTime = selectedClip.startTime || 0;
+        if (videoTopRef.current) videoTopRef.current.currentTime = selectedClip.startTime || 0;
+      }
+    }
+  };
+
   const togglePlay = () => {
     if (!videoRef.current) return;
     if (isPlaying) {
@@ -723,9 +735,11 @@ function DashboardContent() {
                         {/* Video Preview Block */}
                         <div className="relative w-full sm:w-36 h-28 sm:h-24 border-2 border-black overflow-hidden flex-shrink-0 bg-black flex items-center justify-center">
                           <video
-                            src={clip.videoUrl}
-                            className="w-full h-full object-cover"
+                            src={`${clip.videoUrl}#t=${clip.startTime || 0.1}`}
+                            className="w-full h-full object-cover pointer-events-none"
                             preload="metadata"
+                            playsInline
+                            muted
                           />
                           <div className="absolute top-1.5 left-1.5 px-2 py-0.5 bg-[#FFC700] border border-black text-[10px] font-black text-black flex items-center gap-1">
                             <Flame className="w-3 h-3 fill-black text-black" />
@@ -817,9 +831,11 @@ function DashboardContent() {
                               <div className="relative w-full h-1/2 overflow-hidden border-b-2 border-white">
                                 <video
                                   ref={videoTopRef}
+                                  key={`top-${selectedClip.id}-${(selectedClip as any).renderedVideoUrl || ""}`}
                                   src={(selectedClip as any).renderedVideoUrl || selectedClip.videoUrl}
                                   className="w-full h-full object-cover"
                                   style={{ objectPosition: "75% center" }}
+                                  preload="auto"
                                   muted
                                   playsInline
                                 />
@@ -832,12 +848,15 @@ function DashboardContent() {
                               <div className="relative w-full h-1/2 overflow-hidden">
                                 <video
                                   ref={videoRef}
+                                  key={`bot-${selectedClip.id}-${(selectedClip as any).renderedVideoUrl || ""}`}
                                   src={(selectedClip as any).renderedVideoUrl || selectedClip.videoUrl}
                                   className="w-full h-full object-cover"
                                   style={{ objectPosition: "15% center" }}
                                   controls={false}
+                                  preload="auto"
                                   muted={isMuted}
                                   playsInline
+                                  onLoadedMetadata={handleLoadedMetadata}
                                   onTimeUpdate={handleTimeUpdate}
                                   onEnded={() => {
                                     if (videoRef.current && selectedClip) {
@@ -857,19 +876,24 @@ function DashboardContent() {
                             <div className="relative w-full h-full flex items-center justify-center overflow-hidden bg-black">
                               {/* Dynamic Blurred Backdrop */}
                               <video
+                                key={`blur-${selectedClip.id}-${(selectedClip as any).renderedVideoUrl || ""}`}
                                 src={(selectedClip as any).renderedVideoUrl || selectedClip.videoUrl}
                                 className="absolute inset-0 w-full h-full object-cover blur-2xl scale-125 opacity-70"
+                                preload="auto"
                                 muted
                                 playsInline
                               />
                               {/* Centered 16:9 Foreground */}
                               <video
                                 ref={videoRef}
+                                key={`fit-${selectedClip.id}-${(selectedClip as any).renderedVideoUrl || ""}`}
                                 src={(selectedClip as any).renderedVideoUrl || selectedClip.videoUrl}
                                 className="relative z-10 w-full aspect-video object-contain shadow-2xl"
                                 controls={false}
+                                preload="auto"
                                 muted={isMuted}
                                 playsInline
+                                onLoadedMetadata={handleLoadedMetadata}
                                 onTimeUpdate={handleTimeUpdate}
                                 onEnded={() => {
                                   if (videoRef.current && selectedClip) {
@@ -886,6 +910,7 @@ function DashboardContent() {
                             <div className="relative w-full h-full overflow-hidden bg-black">
                               <video
                                 ref={videoRef}
+                                key={`track-${selectedClip.id}-${(selectedClip as any).renderedVideoUrl || ""}`}
                                 src={(selectedClip as any).renderedVideoUrl || selectedClip.videoUrl}
                                 className="w-full h-full object-cover transition-all duration-700 ease-in-out"
                                 style={{
@@ -896,8 +921,10 @@ function DashboardContent() {
                                   ),
                                 }}
                                 controls={false}
+                                preload="auto"
                                 muted={isMuted}
                                 playsInline
+                                onLoadedMetadata={handleLoadedMetadata}
                                 onTimeUpdate={handleTimeUpdate}
                                 onEnded={() => {
                                   if (videoRef.current && selectedClip) {
