@@ -4,11 +4,17 @@ import path from "path";
 import fs from "fs";
 import { spawn } from "child_process";
 
-// Set fluent-ffmpeg binary path to local bin/ffmpeg.exe or ffmpeg-static
+// Set fluent-ffmpeg binary path to local bin or system/static ffmpeg
 function getFfmpegBinary(): string {
-  const localBin = path.join(process.cwd(), "bin", "ffmpeg.exe");
-  if (fs.existsSync(localBin)) {
-    return localBin;
+  if (process.platform === "win32") {
+    const localWinBin = path.join(process.cwd(), "bin", "ffmpeg.exe");
+    if (fs.existsSync(localWinBin)) {
+      return localWinBin;
+    }
+  }
+  const localLinuxBin = path.join(process.cwd(), "bin", "ffmpeg");
+  if (fs.existsSync(localLinuxBin)) {
+    return localLinuxBin;
   }
   return ffmpegStatic || "ffmpeg";
 }
@@ -84,7 +90,10 @@ export async function detectSubjectAndReframe(
       });
     }
 
-    const py = spawn("python", [
+    const pythonBin =
+      process.env.PYTHON_BIN || (process.platform === "win32" ? "python" : "python3");
+
+    const py = spawn(pythonBin, [
       scriptPath,
       "--video",
       videoPath,

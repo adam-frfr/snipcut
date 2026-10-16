@@ -7,9 +7,15 @@ import util from "util";
 const execPromise = util.promisify(exec);
 
 function getYtDlpCommand() {
-  const localBin = path.join(process.cwd(), "bin", "yt-dlp.exe");
-  if (fs.existsSync(localBin)) {
-    return `"${localBin}"`;
+  if (process.platform === "win32") {
+    const localBin = path.join(process.cwd(), "bin", "yt-dlp.exe");
+    if (fs.existsSync(localBin)) {
+      return `"${localBin}"`;
+    }
+  }
+  const linuxBin = path.join(process.cwd(), "bin", "yt-dlp");
+  if (fs.existsSync(linuxBin)) {
+    return `"${linuxBin}"`;
   }
   return "yt-dlp";
 }
