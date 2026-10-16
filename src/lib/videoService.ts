@@ -19,7 +19,89 @@ export function getFfmpegBinary(): string {
   return ffmpegStatic || "ffmpeg";
 }
 
+export function getFfprobeBinary(): string {
+  if (process.platform === "win32") {
+    const localWinBin = path.join(process.cwd(), "bin", "ffprobe.exe");
+    if (fs.existsSync(localWinBin)) {
+      return localWinBin;
+    }
+  }
+  const localLinuxBin = path.join(process.cwd(), "bin", "ffprobe");
+  if (fs.existsSync(localLinuxBin)) {
+    return localLinuxBin;
+  }
+  try {
+    const ffprobeStatic = require("ffprobe-static");
+    if (ffprobeStatic?.path && fs.existsSync(ffprobeStatic.path)) {
+      return ffprobeStatic.path;
+    }
+  } catch (e) {}
+  return "ffprobe";
+}
+
 ffmpeg.setFfmpegPath(getFfmpegBinary());
+ffmpeg.setFfprobePath(getFfprobeBinary());
+
+export interface VideoStreamInfo {
+  codecName: string;
+  pixFmt: string;
+  bitsPerRawSample?: string;
+  width?: number;
+  height?: number;
+  duration?: number;
+  isH264Yuv420p8Bit: boolean;
+}
+
+/**
+ * Inspect video streams using ffprobe to check if it's already web-standard H.264 8-bit yuv420p
+ */
+export async function probeVideoFormat(filePath: string): Promise<VideoStreamInfo> {
+  const ffprobeBin = getFfprobeBinary();
+  const { execFile } = await import("child_process");
+  const util = await import("util");
+  const execFilePromise = util.promisify(execFile);
+
+  try {
+    const { stdout } = await execFilePromise(ffprobeBin, [
+      "-v",
+      "error",
+      "-select_streams",
+      "v:0",
+      "-show_entries",
+      "stream=codec_name,pix_fmt,bits_per_raw_sample,width,height,duration",
+      "-of",
+      "json",
+      filePath,
+    ]);
+
+    const data = JSON.parse(stdout);
+    const stream = data.streams?.[0] || {};
+    const codecName = (stream.codec_name || "").toLowerCase();
+    const pixFmt = (stream.pix_fmt || "").toLowerCase();
+    const bits = stream.bits_per_raw_sample;
+
+    const isH264 = codecName === "h264" || codecName === "avc1";
+    const isYuv420p = pixFmt === "yuv420p";
+    const is8Bit = !bits || bits === "8";
+
+    return {
+      codecName,
+      pixFmt,
+      bitsPerRawSample: bits,
+      width: stream.width,
+      height: stream.height,
+      duration: stream.duration ? parseFloat(stream.duration) : undefined,
+      isH264Yuv420p8Bit: isH264 && isYuv420p && is8Bit,
+    };
+  } catch (err) {
+    console.warn("ffprobe inspection warning, falling back to transcode:", err);
+    return {
+      codecName: "unknown",
+      pixFmt: "unknown",
+      isH264Yuv420p8Bit: false,
+    };
+  }
+}
 
 export type ReframeMode = "auto-tracker" | "split-screen" | "blurred-fit" | "center";
 
@@ -214,8 +296,15 @@ export async function renderVideoClip({
       fs.mkdirSync(dir, { recursive: true });
     }
 
+    const renderStartTime = Date.now();
+    console.log(
+      `[Stage: FFmpeg Render] Starting precision render: start=${startTime}s, duration=${duration}s, mode=${effectiveMode}, input=${resolvedInput}`
+    );
+
+    // Fast seeking: Put -ss before -i via inputOptions.
+    // Re-encoding with libx264 ensures frame accuracy at the cut point.
     let command = ffmpeg(resolvedInput)
-      .setStartTime(startTime)
+      .inputOptions(["-ss", String(startTime)])
       .setDuration(duration);
 
     // Prepare subtitles
@@ -315,7 +404,7 @@ export async function renderVideoClip({
     command
       .outputOptions([
         "-c:v libx264",
-        "-preset ultrafast",
+        "-preset veryfast",
         "-crf 23",
         "-pix_fmt yuv420p",
         "-c:a aac",
@@ -325,10 +414,16 @@ export async function renderVideoClip({
       .output(outputPath)
       .on("end", () => {
         cleanup();
+        const elapsedMs = Date.now() - renderStartTime;
+        const sizeBytes = fs.existsSync(outputPath) ? fs.statSync(outputPath).size : 0;
+        console.log(
+          `[Stage: FFmpeg Render] Finished rendering in ${elapsedMs}ms -> ${outputPath} (${sizeBytes} bytes)`
+        );
         resolve({ outputPath, tracking: trackingResult });
       })
       .on("error", (err) => {
         cleanup();
+        console.error("[Stage: FFmpeg Render] Render error:", err);
         reject(err);
       })
       .run();
@@ -342,6 +437,9 @@ export async function extractAudioForWhisper(
   videoPath: string,
   audioOutputPath: string
 ): Promise<string> {
+  const audioStartTime = Date.now();
+  console.log(`[Stage: Audio Extraction] Extracting audio for Whisper from: ${videoPath}`);
+
   return new Promise((resolve, reject) => {
     const dir = path.dirname(audioOutputPath);
     if (!fs.existsSync(dir)) {
@@ -354,8 +452,18 @@ export async function extractAudioForWhisper(
       .audioBitrate(64)
       .audioChannels(1)
       .output(audioOutputPath)
-      .on("end", () => resolve(audioOutputPath))
-      .on("error", (err) => reject(err))
+      .on("end", () => {
+        const elapsedMs = Date.now() - audioStartTime;
+        const sizeBytes = fs.existsSync(audioOutputPath) ? fs.statSync(audioOutputPath).size : 0;
+        console.log(
+          `[Stage: Audio Extraction] Finished in ${elapsedMs}ms -> ${audioOutputPath} (${sizeBytes} bytes)`
+        );
+        resolve(audioOutputPath);
+      })
+      .on("error", (err) => {
+        console.error("[Stage: Audio Extraction] Error:", err);
+        reject(err);
+      })
       .run();
   });
 }

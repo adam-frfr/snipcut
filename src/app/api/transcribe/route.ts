@@ -5,6 +5,7 @@ import fs from "fs";
 import path from "path";
 
 export async function POST(req: NextRequest) {
+  const transcribeStartTime = Date.now();
   try {
     const body = await req.json();
     const { filePath, openaiKey } = body;
@@ -16,17 +17,23 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    console.log(`[Stage: Transcribe] Starting transcription pipeline for: ${filePath}`);
+
     let audioPath = filePath;
 
     // If it's a video file (.mp4, .mov, .mkv, .webm), extract compressed audio first
     const ext = path.extname(filePath).toLowerCase();
     if ([".mp4", ".mov", ".mkv", ".webm", ".avi"].includes(ext)) {
       const audioOutputDir = path.join(process.cwd(), "public", "extracted_audio");
+      if (!fs.existsSync(audioOutputDir)) {
+        fs.mkdirSync(audioOutputDir, { recursive: true });
+      }
       const audioFilename = `audio-${Date.now()}.mp3`;
       audioPath = path.join(audioOutputDir, audioFilename);
       try {
         await extractAudioForWhisper(filePath, audioPath);
       } catch (e) {
+        console.warn("[Stage: Transcribe] Audio extraction failed, using original file:", e);
         audioPath = filePath;
       }
     }
@@ -34,8 +41,10 @@ export async function POST(req: NextRequest) {
     let transcription: any = null;
     const activeKey = (openaiKey || process.env.OPENAI_API_KEY || "").trim();
 
-    // If not a HackClub proxy key, try OpenAI Whisper
+    // If key provided, attempt Whisper transcription
     if (activeKey && !activeKey.startsWith("sk-hc-v1-")) {
+      const whisperApiStartTime = Date.now();
+      console.log(`[Stage: Transcribe] Calling OpenAI Whisper API with audio: ${audioPath}...`);
       try {
         const openai = getOpenAIClient(activeKey);
         transcription = await openai.audio.transcriptions.create({
@@ -44,19 +53,62 @@ export async function POST(req: NextRequest) {
           response_format: "verbose_json",
           timestamp_granularities: ["word", "segment"],
         });
+        console.log(
+          `[Stage: Transcribe] Whisper API finished in ${Date.now() - whisperApiStartTime}ms`
+        );
       } catch (whisperErr) {
-        console.warn("Direct Whisper API unavailable, switching to intelligent timeline extraction:", whisperErr);
+        console.warn(
+          "[Stage: Transcribe] Direct Whisper API error, switching to timeline extraction:",
+          whisperErr
+        );
       }
     }
 
+    // Ensure debug output directory exists for intermediate saving
+    const debugDir = path.join(process.cwd(), "public", "uploads", "debug");
+    if (!fs.existsSync(debugDir)) {
+      fs.mkdirSync(debugDir, { recursive: true });
+    }
+
     if (transcription) {
+      const words = transcription.words || [];
+      const segments = transcription.segments || [];
+      const debugFile = path.join(debugDir, `transcript-${Date.now()}.json`);
+
+      // Save intermediate transcript JSON
+      fs.writeFileSync(
+        debugFile,
+        JSON.stringify(
+          {
+            timestamp: new Date().toISOString(),
+            sourceVideo: filePath,
+            audioPath,
+            duration: transcription.duration,
+            text: transcription.text,
+            wordsCount: words.length,
+            segmentsCount: segments.length,
+            words,
+            segments,
+          },
+          null,
+          2
+        ),
+        "utf-8"
+      );
+
+      console.log(
+        `[Stage: Transcribe] Saved intermediate transcript JSON to: ${debugFile} (${words.length} words, ${segments.length} segments)`
+      );
+
       return NextResponse.json({
         success: true,
         text: transcription.text,
-        words: transcription.words || [],
-        segments: transcription.segments || [],
+        words,
+        segments,
         duration: transcription.duration,
         audioPath,
+        debugFile: `/api/media?file=uploads/debug/${path.basename(debugFile)}`,
+        timingMs: Date.now() - transcribeStartTime,
       });
     }
 
@@ -91,7 +143,7 @@ export async function POST(req: NextRequest) {
     const step = Math.min(30, Math.max(15, Math.floor(durationSeconds / 5)));
     for (let t = 0; t < durationSeconds; t += step) {
       const segEnd = Math.min(t + step, durationSeconds);
-      const text = `High engagement section between ${Math.round(t)}s and ${Math.round(segEnd)}s`;
+      const text = `High engagement section between ${Math.round(t)}s and ${Math.round(segEnd)}s.`;
       fallbackSegments.push({
         id: fallbackSegments.length,
         start: t,
@@ -105,7 +157,31 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const fallbackText = fallbackSegments.map((s) => s.text).join(". ");
+    const fallbackText = fallbackSegments.map((s) => s.text).join(" ");
+    const debugFile = path.join(debugDir, `transcript-fallback-${Date.now()}.json`);
+
+    fs.writeFileSync(
+      debugFile,
+      JSON.stringify(
+        {
+          timestamp: new Date().toISOString(),
+          sourceVideo: filePath,
+          audioPath,
+          duration: durationSeconds,
+          text: fallbackText,
+          words: fallbackWords,
+          segments: fallbackSegments,
+          isFallback: true,
+        },
+        null,
+        2
+      ),
+      "utf-8"
+    );
+
+    console.log(
+      `[Stage: Transcribe] Saved fallback intermediate transcript JSON to: ${debugFile}`
+    );
 
     return NextResponse.json({
       success: true,
@@ -114,9 +190,11 @@ export async function POST(req: NextRequest) {
       segments: fallbackSegments,
       duration: durationSeconds,
       audioPath,
+      debugFile: `/api/media?file=uploads/debug/${path.basename(debugFile)}`,
+      timingMs: Date.now() - transcribeStartTime,
     });
   } catch (err: any) {
-    console.error("Transcription error:", err);
+    console.error("[Stage: Transcribe] Transcription error:", err);
     return NextResponse.json(
       { error: err?.message || "Audio transcription failed" },
       { status: 500 }

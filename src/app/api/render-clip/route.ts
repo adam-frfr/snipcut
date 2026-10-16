@@ -4,6 +4,7 @@ import path from "path";
 import os from "os";
 
 export async function POST(req: NextRequest) {
+  const renderStartTime = Date.now();
   try {
     const {
       inputPath,
@@ -28,6 +29,10 @@ export async function POST(req: NextRequest) {
     const outputFilename = `clip-${Date.now()}.mp4`;
     const outputPath = path.join(outputDir, outputFilename);
 
+    console.log(
+      `[Stage: Render Clip API] Rendering clip from ${startTime}s (${duration}s) -> ${outputFilename}`
+    );
+
     const renderResult = await renderVideoClip({
       inputPath,
       outputPath,
@@ -41,14 +46,16 @@ export async function POST(req: NextRequest) {
       captionStyle,
     });
 
+    const elapsedMs = Date.now() - renderStartTime;
     return NextResponse.json({
       success: true,
       downloadUrl: `/api/media?file=rendered_clips/${outputFilename}`,
       filename: outputFilename,
       tracking: renderResult.tracking,
+      timingMs: elapsedMs,
     });
   } catch (error: any) {
-    console.error("FFmpeg Render Error:", error);
+    console.error("[Stage: Render Clip API] FFmpeg Render Error:", error);
     return NextResponse.json(
       { error: error?.message || "FFmpeg video rendering failed" },
       { status: 500 }

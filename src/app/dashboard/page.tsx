@@ -342,6 +342,8 @@ function DashboardContent() {
         throw new Error("No video file or URL provided.");
       }
 
+      let videoTotalDuration = 60;
+
       // Stage 2: If we don't have transcript yet, transcribe via Whisper
       if (!fullTranscript) {
         setProcessingStage("Transcribing speech with OpenAI Whisper (Word Timestamps)...");
@@ -359,15 +361,21 @@ function DashboardContent() {
         }
         fullTranscript = transData.text || "";
         rawWords = transData.words || [];
+        videoTotalDuration = transData.duration || 60;
+        if (transData.debugFile) {
+          console.log(`[Stage 2: Transcribe] Intermediate output: ${transData.debugFile}`);
+        }
       }
 
       // Stage 3: Viral Curation with Claude 3.5 Sonnet / Haiku
-      setProcessingStage("OpusClip AI: Curating viral hooks and calculating virality scores...");
+      setProcessingStage("OpusClip AI: Curating viral hooks and snapping word boundaries...");
       const analyzeRes = await fetch("/api/analyze-clips", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           transcriptText: fullTranscript,
+          words: rawWords,
+          duration: videoTotalDuration,
           customPrompt: prompt || promptInput,
           model: "~anthropic/claude-sonnet-latest",
           openaiKey: clientKey,
@@ -378,13 +386,29 @@ function DashboardContent() {
       if (!analyzeRes.ok || analyzeData.error) {
         throw new Error(analyzeData.error || "AI Virality analysis failed.");
       }
+      if (analyzeData.debugFile) {
+        console.log(`[Stage 3: AI Curation] Intermediate output: ${analyzeData.debugFile}`);
+      }
 
-      // Stage 4: Assemble clips with precise timestamps
+      // Stage 4: Assemble clips with precise snapped timestamps
       const rawClips = analyzeData.clips || [];
       const generatedClips: RealClip[] = rawClips.map((c: any, index: number) => {
-        const clipWords = rawWords.filter(
-          (w: any) => w.start >= c.startTime && w.end <= c.endTime + 0.5
-        );
+        const clipWords =
+          c.snappedWords && c.snappedWords.length > 0
+            ? c.snappedWords.map((cw: any) => ({
+                start: cw.start,
+                end: cw.end,
+                text: cw.word || cw.text,
+              }))
+            : rawWords
+                .filter(
+                  (w: any) => w.start >= c.startTime - 0.05 && w.end <= c.endTime + 0.05
+                )
+                .map((cw: any) => ({
+                  start: Math.max(0, Number((cw.start - c.startTime).toFixed(2))),
+                  end: Math.max(0.3, Number((cw.end - c.startTime).toFixed(2))),
+                  text: cw.text || cw.word,
+                }));
 
         return {
           id: `clip-${Date.now()}-${index}`,
@@ -405,11 +429,7 @@ function DashboardContent() {
           captionStyle: "hormozi",
           transcript:
             clipWords.length > 0
-              ? clipWords.map((cw: any) => ({
-                  start: cw.start - c.startTime,
-                  end: cw.end - c.startTime,
-                  text: cw.text || cw.word,
-                }))
+              ? clipWords
               : [
                   { start: 0, end: 3, text: c.hookHeadline || c.title },
                   { start: 3, end: 7, text: "Key insight" },
