@@ -84,6 +84,7 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
       localStorage.setItem("opus_youtube_cookies", youtubeCookies.trim());
       localStorage.setItem("opus_youtube_proxy", youtubeProxy.trim());
       localStorage.setItem("app_access_token", appAccessToken.trim());
+      document.cookie = `app_access_token=${encodeURIComponent(appAccessToken.trim())}; path=/; max-age=31536000; SameSite=Lax`;
     }
     setSaveSuccess(true);
     setTimeout(() => {

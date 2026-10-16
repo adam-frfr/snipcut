@@ -241,6 +241,8 @@ function DashboardContent() {
           const storedToken = localStorage.getItem("app_access_token");
           if (!storedToken) {
             setTokenPromptOpen(true);
+          } else {
+            document.cookie = `app_access_token=${encodeURIComponent(storedToken)}; path=/; max-age=31536000; SameSite=Lax`;
           }
         }
       } catch (err) {
@@ -444,7 +446,7 @@ function DashboardContent() {
           hookHeadline: c.hookHeadline || "",
           startTime: c.startTime || 0,
           endTime: c.endTime || 30,
-          duration: Math.max(5, Math.round(c.endTime - c.startTime)),
+          duration: Number(Math.max(5, c.endTime - c.startTime).toFixed(2)),
           durationFormatted: c.durationFormatted || "0:30",
           viralityScore: c.viralityScore || 92,
           hookStrength: c.hookStrength || 94,
@@ -1367,6 +1369,7 @@ function DashboardContent() {
                   onClick={() => {
                     if (inputToken.trim()) {
                       localStorage.setItem("app_access_token", inputToken.trim());
+                      document.cookie = `app_access_token=${encodeURIComponent(inputToken.trim())}; path=/; max-age=31536000; SameSite=Lax`;
                       setTokenPromptOpen(false);
                     }
                   }}

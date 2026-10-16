@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
+import { verifyAuthAndRateLimit } from "@/lib/authRateLimit";
 
 export async function GET(req: NextRequest) {
+  const authError = verifyAuthAndRateLimit(req);
+  if (authError) return authError;
+
   try {
     const { searchParams } = new URL(req.url);
     const fileParam = searchParams.get("file");

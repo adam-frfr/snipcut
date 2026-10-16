@@ -481,10 +481,11 @@ export async function renderVideoClip({
       );
 
       srtEntries = relevantWords.map((t) => {
-        const shiftedStart = Math.max(0, t.start - startTime);
-        const shiftedEnd = Math.min(
-          duration,
-          Math.max(shiftedStart + 0.2, t.end - startTime)
+        const shiftedStart = Math.max(0, Number((t.start - startTime).toFixed(2)));
+        // Ensure the last caption's end is not clamped mid-word: allow full word duration
+        const shiftedEnd = Math.max(
+          shiftedStart + 0.2,
+          Number((t.end - startTime).toFixed(2))
         );
         const wordText = t.text || (t as any).word || "";
         return {

@@ -36,6 +36,11 @@ const tests = [
     cmd: "npx",
     args: ["tsx", path.join(__dirname, "test-groq-chunking.ts")],
   },
+  {
+    name: "Access Gate, Constant-Time Auth & Rate Limiting (Item 4)",
+    cmd: "npx",
+    args: ["tsx", path.join(__dirname, "test-access-gate.ts")],
+  },
 ];
 
 let failed = 0;

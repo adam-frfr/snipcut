@@ -40,8 +40,8 @@ export async function POST(req: NextRequest) {
     const renderResult = await renderVideoClip({
       inputPath,
       outputPath,
-      startTime: Number(startTime),
-      duration: Number(duration),
+      startTime: Number(Number(startTime).toFixed(2)),
+      duration: Number(Number(duration).toFixed(2)),
       aspectRatio: aspectRatio || "9:16",
       reframeMode: reframeMode || "auto-tracker",
       splitScreen: Boolean(splitScreen),

@@ -112,7 +112,7 @@ async function runFreshPipeline() {
       body: JSON.stringify({
         inputPath: fileId,
         startTime: clip.startTime,
-        duration: Math.max(5, Math.round(clip.endTime - clip.startTime)),
+        duration: Number(Math.max(5, clip.endTime - clip.startTime).toFixed(2)),
         aspectRatio: "9:16",
         reframeMode: "auto-tracker",
         transcript: transData.words.map((w: any) => ({

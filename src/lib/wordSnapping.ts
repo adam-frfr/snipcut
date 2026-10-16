@@ -16,6 +16,7 @@ export interface SnapOptions {
   totalDuration?: number;
   allowOverlap?: boolean; // default false
   targetPaddingSec?: number; // default 0.2s
+  maxShiftSec?: number; // default 3.0s
 }
 
 function formatDuration(seconds: number): string {
@@ -27,9 +28,11 @@ function formatDuration(seconds: number): string {
 const SENTENCE_END_REGEX = /[.?!…]+["']?$/;
 
 /**
- * Snaps raw LLM start/end times to precise Whisper word boundaries,
- * clamps padding so it never bleeds into adjacent words (max half the gap),
- * prioritizes sentence punctuation boundaries, and validates constraints (min/max duration, no overlap).
+ * Snaps raw LLM start/end times to precise Whisper word boundaries:
+ * 1. A start boundary is the word AFTER a sentence-ending word, not the punctuated word itself.
+ * 2. Never moves a start or end more than 3s from the raw value (drops or snaps to nearest word in range).
+ * 3. Clamps end to totalDuration exactly.
+ * 4. Clips may not overlap by more than 0.5s: trims the later clip's start or drops it.
  */
 export function snapAndValidateClips(
   rawClips: CuratedClipResult[],
@@ -41,6 +44,7 @@ export function snapAndValidateClips(
   const totalDuration = options.totalDuration;
   const targetPadding = options.targetPaddingSec ?? 0.2;
   const allowOverlap = options.allowOverlap ?? false;
+  const maxShift = options.maxShiftSec ?? 3.0;
 
   // Ensure words are sorted chronologically
   const sortedWords = [...words]
@@ -55,7 +59,7 @@ export function snapAndValidateClips(
     const rawStart = Math.max(0, clip.startTime);
     let rawEnd = Math.max(rawStart + 1, clip.endTime);
 
-    // Rule: Drop clips that start at or beyond the video end (do not relocate them)
+    // Rule: Drop clips that start at or beyond the video end
     if (totalDuration && totalDuration > 0) {
       if (rawStart >= totalDuration) {
         console.log(
@@ -88,56 +92,60 @@ export function snapAndValidateClips(
     }
 
     // --- 1. Snap Start Time ---
-    // Rule: Prefer a sentence boundary at or before rawStart (within 2.5s).
-    // Word i is a sentence start if i === 0 or sortedWords[i - 1] ends with sentence punctuation.
-    let startIdx = 0;
-    let minStartDiff = Infinity;
-    let preferredSentenceStartIdx: number | null = null;
-    let minSentenceBeforeDiff = Infinity;
-    let fallbackSentenceStartIdx: number | null = null;
-    let minFallbackSentenceDiff = Infinity;
+    // Rule: Never move start more than 3s from raw value.
+    // Rule: A start boundary is the word AFTER a sentence-ending word, not the punctuated word itself.
+    // Test: "...hooper." "Ain't..." must start at "Ain't".
+    const wordsNearStart = sortedWords
+      .map((w, idx) => ({ word: w, idx, diff: Math.abs(w.start - rawStart) }))
+      .filter((item) => item.diff <= maxShift);
 
-    for (let i = 0; i < sortedWords.length; i++) {
-      const w = sortedWords[i];
-      const diff = Math.abs(w.start - rawStart);
-
-      if (diff < minStartDiff) {
-        minStartDiff = diff;
-        startIdx = i;
-      }
-
-      const isSentenceStart =
-        i === 0 || SENTENCE_END_REGEX.test(sortedWords[i - 1].word.trim());
-
-      if (isSentenceStart) {
-        // Preferred: sentence boundary at or before rawStart within 2.5s
-        if (w.start <= rawStart && rawStart - w.start <= 2.5) {
-          const beforeDiff = rawStart - w.start;
-          if (beforeDiff < minSentenceBeforeDiff) {
-            minSentenceBeforeDiff = beforeDiff;
-            preferredSentenceStartIdx = i;
-          }
-        } else if (diff <= 2.5 && diff < minFallbackSentenceDiff) {
-          minFallbackSentenceDiff = diff;
-          fallbackSentenceStartIdx = i;
-        }
-      }
-    }
-
-    // Rule: Drop clips with no words in range (closest word > 3.5s away)
-    if (minStartDiff > 3.5) {
+    if (wordsNearStart.length === 0) {
       console.log(
-        `[Stage: Word Snapping] Dropping clip "${clip.title}": closest word is ${minStartDiff.toFixed(1)}s away (no words in range of ${rawStart.toFixed(1)}s)`
+        `[Stage: Word Snapping] Dropping clip "${clip.title}": no words within ${maxShift}s of rawStart ${rawStart.toFixed(2)}s`
       );
       return null;
     }
 
-    const chosenStartIdx =
-      preferredSentenceStartIdx !== null
-        ? preferredSentenceStartIdx
-        : fallbackSentenceStartIdx !== null
-        ? fallbackSentenceStartIdx
-        : startIdx;
+    // Identify candidate sentence starts in range:
+    // A word is a sentence start if it is index 0 OR the PRECEDING word ended with sentence punctuation.
+    // A punctuated word itself (e.g. "...hooper.") is NEVER the start boundary!
+    const sentenceStartCandidates = wordsNearStart.filter((item) => {
+      const i = item.idx;
+      if (i === 0) return true;
+      const prevWord = sortedWords[i - 1];
+      const isAfterSentenceEnd = SENTENCE_END_REGEX.test(prevWord.word.trim());
+      return isAfterSentenceEnd;
+    });
+
+    let chosenStartIdx: number;
+
+    if (sentenceStartCandidates.length > 0) {
+      // Prefer sentence start at or before rawStart, else closest within range
+      const beforeStarts = sentenceStartCandidates.filter((c) => c.word.start <= rawStart);
+      if (beforeStarts.length > 0) {
+        beforeStarts.sort((a, b) => b.word.start - a.word.start); // closest before rawStart
+        chosenStartIdx = beforeStarts[0].idx;
+      } else {
+        sentenceStartCandidates.sort((a, b) => a.diff - b.diff); // closest overall
+        chosenStartIdx = sentenceStartCandidates[0].idx;
+      }
+    } else {
+      // No sentence start within 3s -> snap to nearest word boundary in range
+      // But avoid starting on a word that ends with sentence punctuation if the next word is also in range
+      wordsNearStart.sort((a, b) => a.diff - b.diff);
+      let bestItem = wordsNearStart[0];
+      if (
+        SENTENCE_END_REGEX.test(bestItem.word.word.trim()) &&
+        bestItem.idx < sortedWords.length - 1
+      ) {
+        const nextItem = sortedWords[bestItem.idx + 1];
+        if (Math.abs(nextItem.start - rawStart) <= maxShift) {
+          bestItem = { word: nextItem, idx: bestItem.idx + 1, diff: Math.abs(nextItem.start - rawStart) };
+        }
+      }
+      chosenStartIdx = bestItem.idx;
+    }
+
     const startWord = sortedWords[chosenStartIdx];
 
     // Padding calculation: clamp to at most half the gap to the previous word
@@ -152,90 +160,90 @@ export function snapAndValidateClips(
     }
 
     let snappedStart = Math.max(0, startWord.start - startPad);
-
-    // Rule: Never shift the start later than the raw start by more than the word-snap padding
-    const maxAllowedStart = rawStart + targetPadding;
-    if (snappedStart > maxAllowedStart) {
-      // Find the closest preceding word starting <= maxAllowedStart
-      let earlierIdx = chosenStartIdx;
-      while (earlierIdx > 0 && sortedWords[earlierIdx].start > maxAllowedStart) {
-        earlierIdx--;
-      }
-      if (sortedWords[earlierIdx].start <= maxAllowedStart) {
-        const fallbackWord = sortedWords[earlierIdx];
-        const gap =
-          earlierIdx > 0
-            ? Math.max(0, fallbackWord.start - sortedWords[earlierIdx - 1].end)
-            : fallbackWord.start;
-        const pad = Math.min(targetPadding, gap / 2);
-        snappedStart = Math.max(0, fallbackWord.start - pad);
-      } else {
-        snappedStart = Math.max(0, rawStart);
-      }
+    // Hard clamp: never exceed maxShift (3s) from rawStart
+    if (Math.abs(snappedStart - rawStart) > maxShift) {
+      snappedStart = rawStart < startWord.start ? rawStart + maxShift : rawStart - maxShift;
     }
 
     // --- 2. Snap End Time ---
-    // Rule: For the end, prefer a sentence boundary at or after the raw end.
-    let endIdx = sortedWords.length - 1;
-    let minEndDiff = Infinity;
-    let preferredSentenceEndIdx: number | null = null;
-    let minSentenceAfterDiff = Infinity;
-    let fallbackSentenceEndIdx: number | null = null;
-    let minFallbackSentenceEndDiff = Infinity;
-
-    for (let i = 0; i < sortedWords.length; i++) {
-      const w = sortedWords[i];
-      if (w.end < snappedStart) continue;
-      const diff = Math.abs(w.end - rawEnd);
-
-      if (diff < minEndDiff) {
-        minEndDiff = diff;
-        endIdx = i;
-      }
-
-      // If this word ends with punctuation, it is a clean sentence ending
-      if (SENTENCE_END_REGEX.test(w.word.trim())) {
-        // Preferred: sentence boundary at or after rawEnd within 3.5s
-        if (w.end >= rawEnd && w.end - rawEnd <= 3.5) {
-          const afterDiff = w.end - rawEnd;
-          if (afterDiff < minSentenceAfterDiff) {
-            minSentenceAfterDiff = afterDiff;
-            preferredSentenceEndIdx = i;
-          }
-        } else if (diff <= 3.0 && diff < minFallbackSentenceEndDiff) {
-          minFallbackSentenceEndDiff = diff;
-          fallbackSentenceEndIdx = i;
-        }
-      }
-    }
-
-    let snappedEnd = rawEnd;
-    if (minEndDiff <= 3.5) {
-      const chosenEndIdx =
-        preferredSentenceEndIdx !== null
-          ? preferredSentenceEndIdx
-          : fallbackSentenceEndIdx !== null
-          ? fallbackSentenceEndIdx
-          : endIdx;
-      const endWord = sortedWords[chosenEndIdx];
-
-      // Padding calculation: clamp to at most half the gap to the next word
-      let endPad = 0;
-      if (chosenEndIdx < sortedWords.length - 1) {
-        const nextWord = sortedWords[chosenEndIdx + 1];
-        const gap = Math.max(0, nextWord.start - endWord.end);
-        endPad = Math.min(targetPadding, gap / 2);
-      } else {
-        endPad = targetPadding;
-      }
-
-      snappedEnd = endWord.end + endPad;
-    }
-
-    // --- 3. Validate Boundaries & Constraints ---
+    // Rule: Never move end more than 3s from raw value.
+    // Rule: Prefer sentence-ending words (punctuated words) within range.
+    // Clamp rawEnd to totalDuration exactly
     if (totalDuration && totalDuration > 0) {
-      snappedStart = Math.min(snappedStart, Math.max(0, totalDuration - minDuration));
-      snappedEnd = Math.min(snappedEnd, totalDuration);
+      rawEnd = Math.min(rawEnd, totalDuration);
+    }
+
+    const wordsNearEnd = sortedWords
+      .map((w, idx) => ({ word: w, idx, diff: Math.abs(w.end - rawEnd) }))
+      .filter((item) => item.word.end >= snappedStart && item.diff <= maxShift);
+
+    let chosenEndIdx: number;
+
+    if (wordsNearEnd.length === 0) {
+      // If rawEnd is near totalDuration, clamp directly to totalDuration
+      if (totalDuration && Math.abs(totalDuration - rawEnd) <= maxShift) {
+        chosenEndIdx = sortedWords.length - 1;
+      } else {
+        console.log(
+          `[Stage: Word Snapping] Dropping clip "${clip.title}": no words within ${maxShift}s of rawEnd ${rawEnd.toFixed(2)}s`
+        );
+        return null;
+      }
+    } else {
+      // Prefer sentence ending words within range
+      const sentenceEndCandidates = wordsNearEnd.filter((item) =>
+        SENTENCE_END_REGEX.test(item.word.word.trim())
+      );
+
+      if (sentenceEndCandidates.length > 0) {
+        // Prefer sentence end at or after rawEnd, else closest
+        const afterEnds = sentenceEndCandidates.filter((c) => c.word.end >= rawEnd);
+        if (afterEnds.length > 0) {
+          afterEnds.sort((a, b) => a.word.end - b.word.end); // closest after rawEnd
+          chosenEndIdx = afterEnds[0].idx;
+        } else {
+          sentenceEndCandidates.sort((a, b) => a.diff - b.diff);
+          chosenEndIdx = sentenceEndCandidates[0].idx;
+        }
+      } else {
+        // Nearest word end in range
+        wordsNearEnd.sort((a, b) => a.diff - b.diff);
+        chosenEndIdx = wordsNearEnd[0].idx;
+      }
+    }
+
+    const endWord = sortedWords[chosenEndIdx];
+
+    // Padding calculation: clamp to at most half the gap to the next word
+    let endPad = 0;
+    if (chosenEndIdx < sortedWords.length - 1) {
+      const nextWord = sortedWords[chosenEndIdx + 1];
+      const gap = Math.max(0, nextWord.start - endWord.end);
+      endPad = Math.min(targetPadding, gap / 2);
+    } else {
+      endPad = targetPadding;
+    }
+
+    let snappedEnd = endWord.end + endPad;
+
+    // Hard clamp to totalDuration exactly:
+    // If the clip was requested up to or past totalDuration, snap end directly to totalDuration
+    if (totalDuration && totalDuration > 0) {
+      if (clip.endTime >= totalDuration || rawEnd >= totalDuration) {
+        snappedEnd = totalDuration;
+      } else {
+        snappedEnd = Math.min(snappedEnd, totalDuration);
+      }
+    }
+
+    // Hard clamp: never exceed maxShift (3s) from rawEnd (unless clamped to totalDuration)
+    if (Math.abs(snappedEnd - rawEnd) > maxShift && (!totalDuration || rawEnd < totalDuration)) {
+      snappedEnd = rawEnd < endWord.end ? rawEnd + maxShift : rawEnd - maxShift;
+    }
+
+    // Ensure start < end
+    if (snappedEnd <= snappedStart) {
+      return null;
     }
 
     let clipDuration = snappedEnd - snappedStart;
@@ -255,12 +263,16 @@ export function snapAndValidateClips(
       snappedEnd = snappedStart + maxDuration;
     }
 
+    // Clamp end to totalDuration exactly
+    if (totalDuration && totalDuration > 0) {
+      snappedEnd = Math.min(snappedEnd, totalDuration);
+    }
+
     // Filter words within this clip
     const wordsInClip = sortedWords.filter(
       (w) => w.start >= snappedStart - 0.05 && w.end <= snappedEnd + 0.05
     );
 
-    // Rule: Drop clip if no words fall within the final clip boundary
     if (wordsInClip.length === 0) {
       console.log(
         `[Stage: Word Snapping] Dropping clip "${clip.title}": 0 words found inside [${snappedStart.toFixed(1)}s - ${snappedEnd.toFixed(1)}s]`
@@ -268,23 +280,26 @@ export function snapAndValidateClips(
       return null;
     }
 
+    const finalStart = Number(snappedStart.toFixed(2));
+    const finalEnd = Number(snappedEnd.toFixed(2));
+
     const clipWords = wordsInClip.map((w) => ({
       word: w.word,
-      start: Number((w.start - snappedStart).toFixed(2)),
-      end: Number((w.end - snappedStart).toFixed(2)),
+      start: Number((w.start - finalStart).toFixed(2)),
+      end: Number((w.end - finalStart).toFixed(2)),
     }));
 
     console.log(
-      `[Stage: Word Snapping] Clip #${index + 1} "${clip.title}": raw [${rawStart.toFixed(1)}s - ${rawEnd.toFixed(1)}s] -> snapped [${snappedStart.toFixed(2)}s - ${snappedEnd.toFixed(2)}s] (duration: ${(snappedEnd - snappedStart).toFixed(2)}s)`
+      `[Stage: Word Snapping] Clip #${index + 1} "${clip.title}": raw [${rawStart.toFixed(1)}s - ${rawEnd.toFixed(1)}s] -> snapped [${finalStart.toFixed(2)}s - ${finalEnd.toFixed(2)}s] (duration: ${(finalEnd - finalStart).toFixed(2)}s)`
     );
 
     return {
       ...clip,
       rawStartTime: rawStart,
       rawEndTime: rawEnd,
-      startTime: Number(snappedStart.toFixed(2)),
-      endTime: Number(snappedEnd.toFixed(2)),
-      durationFormatted: formatDuration(snappedEnd - snappedStart),
+      startTime: finalStart,
+      endTime: finalEnd,
+      durationFormatted: formatDuration(finalEnd - finalStart),
       snappedWords: clipWords,
     };
   });
@@ -297,38 +312,60 @@ export function snapAndValidateClips(
     return validCandidates;
   }
 
-  // --- 4. Resolve Overlaps (User requirement: no overlapping clips) ---
-  // Prioritize higher virality score clips
-  const sortedByVirality = [...validCandidates].sort(
-    (a, b) => (b.viralityScore || 0) - (a.viralityScore || 0)
-  );
+  // --- 4. Resolve Overlaps ---
+  // Rule: Clips may not overlap by more than 0.5s: trim the later clip's start or drop it.
+  // Sort candidates chronologically
+  validCandidates.sort((a, b) => a.startTime - b.startTime);
 
   const nonOverlapping: SnappedClipResult[] = [];
 
-  for (const candidate of sortedByVirality) {
-    const isOverlapping = nonOverlapping.some((accepted) => {
-      const overlapStart = Math.max(candidate.startTime, accepted.startTime);
-      const overlapEnd = Math.min(candidate.endTime, accepted.endTime);
-      if (overlapEnd > overlapStart) {
-        const overlapDuration = overlapEnd - overlapStart;
-        const candidateDuration = candidate.endTime - candidate.startTime;
-        // Overlapping more than 3s or 20% of duration is rejected
-        return overlapDuration > 3.0 || overlapDuration / candidateDuration > 0.2;
-      }
-      return false;
-    });
+  for (let i = 0; i < validCandidates.length; i++) {
+    const current = validCandidates[i];
+    if (nonOverlapping.length === 0) {
+      nonOverlapping.push(current);
+      continue;
+    }
 
-    if (!isOverlapping) {
-      nonOverlapping.push(candidate);
+    const prev = nonOverlapping[nonOverlapping.length - 1];
+    const overlapDuration = Number((prev.endTime - current.startTime).toFixed(2));
+
+    if (overlapDuration > 0.5) {
+      // Overlap exceeds 0.5s -> Trim later clip's start to prev.endTime
+      const trimmedStart = Number(prev.endTime.toFixed(2));
+      const remainingDuration = Number((current.endTime - trimmedStart).toFixed(2));
+
+      if (remainingDuration >= minDuration) {
+        // Re-filter words within trimmed bounds
+        const trimmedWords = sortedWords.filter(
+          (w) => w.start >= trimmedStart - 0.05 && w.end <= current.endTime + 0.05
+        );
+
+        if (trimmedWords.length > 0) {
+          console.log(
+            `[Stage: Word Snapping] Overlap ${overlapDuration.toFixed(2)}s > 0.5s: Trimmed "${current.title}" start from ${current.startTime}s to ${trimmedStart}s (new duration: ${remainingDuration.toFixed(2)}s)`
+          );
+          current.startTime = trimmedStart;
+          current.snappedWords = trimmedWords.map((w) => ({
+            word: w.word,
+            start: Number((w.start - trimmedStart).toFixed(2)),
+            end: Number((w.end - trimmedStart).toFixed(2)),
+          }));
+          current.durationFormatted = formatDuration(remainingDuration);
+          nonOverlapping.push(current);
+        } else {
+          console.log(
+            `[Stage: Word Snapping] Dropping overlapping clip: "${current.title}" [${current.startTime}s - ${current.endTime}s] (0 words after trim)`
+          );
+        }
+      } else {
+        console.log(
+          `[Stage: Word Snapping] Dropping overlapping clip: "${current.title}" [${current.startTime}s - ${current.endTime}s] (remaining ${remainingDuration.toFixed(2)}s < min ${minDuration}s)`
+        );
+      }
     } else {
-      console.log(
-        `[Stage: Word Snapping] Dropping overlapping clip: "${candidate.title}" [${candidate.startTime}s - ${candidate.endTime}s] due to conflict with higher-scoring clip`
-      );
+      nonOverlapping.push(current);
     }
   }
-
-  // Re-sort chronologically for user presentation
-  nonOverlapping.sort((a, b) => a.startTime - b.startTime);
 
   return nonOverlapping;
 }
