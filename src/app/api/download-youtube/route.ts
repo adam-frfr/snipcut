@@ -3,6 +3,7 @@ import { exec } from "child_process";
 import path from "path";
 import fs from "fs";
 import util from "util";
+import os from "os";
 
 const execPromise = util.promisify(exec);
 
@@ -104,8 +105,11 @@ function parseVttToTranscript(vttContent: string) {
 }
 
 export async function POST(req: NextRequest) {
+  let tempCookiePath: string | null = null;
+
   try {
-    const { url } = await req.json();
+    const body = await req.json();
+    const { url, cookies, proxy } = body;
 
     if (!url) {
       return NextResponse.json({ error: "YouTube URL is required" }, { status: 400 });
@@ -158,40 +162,47 @@ export async function POST(req: NextRequest) {
     const ytDlp = getYtDlpCommand();
     const binDir = path.join(process.cwd(), "bin");
 
-    // 1. Download video & write English subtitles with Android/mweb client extractor args
-    // to bypass YouTube datacenter bot detection
-    const primaryCmd = `${ytDlp} --ffmpeg-location "${binDir}" --extractor-args "youtube:player_client=android,mweb,web" -f "bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4]/best" --no-warnings --ignore-errors --write-sub --write-auto-sub --sub-lang "en.*,en-orig,en" --convert-subs vtt --merge-output-format mp4 -o "${outputTemplate}" "${url}"`;
+    // Cookie configuration (from request body, env var, or local file)
+    let cookieArg = "";
+    const rawCookies = cookies || process.env.YOUTUBE_COOKIES || "";
+    const localCookieFile = path.join(process.cwd(), "cookies.txt");
 
-    try {
-      await execPromise(primaryCmd, { timeout: 240000 });
-    } catch (primaryErr: any) {
-      console.warn("Primary yt-dlp attempt failed, trying fallback client:", primaryErr?.message);
-      
-      const fallbackCmd = `${ytDlp} --ffmpeg-location "${binDir}" --extractor-args "youtube:player_client=ios,android" -f "bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4]/best" --no-warnings --ignore-errors --merge-output-format mp4 -o "${outputTemplate}" "${url}"`;
-      
+    if (rawCookies && rawCookies.trim().length > 10) {
+      tempCookiePath = path.join(os.tmpdir(), `yt-cookies-${Date.now()}.txt`);
+      fs.writeFileSync(tempCookiePath, rawCookies.trim(), "utf-8");
+      cookieArg = `--cookies "${tempCookiePath}"`;
+    } else if (fs.existsSync(localCookieFile)) {
+      cookieArg = `--cookies "${localCookieFile}"`;
+    }
+
+    // Proxy configuration (from request body or env var)
+    let proxyArg = "";
+    const activeProxy = proxy || process.env.YOUTUBE_PROXY || process.env.HTTP_PROXY || "";
+    if (activeProxy && activeProxy.trim().length > 5) {
+      proxyArg = `--proxy "${activeProxy.trim()}"`;
+    }
+
+    // Multi-tier download strategies
+    // Strategy 1: JS runtime enabled + VisionOS & iOS clients (most effective against datacenter bot walls)
+    const strategy1 = `${ytDlp} --js-runtimes node --ffmpeg-location "${binDir}" ${cookieArg} ${proxyArg} --extractor-args "youtube:player_client=visionos,ios,mweb" -f "bestvideo[height<=720]+bestaudio/best[height<=720]/best" --no-warnings --ignore-errors --merge-output-format mp4 -o "${outputTemplate}" "${url}"`;
+
+    // Strategy 2: JS runtime enabled + iOS & Android clients
+    const strategy2 = `${ytDlp} --js-runtimes node --ffmpeg-location "${binDir}" ${cookieArg} ${proxyArg} --extractor-args "youtube:player_client=ios,android" -f "bestvideo[height<=720]+bestaudio/best[height<=720]/best" --no-warnings --ignore-errors --merge-output-format mp4 -o "${outputTemplate}" "${url}"`;
+
+    // Strategy 3: Standard client with fallback format
+    const strategy3 = `${ytDlp} --js-runtimes node --ffmpeg-location "${binDir}" ${cookieArg} ${proxyArg} -f "best[height<=720]/best" --no-warnings --ignore-errors --merge-output-format mp4 -o "${outputTemplate}" "${url}"`;
+
+    let downloadSucceeded = false;
+    let lastError: any = null;
+
+    for (const cmd of [strategy1, strategy2, strategy3]) {
       try {
-        await execPromise(fallbackCmd, { timeout: 240000 });
-      } catch (fallbackErr: any) {
-        const errorMsg = fallbackErr?.message || primaryErr?.message || "";
-        const isBotBlocked =
-          errorMsg.includes("Sign in to confirm you're not a bot") ||
-          errorMsg.includes("bot") ||
-          errorMsg.includes("cookies") ||
-          errorMsg.includes("429");
-
-        if (isBotBlocked) {
-          return NextResponse.json(
-            {
-              error:
-                "YouTube has bot-checked this cloud server IP for that specific video. Please upload your video file directly (drag & drop below) or click 'Try Demo Video' to test immediately!",
-              isBotBlocked: true,
-              suggestion: "upload_direct",
-            },
-            { status: 422 }
-          );
-        }
-
-        throw fallbackErr;
+        await execPromise(cmd, { timeout: 240000 });
+        downloadSucceeded = true;
+        break;
+      } catch (err: any) {
+        lastError = err;
+        console.warn("yt-dlp strategy attempt failed:", err?.message);
       }
     }
 
@@ -207,34 +218,52 @@ export async function POST(req: NextRequest) {
       if (vidFile) {
         videoFilename = vidFile;
         fullVideoPath = path.join(downloadDir, videoFilename);
+        downloadSucceeded = true;
       }
     }
 
-    if (!fs.existsSync(fullVideoPath)) {
+    if (!downloadSucceeded || !fs.existsSync(fullVideoPath)) {
+      const errMsg = lastError?.message || "";
+      const isBotBlocked =
+        errMsg.includes("Sign in to confirm you're not a bot") ||
+        errMsg.includes("bot") ||
+        errMsg.includes("cookies") ||
+        errMsg.includes("429") ||
+        errMsg.includes("403");
+
       return NextResponse.json(
         {
-          error:
-            "Video stream was blocked or unavailable on YouTube. Please upload your video file directly or use a sample clip.",
+          error: isBotBlocked
+            ? "YouTube has bot-checked this cloud server IP for this video. You can upload the video file directly (drag & drop below) or add YouTube cookies in API Settings."
+            : "Video download failed. Please upload your video file directly or try another link.",
           isBotBlocked: true,
+          suggestion: "upload_direct",
         },
         { status: 422 }
       );
     }
 
-    // Look for downloaded vtt subtitle
+    // Attempt separate non-blocking subtitle download
     let transcriptText = "";
     let transcriptSegments: { start: number; end: number; text: string }[] = [];
     let transcriptWords: { word: string; start: number; end: number }[] = [];
 
-    const files = fs.readdirSync(downloadDir);
-    const subtitleFile = files.find((f) => f.startsWith(filePrefix) && f.endsWith(".vtt"));
-    if (subtitleFile) {
-      const vttPath = path.join(downloadDir, subtitleFile);
-      const vttContent = fs.readFileSync(vttPath, "utf-8");
-      const parsed = parseVttToTranscript(vttContent);
-      transcriptText = parsed.transcriptText;
-      transcriptSegments = parsed.segments;
-      transcriptWords = parsed.words;
+    try {
+      const subCmd = `${ytDlp} --js-runtimes node ${cookieArg} ${proxyArg} --skip-download --write-auto-sub --sub-lang "en.*,en" --convert-subs vtt -o "${outputTemplate}" "${url}"`;
+      await execPromise(subCmd, { timeout: 45000 });
+
+      const files = fs.readdirSync(downloadDir);
+      const subtitleFile = files.find((f) => f.startsWith(filePrefix) && f.endsWith(".vtt"));
+      if (subtitleFile) {
+        const vttPath = path.join(downloadDir, subtitleFile);
+        const vttContent = fs.readFileSync(vttPath, "utf-8");
+        const parsed = parseVttToTranscript(vttContent);
+        transcriptText = parsed.transcriptText;
+        transcriptSegments = parsed.segments;
+        transcriptWords = parsed.words;
+      }
+    } catch (subErr) {
+      console.warn("Subtitles could not be auto-extracted, falling back to Whisper AI transcription:", subErr);
     }
 
     return NextResponse.json({
@@ -252,10 +281,16 @@ export async function POST(req: NextRequest) {
       {
         error:
           err?.message ||
-          "Failed to download YouTube video. Cloud datacenter IP may be restricted. Please upload your MP4 file directly.",
+          "Failed to download YouTube video. Please upload your MP4 file directly.",
         isBotBlocked: true,
       },
       { status: 500 }
     );
+  } finally {
+    if (tempCookiePath && fs.existsSync(tempCookiePath)) {
+      try {
+        fs.unlinkSync(tempCookiePath);
+      } catch (e) {}
+    }
   }
 }

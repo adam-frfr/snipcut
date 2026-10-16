@@ -286,10 +286,14 @@ function DashboardContent() {
       // Stage 1: Download YouTube URL if URL was provided
       if (url && !resolvedFilePath) {
         setProcessingStage("Downloading video stream with yt-dlp...");
+        const storedCookies =
+          typeof window !== "undefined" ? localStorage.getItem("opus_youtube_cookies") || "" : "";
+        const storedProxy =
+          typeof window !== "undefined" ? localStorage.getItem("opus_youtube_proxy") || "" : "";
         const ytRes = await fetch("/api/download-youtube", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url }),
+          body: JSON.stringify({ url, cookies: storedCookies, proxy: storedProxy }),
         });
         const ytData = await ytRes.json();
         if (!ytRes.ok || ytData.error) {
@@ -611,6 +615,15 @@ function DashboardContent() {
                 className="px-3 py-1.5 bg-white hover:bg-[#FFC700] border-2 border-black font-black text-xs uppercase shadow-[2px_2px_0px_#000000] transition cursor-pointer"
               >
                 Upload File Directly
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setSettingsOpen(true);
+                }}
+                className="px-3 py-1.5 bg-white hover:bg-[#FFC700] border-2 border-black font-black text-xs uppercase shadow-[2px_2px_0px_#000000] transition cursor-pointer"
+              >
+                Add Cookies (Bypass)
               </button>
               <button
                 type="button"

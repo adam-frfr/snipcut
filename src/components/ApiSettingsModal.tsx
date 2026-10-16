@@ -20,6 +20,8 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
   const [openaiKey, setOpenaiKey] = useState("");
   const [claudeKey, setClaudeKey] = useState("");
   const [preferredModel, setPreferredModel] = useState<"claude-3-5-haiku" | "gpt-4o-mini" | "claude-3-5-sonnet">("claude-3-5-haiku");
+  const [youtubeCookies, setYoutubeCookies] = useState("");
+  const [youtubeProxy, setYoutubeProxy] = useState("");
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<{
     openai?: { valid: boolean; message: string };
@@ -32,11 +34,15 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
       let storedOpenai = "";
       let storedClaude = "";
       let storedModel = "claude-3-5-haiku";
+      let storedCookies = "";
+      let storedProxy = "";
 
       if (typeof window !== "undefined") {
         storedOpenai = localStorage.getItem("opus_openai_key") || "";
         storedClaude = localStorage.getItem("opus_claude_key") || "";
         storedModel = (localStorage.getItem("opus_preferred_model") as any) || "claude-3-5-haiku";
+        storedCookies = localStorage.getItem("opus_youtube_cookies") || "";
+        storedProxy = localStorage.getItem("opus_youtube_proxy") || "";
       }
 
       if (!storedOpenai || !storedClaude) {
@@ -57,6 +63,8 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
       setOpenaiKey(storedOpenai);
       setClaudeKey(storedClaude);
       setPreferredModel(storedModel as any);
+      setYoutubeCookies(storedCookies);
+      setYoutubeProxy(storedProxy);
     }
 
     loadConfig();
@@ -69,6 +77,8 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
       localStorage.setItem("opus_openai_key", openaiKey.trim());
       localStorage.setItem("opus_claude_key", claudeKey.trim());
       localStorage.setItem("opus_preferred_model", preferredModel);
+      localStorage.setItem("opus_youtube_cookies", youtubeCookies.trim());
+      localStorage.setItem("opus_youtube_proxy", youtubeProxy.trim());
     }
     setSaveSuccess(true);
     setTimeout(() => {
@@ -189,6 +199,36 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
                 </button>
               ))}
             </div>
+          </div>
+
+          {/* YouTube Cloud Bot Bypass Section */}
+          <div className="pt-2 border-t-2 border-black/20">
+            <label className="block text-xs font-black uppercase text-black mb-1">
+              YouTube Cloud Bypass (Optional Cookies)
+            </label>
+            <p className="text-[10px] text-[#555555] font-bold mb-1.5 leading-snug">
+              Bypasses YouTube bot-checks on Render cloud servers. Paste cookies from extension "Get cookies.txt LOCALLY".
+            </p>
+            <textarea
+              rows={2}
+              value={youtubeCookies}
+              onChange={(e) => setYoutubeCookies(e.target.value)}
+              placeholder="Paste cookies.txt contents here..."
+              className="w-full neo-input py-2 px-3 text-[10px] font-mono leading-tight resize-none"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-black uppercase text-black mb-1">
+              YouTube Proxy (Optional)
+            </label>
+            <input
+              type="text"
+              value={youtubeProxy}
+              onChange={(e) => setYoutubeProxy(e.target.value)}
+              placeholder="http://user:pass@proxy.example.com:8080"
+              className="w-full neo-input py-2 px-3 text-xs font-mono"
+            />
           </div>
         </div>
 
