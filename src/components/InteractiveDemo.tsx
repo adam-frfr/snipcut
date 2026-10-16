@@ -63,21 +63,17 @@ export default function InteractiveDemo() {
   }, [isPlaying, words.length]);
 
   return (
-    <section id="interactive-demo" className="py-24 relative overflow-hidden bg-[#0A0C14] border-t border-b border-white/[0.08]">
-      {/* Background glow */}
-      <div className="absolute top-1/2 left-1/3 -translate-y-1/2 w-96 h-96 bg-purple-600/10 blur-[130px] rounded-full pointer-events-none" />
-      <div className="absolute bottom-10 right-10 w-80 h-80 bg-cyan-600/10 blur-[120px] rounded-full pointer-events-none" />
-
+    <section id="interactive-demo" className="py-20 relative overflow-hidden bg-[#F5EFEB] border-t border-b border-[#E8DDD2] text-[#2B1D16]">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="text-center max-w-3xl mx-auto mb-16">
-          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-purple-500/10 border border-purple-500/20 text-xs font-semibold text-purple-300 mb-4">
-            <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+        <div className="text-center max-w-3xl mx-auto mb-14">
+          <div className="inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-[#EAE1D7] border border-[#DDD3C7] text-xs font-bold text-[#2B1D16] mb-4">
+            <Sparkles className="w-3.5 h-3.5 text-[#C87A47]" />
             <span>Interactive Live Product Simulator</span>
           </div>
-          <h2 className="text-3xl sm:text-5xl font-extrabold text-white tracking-tight">
-            See the Magic of <span className="gradient-text-purple">Reframe & Captions</span>
+          <h2 className="text-3xl sm:text-5xl font-extrabold text-[#2B1D16] tracking-tight">
+            See the Magic of <span className="text-[#C87A47]">Reframe & Captions</span>
           </h2>
-          <p className="mt-4 text-zinc-400 text-base sm:text-lg">
+          <p className="mt-4 text-[#7A695F] text-base sm:text-lg">
             Experience how OpusClip automatically isolates speakers, reframes into vertical 9:16, generates viral karaoke subtitles, and calculates the Virality Score™.
           </p>
         </div>
@@ -85,29 +81,29 @@ export default function InteractiveDemo() {
         {/* Main Interactive Demo Container */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
           {/* Left Controls & Virality Breakdown */}
-          <div className="lg:col-span-4 space-y-5 order-2 lg:order-1">
+          <div className="lg:col-span-4 space-y-4 order-2 lg:order-1">
             {/* View Mode Toggle */}
-            <div className="glass-panel p-4 rounded-2xl">
-              <label className="text-xs font-semibold text-zinc-400 uppercase tracking-wider block mb-2.5">
+            <div className="bg-white p-5 rounded-[28px] border border-[#E8DDD2] shadow-sm">
+              <label className="text-xs font-extrabold text-[#2B1D16] uppercase tracking-wider block mb-2.5">
                 Display Mode
               </label>
-              <div className="grid grid-cols-2 gap-2 bg-black/40 p-1 rounded-xl border border-white/[0.08]">
+              <div className="grid grid-cols-2 gap-1 bg-[#EAE1D7] p-1 rounded-full border border-[#DDD3C7]">
                 <button
                   onClick={() => setActiveTab("reframe")}
-                  className={`py-2 text-xs font-bold rounded-lg transition-all ${
+                  className={`py-2 text-xs font-bold rounded-full transition-all ${
                     activeTab === "reframe"
-                      ? "bg-purple-600 text-white shadow-lg shadow-purple-600/30"
-                      : "text-zinc-400 hover:text-white"
+                      ? "bg-[#2B1D16] text-white shadow-sm"
+                      : "text-[#7A695F] hover:text-[#2B1D16]"
                   }`}
                 >
                   9:16 AI Reframe
                 </button>
                 <button
                   onClick={() => setActiveTab("raw")}
-                  className={`py-2 text-xs font-bold rounded-lg transition-all ${
+                  className={`py-2 text-xs font-bold rounded-full transition-all ${
                     activeTab === "raw"
-                      ? "bg-purple-600 text-white shadow-lg shadow-purple-600/30"
-                      : "text-zinc-400 hover:text-white"
+                      ? "bg-[#2B1D16] text-white shadow-sm"
+                      : "text-[#7A695F] hover:text-[#2B1D16]"
                   }`}
                 >
                   16:9 Raw Source
@@ -116,55 +112,55 @@ export default function InteractiveDemo() {
             </div>
 
             {/* Dynamic Captions Preset Picker */}
-            <div className="glass-panel p-4 rounded-2xl">
+            <div className="bg-white p-5 rounded-[28px] border border-[#E8DDD2] shadow-sm">
               <div className="flex items-center justify-between mb-2.5">
-                <label className="text-xs font-semibold text-zinc-400 uppercase tracking-wider flex items-center gap-1.5">
-                  <Type className="w-3.5 h-3.5 text-purple-400" />
+                <label className="text-xs font-extrabold text-[#2B1D16] uppercase tracking-wider flex items-center gap-1.5">
+                  <Type className="w-3.5 h-3.5 text-[#C87A47]" />
                   <span>Dynamic Caption Style</span>
                 </label>
-                <span className="text-[11px] text-purple-300 font-semibold">97%+ Accuracy</span>
+                <span className="text-[11px] text-[#3A7D44] font-bold">97%+ Accuracy</span>
               </div>
               <div className="grid grid-cols-2 gap-2">
                 {CAPTION_PRESETS.map((preset) => (
                   <button
                     key={preset.id}
                     onClick={() => setSelectedStyle(preset.id)}
-                    className={`p-2.5 rounded-xl border text-left transition-all ${
+                    className={`p-2.5 rounded-2xl border text-left transition-all ${
                       selectedStyle === preset.id
-                        ? "bg-purple-950/40 border-purple-500 text-white ring-1 ring-purple-500 shadow-lg shadow-purple-900/20"
-                        : "bg-white/[0.03] border-white/[0.08] text-zinc-400 hover:bg-white/[0.06] hover:text-white"
+                        ? "bg-[#2B1D16] border-[#2B1D16] text-white shadow-sm"
+                        : "bg-[#FAF6F1] border-[#E8DDD2] text-[#7A695F] hover:bg-white hover:text-[#2B1D16]"
                     }`}
                   >
                     <div className="text-xs font-bold flex items-center justify-between">
                       <span>{preset.name}</span>
-                      {selectedStyle === preset.id && <Check className="w-3.5 h-3.5 text-purple-400" />}
+                      {selectedStyle === preset.id && <Check className="w-3.5 h-3.5 text-[#C87A47]" />}
                     </div>
-                    <div className="text-[10px] text-zinc-500 mt-0.5 truncate">{preset.desc}</div>
+                    <div className={`text-[10px] mt-0.5 truncate ${selectedStyle === preset.id ? "text-[#DDD3C7]" : "text-[#A09085]"}`}>{preset.desc}</div>
                   </button>
                 ))}
               </div>
             </div>
 
             {/* Auto Toggles: Emojis, B-Roll, Speaker Layout */}
-            <div className="glass-panel p-4 rounded-2xl space-y-3">
-              <label className="text-xs font-semibold text-zinc-400 uppercase tracking-wider block">
+            <div className="bg-white p-5 rounded-[28px] border border-[#E8DDD2] shadow-sm space-y-3">
+              <label className="text-xs font-extrabold text-[#2B1D16] uppercase tracking-wider block">
                 AI Video Enhancers
               </label>
 
               {/* Auto Emojis */}
-              <div className="flex items-center justify-between p-2 rounded-xl bg-white/[0.02] border border-white/[0.05]">
+              <div className="flex items-center justify-between p-2.5 rounded-2xl bg-[#FAF6F1] border border-[#E8DDD2]">
                 <div className="flex items-center gap-2">
-                  <Smile className="w-4 h-4 text-amber-400" />
-                  <span className="text-xs font-medium text-white">Auto-Highlight & Emojis</span>
+                  <Smile className="w-4 h-4 text-[#C87A47]" />
+                  <span className="text-xs font-bold text-[#2B1D16]">Auto-Highlight & Emojis</span>
                 </div>
                 <button
                   onClick={() => setShowEmojis(!showEmojis)}
                   className={`w-10 h-5 rounded-full transition-colors relative ${
-                    showEmojis ? "bg-purple-600" : "bg-zinc-700"
+                    showEmojis ? "bg-[#C87A47]" : "bg-[#DDD3C7]"
                   }`}
                 >
                   <div
-                    className={`w-3.5 h-3.5 bg-white rounded-full transition-transform absolute top-0.5 ${
+                    className={`w-3.5 h-3.5 bg-white rounded-full transition-transform absolute top-0.75 ${
                       showEmojis ? "right-1" : "left-1"
                     }`}
                   />
@@ -172,19 +168,19 @@ export default function InteractiveDemo() {
               </div>
 
               {/* AI B-Roll */}
-              <div className="flex items-center justify-between p-2 rounded-xl bg-white/[0.02] border border-white/[0.05]">
+              <div className="flex items-center justify-between p-2.5 rounded-2xl bg-[#FAF6F1] border border-[#E8DDD2]">
                 <div className="flex items-center gap-2">
-                  <Layers className="w-4 h-4 text-cyan-400" />
-                  <span className="text-xs font-medium text-white">Contextual AI B-Roll Cutaway</span>
+                  <Layers className="w-4 h-4 text-[#3A7D44]" />
+                  <span className="text-xs font-bold text-[#2B1D16]">Contextual AI B-Roll Cutaway</span>
                 </div>
                 <button
                   onClick={() => setShowBRoll(!showBRoll)}
                   className={`w-10 h-5 rounded-full transition-colors relative ${
-                    showBRoll ? "bg-purple-600" : "bg-zinc-700"
+                    showBRoll ? "bg-[#C87A47]" : "bg-[#DDD3C7]"
                   }`}
                 >
                   <div
-                    className={`w-3.5 h-3.5 bg-white rounded-full transition-transform absolute top-0.5 ${
+                    className={`w-3.5 h-3.5 bg-white rounded-full transition-transform absolute top-0.75 ${
                       showBRoll ? "right-1" : "left-1"
                     }`}
                   />
@@ -192,24 +188,24 @@ export default function InteractiveDemo() {
               </div>
 
               {/* Speaker Tracking Layout */}
-              <div className="flex items-center justify-between p-2 rounded-xl bg-white/[0.02] border border-white/[0.05]">
+              <div className="flex items-center justify-between p-2.5 rounded-2xl bg-[#FAF6F1] border border-[#E8DDD2]">
                 <div className="flex items-center gap-2">
-                  <UserCheck className="w-4 h-4 text-emerald-400" />
-                  <span className="text-xs font-medium text-white">Speaker Layout</span>
+                  <UserCheck className="w-4 h-4 text-[#2B1D16]" />
+                  <span className="text-xs font-bold text-[#2B1D16]">Speaker Layout</span>
                 </div>
-                <div className="flex gap-1 bg-black/40 p-0.5 rounded-lg border border-white/[0.08]">
+                <div className="flex gap-1 bg-[#EAE1D7] p-0.5 rounded-full border border-[#DDD3C7]">
                   <button
                     onClick={() => setSpeakerMode("split")}
-                    className={`px-2 py-0.5 text-[11px] rounded font-semibold ${
-                      speakerMode === "split" ? "bg-purple-600 text-white" : "text-zinc-400"
+                    className={`px-3 py-1 text-[11px] rounded-full font-bold transition-all ${
+                      speakerMode === "split" ? "bg-[#2B1D16] text-white shadow-sm" : "text-[#7A695F]"
                     }`}
                   >
                     Split
                   </button>
                   <button
                     onClick={() => setSpeakerMode("single")}
-                    className={`px-2 py-0.5 text-[11px] rounded font-semibold ${
-                      speakerMode === "single" ? "bg-purple-600 text-white" : "text-zinc-400"
+                    className={`px-3 py-1 text-[11px] rounded-full font-bold transition-all ${
+                      speakerMode === "single" ? "bg-[#2B1D16] text-white shadow-sm" : "text-[#7A695F]"
                     }`}
                   >
                     1-Face
@@ -219,41 +215,41 @@ export default function InteractiveDemo() {
             </div>
 
             {/* Virality Score Card */}
-            <div className="glass-panel p-4 rounded-2xl border-emerald-500/20 bg-emerald-950/10">
+            <div className="bg-white p-5 rounded-[28px] border border-[#E8DDD2] shadow-sm">
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-2">
-                  <div className="p-1.5 rounded-lg bg-emerald-500/20 text-emerald-400">
+                  <div className="p-1.5 rounded-xl bg-[#FAF6F1] text-[#3A7D44]">
                     <TrendingUp className="w-4 h-4" />
                   </div>
                   <div>
-                    <div className="text-xs font-bold text-white">AI Virality Score™</div>
-                    <div className="text-[10px] text-zinc-400">Estimated Viral Potential</div>
+                    <div className="text-xs font-bold text-[#2B1D16]">AI Virality Score™</div>
+                    <div className="text-[10px] text-[#7A695F]">Estimated Viral Potential</div>
                   </div>
                 </div>
                 <div className="flex items-baseline gap-1">
-                  <span className="text-2xl font-black text-emerald-400">98</span>
-                  <span className="text-xs text-zinc-500 font-bold">/100</span>
+                  <span className="text-2xl font-black text-[#3A7D44]">98</span>
+                  <span className="text-xs text-[#A09085] font-bold">/100</span>
                 </div>
               </div>
-              <div className="w-full bg-white/[0.08] h-2 rounded-full overflow-hidden mb-2">
-                <div className="bg-gradient-to-r from-emerald-500 to-cyan-400 h-full rounded-full w-[98%]" />
+              <div className="w-full bg-[#EAE1D7] h-2 rounded-full overflow-hidden mb-2">
+                <div className="bg-[#3A7D44] h-full rounded-full w-[98%]" />
               </div>
-              <p className="text-[11px] text-zinc-300 leading-relaxed">
-                <span className="text-emerald-400 font-semibold">Why it will go viral:</span> Immediate high-stakes contrarian statement in the first 3 seconds with high retention pacing.
+              <p className="text-[11px] text-[#7A695F] leading-relaxed">
+                <span className="text-[#3A7D44] font-bold">Why it will go viral:</span> Immediate high-stakes contrarian statement in the first 3 seconds with high retention pacing.
               </p>
             </div>
           </div>
 
           {/* Right Video Canvas Viewport */}
           <div className="lg:col-span-8 flex flex-col items-center justify-center order-1 lg:order-2">
-            <div className="relative p-2.5 rounded-3xl glass-panel-glow border border-white/[0.15] shadow-2xl">
+            <div className="relative p-3.5 rounded-[32px] bg-white border border-[#E8DDD2] shadow-md">
               {/* Vertical 9:16 Mock Phone / Short Viewport */}
               {activeTab === "reframe" ? (
-                <div className="relative w-[280px] sm:w-[320px] md:w-[350px] h-[520px] sm:h-[580px] bg-black rounded-2xl overflow-hidden shadow-2xl border border-white/[0.1] flex flex-col">
+                <div className="relative w-[280px] sm:w-[320px] md:w-[350px] h-[520px] sm:h-[580px] bg-[#1C130E] rounded-[24px] overflow-hidden shadow-xl border border-[#E8DDD2] flex flex-col">
                   {/* Top Bar Overlay */}
-                  <div className="absolute top-0 left-0 right-0 z-30 p-3 flex items-center justify-between bg-gradient-to-b from-black/80 to-transparent">
-                    <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-black/60 backdrop-blur-md border border-white/[0.1] text-[10px] text-white font-bold">
-                      <Flame className="w-3 h-3 text-amber-400 fill-amber-400" />
+                  <div className="absolute top-0 left-0 right-0 z-30 p-3 flex items-center justify-between bg-black/60">
+                    <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-black/60 backdrop-blur-md border border-white/20 text-[10px] text-white font-bold">
+                      <Flame className="w-3 h-3 text-[#3A7D44] fill-[#3A7D44]" />
                       <span>98 Virality Score</span>
                     </div>
                     <div className="flex items-center gap-2">
@@ -440,7 +436,7 @@ export default function InteractiveDemo() {
                     </p>
                     <button
                       onClick={() => setActiveTab("reframe")}
-                      className="mt-4 px-4 py-2 rounded-xl btn-primary-gradient text-xs font-bold text-white shadow"
+                      className="mt-4 px-6 py-2.5 rounded-full bg-[#C87A47] hover:bg-[#B66D3D] text-xs font-bold text-white shadow-md shadow-[#C87A47]/20 transition-all cursor-pointer"
                     >
                       Convert to 9:16 Viral Short
                     </button>

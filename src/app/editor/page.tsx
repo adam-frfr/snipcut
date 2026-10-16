@@ -187,40 +187,40 @@ function EditorContent() {
   };
 
   return (
-    <div className="min-h-screen bg-[#07080D] text-white flex flex-col h-screen overflow-hidden">
+    <div className="min-h-screen bg-[#F5EFEB] text-[#2B1D16] flex flex-col h-screen overflow-hidden">
       {/* Top Header */}
-      <header className="h-14 bg-[#090A10] border-b border-white/[0.08] px-4 flex items-center justify-between flex-shrink-0 z-30">
-        <div className="flex items-center gap-4">
+      <header className="h-14 bg-white border-b border-[#E8DDD2] px-4 flex items-center justify-between flex-shrink-0 z-30 shadow-sm">
+        <div className="flex items-center gap-3.5">
           <Link
             href="/dashboard"
-            className="p-1.5 rounded-lg bg-white/[0.05] hover:bg-white/[0.1] text-zinc-300 hover:text-white transition-colors"
+            className="p-1.5 rounded-full bg-[#FAF6F1] hover:bg-[#EAE1D7] text-[#2B1D16] border border-[#E8DDD2] transition-colors"
           >
             <ArrowLeft className="w-4 h-4" />
           </Link>
 
           <div className="flex items-center gap-2">
-            <span className="font-extrabold text-sm tracking-tight text-white">Opus Clip Studio</span>
-            <span className="text-[10px] bg-purple-500/20 text-purple-300 px-2 py-0.5 rounded font-mono">
+            <span className="font-extrabold text-sm tracking-tight text-[#2B1D16]">Opus Clip Studio</span>
+            <span className="text-[10px] bg-[#EAE1D7] text-[#2B1D16] px-2 py-0.5 rounded-full font-bold">
               Editor 2.0
             </span>
           </div>
 
-          <span className="text-zinc-600">|</span>
+          <span className="text-[#DDD3C7]">|</span>
 
-          <span className="text-xs font-semibold text-zinc-300 truncate max-w-xs">
+          <span className="text-xs font-bold text-[#7A695F] truncate max-w-xs">
             {clip.title}
           </span>
         </div>
 
-        <div className="flex items-center gap-3">
-          <div className="hidden sm:flex items-center gap-1.5 px-3 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-xs font-bold text-emerald-400">
-            <Flame className="w-3.5 h-3.5 fill-emerald-400" />
+        <div className="flex items-center gap-2.5">
+          <div className="hidden sm:flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#FAF6F1] border border-[#E8DDD2] text-xs font-bold text-[#3A7D44]">
+            <Flame className="w-3.5 h-3.5 fill-[#3A7D44]" />
             <span>Virality Score: {clip.viralityScore}/100</span>
           </div>
 
           <button
             onClick={() => setShowExportModal(true)}
-            className="btn-primary-gradient px-4 py-1.5 rounded-xl font-bold text-xs text-white flex items-center gap-1.5 shadow-lg shadow-purple-600/30 cursor-pointer"
+            className="bg-[#C87A47] hover:bg-[#B66D3D] px-4 py-1.5 rounded-full font-bold text-xs text-white flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
           >
             <Download className="w-3.5 h-3.5" />
             <span>Export Clip (1080p)</span>
@@ -231,11 +231,11 @@ function EditorContent() {
       {/* Main 3-Column Editor Layout */}
       <div className="flex-1 flex overflow-hidden">
         {/* Column 1: Subtitles & Layout Controls Panel */}
-        <aside className="w-80 bg-[#090A12] border-r border-white/[0.08] p-4 overflow-y-auto space-y-5 flex-shrink-0">
+        <aside className="w-80 bg-white border-r border-[#E8DDD2] p-4 overflow-y-auto space-y-5 flex-shrink-0">
           {/* Subtitle Preset Selector */}
           <div>
-            <label className="text-xs font-bold text-zinc-400 uppercase tracking-wider block mb-2.5 flex items-center gap-1.5">
-              <Type className="w-3.5 h-3.5 text-purple-400" />
+            <label className="text-xs font-extrabold text-[#2B1D16] uppercase tracking-wider block mb-2.5 flex items-center gap-1.5">
+              <Type className="w-3.5 h-3.5 text-[#C87A47]" />
               <span>Subtitle Style Presets</span>
             </label>
             <div className="grid grid-cols-2 gap-2">
@@ -247,15 +247,15 @@ function EditorContent() {
                     setHighlightColor(preset.highlightColor);
                     setIsUppercase(preset.uppercase);
                   }}
-                  className={`p-2.5 rounded-xl border text-left transition-all ${
+                  className={`p-2.5 rounded-2xl border text-left transition-all ${
                     captionStyle === preset.id
-                      ? "bg-purple-950/40 border-purple-500 ring-1 ring-purple-500 shadow-md text-white"
-                      : "bg-white/[0.02] border-white/[0.08] text-zinc-400 hover:bg-white/[0.05]"
+                      ? "bg-[#2B1D16] border-[#2B1D16] text-white shadow-sm"
+                      : "bg-[#FAF6F1] border-[#E8DDD2] text-[#7A695F] hover:text-[#2B1D16]"
                   }`}
                 >
                   <div className="text-xs font-bold flex items-center justify-between">
                     <span>{preset.name}</span>
-                    {captionStyle === preset.id && <Check className="w-3 h-3 text-purple-400" />}
+                    {captionStyle === preset.id && <Check className="w-3 h-3 text-[#C87A47]" />}
                   </div>
                 </button>
               ))}
@@ -264,30 +264,30 @@ function EditorContent() {
 
           {/* Subtitle Position */}
           <div>
-            <label className="text-xs font-bold text-zinc-400 uppercase tracking-wider block mb-2">
+            <label className="text-xs font-extrabold text-[#2B1D16] uppercase tracking-wider block mb-2">
               Caption Position
             </label>
-            <div className="grid grid-cols-3 gap-1 bg-black/40 p-1 rounded-xl border border-white/[0.08]">
+            <div className="grid grid-cols-3 gap-1 bg-[#EAE1D7] p-1 rounded-full border border-[#DDD3C7]">
               <button
                 onClick={() => setCaptionPosition("top")}
-                className={`py-1.5 text-xs font-semibold rounded-lg ${
-                  captionPosition === "top" ? "bg-purple-600 text-white" : "text-zinc-400 hover:text-white"
+                className={`py-1 text-xs font-bold rounded-full transition-all ${
+                  captionPosition === "top" ? "bg-[#2B1D16] text-white shadow-sm" : "text-[#7A695F] hover:text-[#2B1D16]"
                 }`}
               >
                 Top
               </button>
               <button
                 onClick={() => setCaptionPosition("center")}
-                className={`py-1.5 text-xs font-semibold rounded-lg ${
-                  captionPosition === "center" ? "bg-purple-600 text-white" : "text-zinc-400 hover:text-white"
+                className={`py-1 text-xs font-bold rounded-full transition-all ${
+                  captionPosition === "center" ? "bg-[#2B1D16] text-white shadow-sm" : "text-[#7A695F] hover:text-[#2B1D16]"
                 }`}
               >
                 Center
               </button>
               <button
                 onClick={() => setCaptionPosition("bottom")}
-                className={`py-1.5 text-xs font-semibold rounded-lg ${
-                  captionPosition === "bottom" ? "bg-purple-600 text-white" : "text-zinc-400 hover:text-white"
+                className={`py-1 text-xs font-bold rounded-full transition-all ${
+                  captionPosition === "bottom" ? "bg-[#2B1D16] text-white shadow-sm" : "text-[#7A695F] hover:text-[#2B1D16]"
                 }`}
               >
                 Bottom
@@ -296,20 +296,20 @@ function EditorContent() {
           </div>
 
           {/* Subtitle Typography Customizer */}
-          <div className="space-y-3 bg-white/[0.02] p-3 rounded-2xl border border-white/[0.06]">
+          <div className="space-y-3 bg-[#FAF6F1] p-3.5 rounded-2xl border border-[#E8DDD2]">
             {/* Highlight color picker */}
             <div>
-              <label className="text-[11px] font-semibold text-zinc-400 block mb-1.5">
+              <label className="text-[11px] font-bold text-[#7A695F] block mb-1.5">
                 Keyword Highlight Color
               </label>
               <div className="flex items-center gap-2">
-                {["#22C55E", "#FACC15", "#06B6D4", "#EF4444", "#EC4899", "#A855F7"].map((hex) => (
+                {["#3A7D44", "#C87A47", "#2B1D16", "#EAB308", "#EF4444", "#06B6D4"].map((hex) => (
                   <button
                     key={hex}
                     onClick={() => setHighlightColor(hex)}
                     style={{ backgroundColor: hex }}
                     className={`w-6 h-6 rounded-full transition-transform ${
-                      highlightColor === hex ? "scale-125 ring-2 ring-white" : "opacity-80"
+                      highlightColor === hex ? "scale-125 ring-2 ring-[#2B1D16]" : "opacity-80"
                     }`}
                   />
                 ))}
@@ -318,14 +318,14 @@ function EditorContent() {
 
             {/* Font Size */}
             <div className="flex items-center justify-between pt-1">
-              <span className="text-xs text-zinc-300">Font Size</span>
-              <div className="flex gap-1">
+              <span className="text-xs font-bold text-[#2B1D16]">Font Size</span>
+              <div className="flex gap-1 bg-[#EAE1D7] p-0.5 rounded-full">
                 {(["sm", "md", "lg", "xl"] as const).map((s) => (
                   <button
                     key={s}
                     onClick={() => setFontSize(s)}
-                    className={`px-2 py-0.5 rounded text-[11px] font-bold uppercase ${
-                      fontSize === s ? "bg-purple-600 text-white" : "text-zinc-500 hover:text-white"
+                    className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold uppercase transition-all ${
+                      fontSize === s ? "bg-[#2B1D16] text-white shadow-sm" : "text-[#7A695F] hover:text-[#2B1D16]"
                     }`}
                   >
                     {s}
@@ -335,15 +335,15 @@ function EditorContent() {
             </div>
 
             {/* Auto Emojis toggle */}
-            <div className="flex items-center justify-between pt-1 border-t border-white/[0.06]">
-              <span className="text-xs text-zinc-300 flex items-center gap-1.5">
-                <Smile className="w-3.5 h-3.5 text-amber-400" />
+            <div className="flex items-center justify-between pt-2 border-t border-[#E8DDD2]">
+              <span className="text-xs font-bold text-[#2B1D16] flex items-center gap-1.5">
+                <Smile className="w-3.5 h-3.5 text-[#C87A47]" />
                 <span>Auto-Insert Emojis</span>
               </span>
               <button
                 onClick={() => setShowEmojis(!showEmojis)}
                 className={`w-9 h-5 rounded-full relative transition-colors ${
-                  showEmojis ? "bg-purple-600" : "bg-zinc-700"
+                  showEmojis ? "bg-[#C87A47]" : "bg-[#DDD3C7]"
                 }`}
               >
                 <div
@@ -355,12 +355,12 @@ function EditorContent() {
             </div>
 
             {/* All Caps toggle */}
-            <div className="flex items-center justify-between pt-1 border-t border-white/[0.06]">
-              <span className="text-xs text-zinc-300">Uppercase All Text</span>
+            <div className="flex items-center justify-between pt-2 border-t border-[#E8DDD2]">
+              <span className="text-xs font-bold text-[#2B1D16]">Uppercase All Text</span>
               <button
                 onClick={() => setIsUppercase(!isUppercase)}
                 className={`w-9 h-5 rounded-full relative transition-colors ${
-                  isUppercase ? "bg-purple-600" : "bg-zinc-700"
+                  isUppercase ? "bg-[#C87A47]" : "bg-[#DDD3C7]"
                 }`}
               >
                 <div
@@ -374,62 +374,62 @@ function EditorContent() {
 
           {/* Camera & Speaker Layout Selector */}
           <div>
-            <label className="text-xs font-bold text-zinc-400 uppercase tracking-wider block mb-2 flex items-center gap-1.5">
-              <Layout className="w-3.5 h-3.5 text-cyan-400" />
+            <label className="text-xs font-extrabold text-[#2B1D16] uppercase tracking-wider block mb-2 flex items-center gap-1.5">
+              <Layout className="w-3.5 h-3.5 text-[#C87A47]" />
               <span>Camera Reframe Mode</span>
             </label>
             <div className="space-y-2">
               <button
                 onClick={() => setLayoutMode("split-screen")}
-                className={`w-full p-2.5 rounded-xl border text-left text-xs font-semibold flex items-center justify-between ${
+                className={`w-full p-2.5 rounded-2xl border text-left text-xs font-bold flex items-center justify-between transition-all ${
                   layoutMode === "split-screen"
-                    ? "bg-purple-950/40 border-purple-500 text-white ring-1 ring-purple-500"
-                    : "bg-white/[0.02] border-white/[0.08] text-zinc-400 hover:bg-white/[0.05]"
+                    ? "bg-[#2B1D16] border-[#2B1D16] text-white shadow-sm"
+                    : "bg-[#FAF6F1] border-[#E8DDD2] text-[#7A695F] hover:text-[#2B1D16]"
                 }`}
               >
-                <span>Split Screen (Top/Bottom 2 Speakers)</span>
-                {layoutMode === "split-screen" && <Check className="w-3.5 h-3.5 text-purple-400" />}
+                <span>Split Screen (Dual Speaker Stack)</span>
+                {layoutMode === "split-screen" && <Check className="w-3.5 h-3.5 text-[#C87A47]" />}
               </button>
 
               <button
                 onClick={() => setLayoutMode("single-focus")}
-                className={`w-full p-2.5 rounded-xl border text-left text-xs font-semibold flex items-center justify-between ${
+                className={`w-full p-2.5 rounded-2xl border text-left text-xs font-bold flex items-center justify-between transition-all ${
                   layoutMode === "single-focus"
-                    ? "bg-purple-950/40 border-purple-500 text-white ring-1 ring-purple-500"
-                    : "bg-white/[0.02] border-white/[0.08] text-zinc-400 hover:bg-white/[0.05]"
+                    ? "bg-[#2B1D16] border-[#2B1D16] text-white shadow-sm"
+                    : "bg-[#FAF6F1] border-[#E8DDD2] text-[#7A695F] hover:text-[#2B1D16]"
                 }`}
               >
                 <span>Single Face Auto-Center</span>
-                {layoutMode === "single-focus" && <Check className="w-3.5 h-3.5 text-purple-400" />}
+                {layoutMode === "single-focus" && <Check className="w-3.5 h-3.5 text-[#C87A47]" />}
               </button>
 
               <button
                 onClick={() => setLayoutMode("blurred-fit")}
-                className={`w-full p-2.5 rounded-xl border text-left text-xs font-semibold flex items-center justify-between ${
+                className={`w-full p-2.5 rounded-2xl border text-left text-xs font-bold flex items-center justify-between transition-all ${
                   layoutMode === "blurred-fit"
-                    ? "bg-purple-950/40 border-purple-500 text-white ring-1 ring-purple-500"
-                    : "bg-white/[0.02] border-white/[0.08] text-zinc-400 hover:bg-white/[0.05]"
+                    ? "bg-[#2B1D16] border-[#2B1D16] text-white shadow-sm"
+                    : "bg-[#FAF6F1] border-[#E8DDD2] text-[#7A695F] hover:text-[#2B1D16]"
                 }`}
               >
                 <span>Fit 16:9 with Blurred Backdrop</span>
-                {layoutMode === "blurred-fit" && <Check className="w-3.5 h-3.5 text-purple-400" />}
+                {layoutMode === "blurred-fit" && <Check className="w-3.5 h-3.5 text-[#C87A47]" />}
               </button>
             </div>
           </div>
 
           {/* AI B-Roll Cutaway toggle */}
-          <div className="flex items-center justify-between p-3 rounded-2xl bg-white/[0.02] border border-white/[0.06]">
+          <div className="flex items-center justify-between p-3.5 rounded-2xl bg-[#FAF6F1] border border-[#E8DDD2]">
             <div>
-              <div className="text-xs font-bold text-white flex items-center gap-1.5">
-                <Layers className="w-3.5 h-3.5 text-pink-400" />
+              <div className="text-xs font-bold text-[#2B1D16] flex items-center gap-1.5">
+                <Layers className="w-3.5 h-3.5 text-[#C87A47]" />
                 <span>AI B-Roll Cutaway</span>
               </div>
-              <div className="text-[10px] text-zinc-400 mt-0.5">Neural cluster stock footage</div>
+              <div className="text-[10px] text-[#7A695F] mt-0.5">Neural cluster stock footage</div>
             </div>
             <button
               onClick={() => setShowBRoll(!showBRoll)}
               className={`w-9 h-5 rounded-full relative transition-colors ${
-                showBRoll ? "bg-purple-600" : "bg-zinc-700"
+                showBRoll ? "bg-[#C87A47]" : "bg-[#DDD3C7]"
               }`}
             >
               <div
@@ -442,19 +442,19 @@ function EditorContent() {
         </aside>
 
         {/* Column 2: Central 9:16 Video Player Viewport */}
-        <div className="flex-1 bg-[#05060A] flex flex-col items-center justify-between p-4 overflow-hidden">
+        <div className="flex-1 bg-[#F5EFEB] flex flex-col items-center justify-between p-4 overflow-hidden">
           {/* Video Phone Frame Canvas */}
           <div className="relative flex-1 flex items-center justify-center w-full min-h-0">
-            <div className="relative h-full max-h-[580px] aspect-[9/16] bg-black rounded-3xl overflow-hidden shadow-2xl border border-white/[0.15] flex flex-col">
+            <div className="relative h-full max-h-[560px] aspect-[9/16] bg-[#1C130E] rounded-[28px] overflow-hidden shadow-xl border border-[#E8DDD2] flex flex-col">
               {/* Brand Watermark Overlay */}
-              <div className="absolute top-3 right-3 z-30 px-2 py-0.5 rounded-full bg-black/60 backdrop-blur-md text-[10px] text-zinc-300 font-bold border border-white/10">
+              <div className="absolute top-3 right-3 z-30 px-2.5 py-0.5 rounded-full bg-[#2B1D16]/80 backdrop-blur-md text-[10px] text-white font-bold border border-white/20">
                 OpusClip
               </div>
 
               {/* Video Content Layer according to layout */}
-              <div className="relative flex-1 bg-zinc-950 overflow-hidden flex flex-col">
+              <div className="relative flex-1 bg-[#1C130E] overflow-hidden flex flex-col">
                 {layoutMode === "single-focus" ? (
-                  <div className="relative w-full h-full flex items-center justify-center bg-black overflow-hidden">
+                  <div className="relative w-full h-full flex items-center justify-center bg-[#1C130E] overflow-hidden">
                     {clip?.videoUrl ? (
                       <video
                         src={clip.videoUrl}
@@ -473,12 +473,12 @@ function EditorContent() {
                         }}
                       />
                     ) : (
-                      <div className="text-xs text-zinc-500">No video loaded</div>
+                      <div className="text-xs text-[#A09085]">No video loaded</div>
                     )}
                   </div>
                 ) : layoutMode === "split-screen" ? (
-                  <div className="flex-1 flex flex-col h-full bg-black">
-                    <div className="relative flex-1 overflow-hidden border-b border-purple-500/20">
+                  <div className="flex-1 flex flex-col h-full bg-[#1C130E]">
+                    <div className="relative flex-1 overflow-hidden border-b border-white/20">
                       {clip?.videoUrl && (
                         <>
                           <video
@@ -488,7 +488,7 @@ function EditorContent() {
                             muted
                             loop
                           />
-                          <div className="absolute top-2 left-2 px-1.5 py-0.5 rounded bg-black/70 border border-white/10 text-[8px] font-bold text-cyan-300">
+                          <div className="absolute top-2 left-2 px-2 py-0.5 rounded-full bg-black/80 border border-white/10 text-[8px] font-bold text-amber-200">
                             TOP: MAIN CONTENT
                           </div>
                         </>
@@ -504,7 +504,7 @@ function EditorContent() {
                             muted={isMuted}
                             loop
                           />
-                          <div className="absolute top-2 left-2 px-1.5 py-0.5 rounded bg-black/70 border border-white/10 text-[8px] font-bold text-purple-300">
+                          <div className="absolute top-2 left-2 px-2 py-0.5 rounded-full bg-black/80 border border-white/10 text-[8px] font-bold text-[#C87A47]">
                             BOTTOM: REACTION CAM
                           </div>
                         </>
@@ -513,7 +513,7 @@ function EditorContent() {
                   </div>
                 ) : (
                   /* Blurred fit */
-                  <div className="relative w-full h-full flex items-center justify-center bg-black overflow-hidden">
+                  <div className="relative w-full h-full flex items-center justify-center bg-[#1C130E] overflow-hidden">
                     {clip?.videoUrl && (
                       <>
                         <video
@@ -535,13 +535,13 @@ function EditorContent() {
 
                 {/* AI B-Roll Overlay if active */}
                 {showBRoll && currentTime >= 12 && currentTime <= 18 && (
-                  <div className="absolute inset-x-2 top-8 h-36 rounded-2xl overflow-hidden border border-cyan-400/50 shadow-2xl z-20 animate-in fade-in zoom-in-95 duration-200">
+                  <div className="absolute inset-x-2 top-8 h-36 rounded-2xl overflow-hidden border border-[#C87A47] shadow-xl z-20 animate-in fade-in zoom-in-95 duration-200">
                     <img
                       src="https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=600&auto=format&fit=crop&q=80"
                       alt="Neural Compute Cluster"
                       className="w-full h-full object-cover"
                     />
-                    <div className="absolute top-1.5 left-2 px-1.5 py-0.5 rounded bg-black/70 text-[8px] font-bold text-cyan-300">
+                    <div className="absolute top-1.5 left-2 px-2 py-0.5 rounded-full bg-[#2B1D16]/80 text-[8px] font-bold text-white">
                       B-ROLL: AI COMPUTE
                     </div>
                   </div>
@@ -557,7 +557,7 @@ function EditorContent() {
                       : "bottom-14"
                   }`}
                 >
-                  <div className="inline-block px-3 py-1.5 rounded-xl bg-black/40 backdrop-blur-sm">
+                  <div className="inline-block px-3.5 py-1.5 rounded-2xl bg-[#2B1D16]/80 backdrop-blur-sm shadow-lg">
                     <span
                       style={{
                         color: highlightColor,
@@ -589,11 +589,11 @@ function EditorContent() {
           </div>
 
           {/* Timeline & Player Bar */}
-          <div className="w-full max-w-xl glass-panel p-3 rounded-2xl border border-white/[0.08] mt-3">
+          <div className="w-full max-w-xl bg-white p-3.5 rounded-2xl border border-[#E8DDD2] shadow-sm mt-3">
             {/* Scrub bar */}
-            <div className="relative w-full h-2 bg-zinc-800 rounded-full overflow-hidden cursor-pointer mb-2">
+            <div className="relative w-full h-2 bg-[#EAE1D7] rounded-full overflow-hidden cursor-pointer mb-2">
               <div
-                className="bg-gradient-to-r from-purple-500 to-cyan-400 h-full rounded-full"
+                className="bg-[#C87A47] h-full rounded-full transition-all"
                 style={{ width: `${(currentTime / duration) * 100}%` }}
               />
             </div>
@@ -602,25 +602,25 @@ function EditorContent() {
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => setIsPlaying(!isPlaying)}
-                  className="p-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white shadow-md transition-colors"
+                  className="p-2 rounded-xl bg-[#C87A47] hover:bg-[#B66D3D] text-white shadow-sm transition-colors cursor-pointer"
                 >
                   {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
                 </button>
                 <button
                   onClick={() => setCurrentTime(0)}
-                  className="p-2 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] text-zinc-300 transition-colors"
+                  className="p-2 rounded-xl bg-[#FAF6F1] hover:bg-[#EAE1D7] text-[#2B1D16] border border-[#E8DDD2] transition-colors cursor-pointer"
                 >
                   <RotateCcw className="w-4 h-4" />
                 </button>
                 <button
                   onClick={() => setIsMuted(!isMuted)}
-                  className="p-2 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] text-zinc-300 transition-colors"
+                  className="p-2 rounded-xl bg-[#FAF6F1] hover:bg-[#EAE1D7] text-[#2B1D16] border border-[#E8DDD2] transition-colors cursor-pointer"
                 >
                   {isMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
                 </button>
               </div>
 
-              <div className="text-xs font-mono text-zinc-400 font-bold">
+              <div className="text-xs font-mono text-[#7A695F] font-bold">
                 00:{currentTime < 10 ? `0${currentTime}` : currentTime} / 00:{duration}
               </div>
             </div>
@@ -628,46 +628,46 @@ function EditorContent() {
         </div>
 
         {/* Column 3: Text-Based Script & Transcript Trimmer */}
-        <aside className="w-80 bg-[#090A12] border-l border-white/[0.08] p-4 flex flex-col justify-between flex-shrink-0">
+        <aside className="w-80 bg-white border-l border-[#E8DDD2] p-4 flex flex-col justify-between flex-shrink-0">
           <div>
             <div className="flex items-center justify-between mb-3">
-              <label className="text-xs font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-1.5">
-                <Scissors className="w-3.5 h-3.5 text-purple-400" />
+              <label className="text-xs font-extrabold text-[#2B1D16] uppercase tracking-wider flex items-center gap-1.5">
+                <Scissors className="w-3.5 h-3.5 text-[#C87A47]" />
                 <span>Text-Based Editing</span>
               </label>
               <button
                 onClick={removeAllFillers}
-                className="text-[10px] font-bold px-2 py-0.5 rounded bg-red-500/20 text-red-300 hover:bg-red-500/30 border border-red-500/30 transition-colors"
+                className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-[#FAF6F1] text-[#C87A47] hover:bg-[#EAE1D7] border border-[#E8DDD2] transition-colors"
               >
                 Auto-Cut Fillers
               </button>
             </div>
 
-            <p className="text-[11px] text-zinc-400 mb-3">
+            <p className="text-[11px] text-[#7A695F] mb-3 leading-relaxed">
               Click any word to scrub to that second. Click the trash icon to cut that sentence from the video!
             </p>
 
             {/* Interactive Words Cloud */}
-            <div className="bg-black/40 p-3 rounded-2xl border border-white/[0.08] max-h-[380px] overflow-y-auto space-y-1.5">
+            <div className="bg-[#FAF6F1] p-3 rounded-2xl border border-[#E8DDD2] max-h-[380px] overflow-y-auto space-y-1.5">
               {transcriptWords.map((word) => {
                 const isActive = activeWord?.id === word.id;
                 return (
                   <div
                     key={word.id}
                     onClick={() => setCurrentTime(Math.floor(word.time))}
-                    className={`p-1.5 rounded-lg text-xs flex items-center justify-between cursor-pointer transition-colors ${
+                    className={`p-2 rounded-xl text-xs flex items-center justify-between cursor-pointer transition-colors ${
                       isActive
-                        ? "bg-purple-600/30 text-purple-200 border border-purple-500/40 font-bold"
+                        ? "bg-[#2B1D16] text-white font-bold shadow-sm"
                         : word.deleted
-                        ? "line-through text-zinc-600 bg-white/[0.01]"
-                        : "text-zinc-300 hover:bg-white/[0.05]"
+                        ? "line-through text-[#A09085] bg-transparent"
+                        : "text-[#2B1D16] hover:bg-white"
                     }`}
                   >
                     <span className="flex items-center gap-1">
                       <span>{word.text}</span>
                       {word.emoji && <span>{word.emoji}</span>}
                       {word.isFiller && (
-                        <span className="text-[9px] bg-red-500/20 text-red-400 px-1 rounded">filler</span>
+                        <span className="text-[9px] bg-red-100 text-red-600 px-1 rounded-full font-bold">filler</span>
                       )}
                     </span>
 
@@ -677,7 +677,7 @@ function EditorContent() {
                         e.stopPropagation();
                         toggleDeleteWord(word.id);
                       }}
-                      className="p-1 rounded text-zinc-500 hover:text-red-400"
+                      className="p-1 rounded text-[#A09085] hover:text-red-500"
                     >
                       <Trash2 className="w-3 h-3" />
                     </button>
@@ -688,15 +688,15 @@ function EditorContent() {
           </div>
 
           {/* Virality Score Advice in Editor */}
-          <div className="p-3 rounded-2xl glass-panel border border-emerald-500/20 bg-emerald-950/10 mt-4">
+          <div className="p-3.5 rounded-2xl border border-[#E8DDD2] bg-[#FAF6F1] mt-4">
             <div className="flex items-center justify-between mb-1">
-              <span className="text-xs font-bold text-white flex items-center gap-1">
-                <Flame className="w-3.5 h-3.5 text-emerald-400 fill-emerald-400" />
+              <span className="text-xs font-bold text-[#2B1D16] flex items-center gap-1">
+                <Flame className="w-3.5 h-3.5 text-[#3A7D44] fill-[#3A7D44]" />
                 <span>Hook Retention Status</span>
               </span>
-              <span className="text-xs font-black text-emerald-400">EXCELLENT</span>
+              <span className="text-xs font-extrabold text-[#3A7D44]">EXCELLENT</span>
             </div>
-            <p className="text-[11px] text-zinc-300">
+            <p className="text-[11px] text-[#7A695F]">
               Trimming filler pauses has boosted predicted retention from 88% to 96%.
             </p>
           </div>
@@ -705,69 +705,69 @@ function EditorContent() {
 
       {/* Export Modal */}
       {showExportModal && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="glass-panel-glow max-w-md w-full p-6 rounded-3xl border border-purple-500/40 shadow-2xl animate-in zoom-in-95 duration-200">
-            <h3 className="text-lg font-black text-white mb-1">Export Viral Short</h3>
-            <p className="text-xs text-zinc-400 mb-5">
+        <div className="fixed inset-0 z-50 bg-[#2B1D16]/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white max-w-md w-full p-7 rounded-[32px] border border-[#E8DDD2] shadow-2xl animate-in zoom-in-95 duration-200 text-[#2B1D16]">
+            <h3 className="text-lg font-extrabold text-[#2B1D16] mb-1">Export Viral Short</h3>
+            <p className="text-xs text-[#7A695F] mb-5">
               Render with hardcoded dynamic captions, active speaker reframe, and audio leveling.
             </p>
 
             <div className="space-y-3 mb-6">
               <div>
-                <label className="text-xs font-bold text-zinc-300 block mb-1.5">
+                <label className="text-xs font-bold text-[#2B1D16] block mb-1.5">
                   Resolution
                 </label>
                 <div className="grid grid-cols-2 gap-2">
                   <button
                     onClick={() => setExportResolution("1080p")}
-                    className={`py-2 rounded-xl text-xs font-bold border ${
+                    className={`py-2 rounded-2xl text-xs font-bold border transition-all ${
                       exportResolution === "1080p"
-                        ? "bg-purple-600 border-purple-500 text-white"
-                        : "bg-white/[0.04] border-white/[0.08] text-zinc-400"
+                        ? "bg-[#2B1D16] border-[#2B1D16] text-white shadow-sm"
+                        : "bg-[#FAF6F1] border-[#E8DDD2] text-[#7A695F]"
                     }`}
                   >
-                    1080p Full HD (Recommended)
+                    1080p Full HD
                   </button>
                   <button
                     onClick={() => setExportResolution("4K")}
-                    className={`py-2 rounded-xl text-xs font-bold border ${
+                    className={`py-2 rounded-2xl text-xs font-bold border transition-all ${
                       exportResolution === "4K"
-                        ? "bg-purple-600 border-purple-500 text-white"
-                        : "bg-white/[0.04] border-white/[0.08] text-zinc-400"
+                        ? "bg-[#2B1D16] border-[#2B1D16] text-white shadow-sm"
+                        : "bg-[#FAF6F1] border-[#E8DDD2] text-[#7A695F]"
                     }`}
                   >
-                    4K Ultra HD (Pro)
+                    4K Ultra HD
                   </button>
                 </div>
               </div>
 
-              <div className="p-3 rounded-xl bg-white/[0.03] border border-white/[0.06] text-xs text-zinc-300">
+              <div className="p-3.5 rounded-2xl bg-[#FAF6F1] border border-[#E8DDD2] text-xs text-[#2B1D16]">
                 <div className="flex justify-between mb-1">
-                  <span>Frame Rate:</span>
-                  <span className="font-bold text-white">60 FPS</span>
+                  <span className="text-[#7A695F]">Frame Rate:</span>
+                  <span className="font-bold text-[#2B1D16]">60 FPS</span>
                 </div>
                 <div className="flex justify-between mb-1">
-                  <span>Format:</span>
-                  <span className="font-bold text-white">MP4 (H.264 High Profile)</span>
+                  <span className="text-[#7A695F]">Format:</span>
+                  <span className="font-bold text-[#2B1D16]">MP4 (H.264 High Profile)</span>
                 </div>
                 <div className="flex justify-between">
-                  <span>Watermark:</span>
-                  <span className="font-bold text-emerald-400">None (Full Clean Render)</span>
+                  <span className="text-[#7A695F]">Watermark:</span>
+                  <span className="font-bold text-[#3A7D44]">None (Full Clean Render)</span>
                 </div>
               </div>
             </div>
 
-            <div className="flex gap-2">
+            <div className="flex gap-2.5">
               <button
                 onClick={() => setShowExportModal(false)}
-                className="flex-1 py-2.5 rounded-xl border border-white/[0.1] text-zinc-300 text-xs font-bold hover:bg-white/[0.06]"
+                className="flex-1 py-3 rounded-full border border-[#E8DDD2] bg-[#FAF6F1] text-[#2B1D16] text-xs font-bold hover:bg-[#EAE1D7] transition-colors"
               >
                 Cancel
               </button>
               <button
                 onClick={handleExport}
                 disabled={isExporting}
-                className="flex-1 btn-primary-gradient py-2.5 rounded-xl text-white text-xs font-bold flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+                className="flex-1 bg-[#C87A47] hover:bg-[#B66D3D] py-3 rounded-full text-white text-xs font-bold flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60 shadow-md shadow-[#C87A47]/20 transition-all"
               >
                 {isExporting ? (
                   <>
@@ -791,7 +791,7 @@ function EditorContent() {
 
 export default function EditorPage() {
   return (
-    <Suspense fallback={<div className="min-h-screen bg-[#07080D] text-white p-8">Loading Opus Studio Editor...</div>}>
+    <Suspense fallback={<div className="min-h-screen bg-[#F5EFEB] text-[#2B1D16] p-8 flex items-center justify-center font-bold">Loading Opus Studio Editor...</div>}>
       <EditorContent />
     </Suspense>
   );

@@ -26,8 +26,6 @@ export default function FeaturesSection() {
       id: "clip-anything",
       tag: "FLAGSHIP AI",
       icon: Wand2,
-      color: "from-purple-500 to-indigo-600",
-      accent: "text-purple-400",
       title: "ClipAnything™: Prompt with Natural Language",
       description:
         "Don't just let an algorithm guess blindly. Prompt OpusClip with plain English to find exact scenes, emotional arguments, or specific topics across hours of video.",
@@ -169,63 +167,63 @@ export default function FeaturesSection() {
   ];
 
   return (
-    <section id="how-it-works" className="py-24 relative overflow-hidden bg-[#08090E]">
+    <section id="how-it-works" className="py-20 relative overflow-hidden bg-[#F5EFEB]">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="text-center max-w-3xl mx-auto mb-16">
-          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-purple-500/10 border border-purple-500/20 text-xs font-semibold text-purple-300 mb-4">
-            <Zap className="w-3.5 h-3.5 text-amber-300" />
+          <div className="inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-[#EAE1D7] border border-[#DDD3C7] text-xs font-bold text-[#2B1D16] mb-4">
+            <Zap className="w-3.5 h-3.5 text-[#C87A47]" />
             <span>Complete Feature Suite</span>
           </div>
-          <h2 className="text-3xl sm:text-5xl font-extrabold text-white tracking-tight">
-            Every Feature You Need to <span className="gradient-text-purple">Dominate Short-Form</span>
+          <h2 className="text-3xl sm:text-5xl font-extrabold text-[#2B1D16] tracking-tight">
+            Every Feature You Need to <span className="text-[#C87A47]">Dominate Short-Form</span>
           </h2>
-          <p className="mt-4 text-zinc-400 text-base sm:text-lg">
-            Everything built into Opus.pro is designed to turn hours of long video into an automated machine for viral social clips.
+          <p className="mt-4 text-[#7A695F] text-base sm:text-lg">
+            Everything built into Opus Studio is designed to turn hours of long video into an automated machine for viral social clips.
           </p>
         </div>
 
         {/* Feature Grid / Interactive Showcase */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          {features.map((item, idx) => {
+          {features.map((item) => {
             const Icon = item.icon;
             return (
               <div
                 key={item.id}
-                className="glass-panel p-6 rounded-3xl border border-white/[0.08] hover:border-purple-500/40 transition-all duration-300 group hover:-translate-y-1 relative flex flex-col justify-between"
+                className="bg-white p-6 rounded-[28px] border border-[#E8DDD2] hover:border-[#C87A47] hover:shadow-md transition-all duration-300 group hover:-translate-y-1 relative flex flex-col justify-between shadow-sm"
               >
                 <div>
                   <div className="flex items-center justify-between mb-4">
-                    <div className={`p-3 rounded-2xl bg-gradient-to-tr ${item.color} text-white shadow-lg`}>
+                    <div className="w-12 h-12 rounded-2xl bg-[#FAF6F1] border border-[#E8DDD2] text-[#C87A47] flex items-center justify-center shadow-inner">
                       <Icon className="w-5 h-5" />
                     </div>
-                    <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-white/[0.06] text-zinc-300 border border-white/[0.08]">
+                    <span className="text-[10px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-[#EAE1D7] text-[#2B1D16] border border-[#DDD3C7]">
                       {item.tag}
                     </span>
                   </div>
 
-                  <h3 className="text-lg font-bold text-white mb-2 group-hover:text-purple-300 transition-colors">
+                  <h3 className="text-lg font-bold text-[#2B1D16] mb-2 group-hover:text-[#C87A47] transition-colors">
                     {item.title}
                   </h3>
 
-                  <p className="text-xs text-zinc-400 leading-relaxed mb-4">
+                  <p className="text-xs text-[#7A695F] leading-relaxed mb-4">
                     {item.description}
                   </p>
 
                   <ul className="space-y-2 mb-4">
                     {item.bullets.slice(0, 2).map((bullet, bIdx) => (
-                      <li key={bIdx} className="text-[11px] text-zinc-300 flex items-start gap-1.5">
-                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0 mt-0.5" />
+                      <li key={bIdx} className="text-[11px] text-[#2B1D16] flex items-start gap-1.5">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-[#3A7D44] flex-shrink-0 mt-0.5" />
                         <span>{bullet}</span>
                       </li>
                     ))}
                   </ul>
                 </div>
 
-                <div className="pt-3 border-t border-white/[0.06] flex items-center justify-between">
-                  <span className="text-[11px] font-semibold text-purple-400">{item.stats}</span>
+                <div className="pt-3 border-t border-[#E8DDD2] flex items-center justify-between">
+                  <span className="text-[11px] font-bold text-[#C87A47]">{item.stats}</span>
                   <Link
                     href="/dashboard"
-                    className="text-xs font-bold text-white hover:text-purple-300 flex items-center gap-1 group-hover:translate-x-0.5 transition-transform"
+                    className="text-xs font-bold text-[#2B1D16] hover:text-[#C87A47] flex items-center gap-1 group-hover:translate-x-0.5 transition-transform"
                   >
                     Try it <ArrowRight className="w-3.5 h-3.5" />
                   </Link>
@@ -236,25 +234,24 @@ export default function FeaturesSection() {
         </div>
 
         {/* CTA Banner */}
-        <div className="mt-16 rounded-3xl glass-panel-glow p-8 md:p-12 text-center relative overflow-hidden border border-purple-500/30">
-          <div className="absolute top-0 right-0 -mr-16 -mt-16 w-64 h-64 bg-purple-600/20 blur-3xl rounded-full" />
-          <h3 className="text-2xl sm:text-4xl font-extrabold text-white mb-4">
+        <div className="mt-16 rounded-[32px] bg-white p-8 md:p-12 text-center relative overflow-hidden border border-[#E8DDD2] shadow-sm">
+          <h3 className="text-2xl sm:text-4xl font-extrabold text-[#2B1D16] mb-4">
             Ready to generate your first 10 viral clips?
           </h3>
-          <p className="text-zinc-300 text-sm sm:text-base max-w-xl mx-auto mb-8">
+          <p className="text-[#7A695F] text-sm sm:text-base max-w-xl mx-auto mb-8">
             Upload your podcast or video link now and get 90 free processing minutes immediately.
           </p>
           <div className="flex flex-wrap items-center justify-center gap-4">
             <Link
               href="/dashboard"
-              className="btn-primary-gradient px-8 py-3.5 rounded-2xl font-bold text-white text-base shadow-xl flex items-center gap-2 cursor-pointer"
+              className="bg-[#C87A47] hover:bg-[#B66D3D] px-8 py-3.5 rounded-full font-bold text-white text-base shadow-md shadow-[#C87A47]/20 flex items-center gap-2 cursor-pointer transition-all"
             >
-              <Sparkles className="w-5 h-5 text-amber-300" />
+              <Sparkles className="w-5 h-5 text-amber-200" />
               <span>Generate Clips Now Free</span>
             </Link>
             <Link
               href="/editor"
-              className="px-6 py-3.5 rounded-2xl font-bold text-zinc-200 hover:text-white bg-white/[0.06] hover:bg-white/[0.1] border border-white/[0.1] text-base"
+              className="px-6 py-3.5 rounded-full font-bold text-[#2B1D16] hover:bg-[#EAE1D7] bg-[#FAF6F1] border border-[#E8DDD2] text-base transition-colors"
             >
               Open Studio Editor
             </Link>

@@ -6,14 +6,10 @@ import { useSearchParams } from "next/navigation";
 import {
   Calendar as CalendarIcon,
   Clock,
-  Sparkles,
-  Share2,
   CheckCircle2,
   ArrowLeft,
   Flame,
-  Plus,
   Send,
-  Sliders,
 } from "lucide-react";
 import { MOCK_CLIPS } from "@/lib/mockData";
 import confetti from "canvas-confetti";
@@ -88,22 +84,22 @@ function ScheduleContent() {
   };
 
   return (
-    <div className="min-h-screen bg-[#08090E] text-white">
+    <div className="min-h-screen bg-[#F5EFEB] text-[#2B1D16]">
       {/* Top Header */}
-      <header className="sticky top-0 z-40 bg-[#090A10]/90 backdrop-blur-xl border-b border-white/[0.08] px-4 sm:px-6 py-3">
+      <header className="sticky top-0 z-40 bg-[#FAF6F1]/90 backdrop-blur-xl border-b border-[#E8DDD2] px-4 sm:px-6 py-3.5">
         <div className="flex items-center justify-between max-w-7xl mx-auto">
           <div className="flex items-center gap-4">
             <Link
               href="/dashboard"
-              className="p-1.5 rounded-lg bg-white/[0.05] hover:bg-white/[0.1] text-zinc-300 transition-colors"
+              className="p-2 rounded-xl bg-white border border-[#E8DDD2] text-[#2B1D16] hover:bg-[#EAE1D7] transition-colors"
             >
               <ArrowLeft className="w-4 h-4" />
             </Link>
-            <div className="flex items-center gap-2">
-              <span className="font-extrabold text-sm tracking-tight text-white">
+            <div className="flex items-center gap-2.5">
+              <span className="font-black text-sm sm:text-base tracking-tight text-[#2B1D16]">
                 Social Media Auto-Scheduler
               </span>
-              <span className="text-[10px] bg-pink-500/20 text-pink-300 px-2 py-0.5 rounded font-mono">
+              <span className="text-[11px] bg-[#EAE1D7] text-[#2B1D16] px-2.5 py-0.5 rounded-full font-bold">
                 1-Click Auto Post
               </span>
             </div>
@@ -112,7 +108,7 @@ function ScheduleContent() {
           <div className="flex items-center gap-2">
             <Link
               href="/dashboard"
-              className="px-3.5 py-1.5 rounded-xl bg-white/[0.06] hover:bg-white/[0.1] text-xs font-bold text-zinc-200 border border-white/[0.1]"
+              className="px-4 py-2 rounded-xl bg-white hover:bg-[#EAE1D7] text-xs font-bold text-[#2B1D16] border border-[#E8DDD2] transition-colors"
             >
               Back to Clips
             </Link>
@@ -120,16 +116,16 @@ function ScheduleContent() {
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
           {/* Left: Schedule Form & Platform Toggles */}
           <div className="lg:col-span-7 space-y-6">
             {/* Connected Social Accounts */}
-            <div className="glass-panel p-5 rounded-3xl border border-white/[0.08]">
-              <label className="text-xs font-bold text-zinc-400 uppercase tracking-wider block mb-3">
+            <div className="warm-card p-6 rounded-[28px] border border-[#E8DDD2]">
+              <label className="text-xs font-black text-[#7A6B63] uppercase tracking-wider block mb-3.5">
                 Publishing Channels
               </label>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                 {[
                   { key: "youtube", name: "YouTube Shorts", icon: "▶" },
                   { key: "tiktok", name: "TikTok", icon: "♪" },
@@ -147,17 +143,17 @@ function ScheduleContent() {
                           [item.key]: !isConn,
                         }))
                       }
-                      className={`p-3 rounded-2xl border text-left transition-all flex items-center justify-between ${
+                      className={`p-3.5 rounded-2xl border text-left transition-all flex items-center justify-between cursor-pointer ${
                         isConn
-                          ? "bg-purple-950/40 border-purple-500 text-white shadow-md ring-1 ring-purple-500"
-                          : "bg-white/[0.02] border-white/[0.08] text-zinc-500 hover:bg-white/[0.05]"
+                          ? "bg-[#2B1D16] border-[#2B1D16] text-white shadow-sm"
+                          : "bg-[#FAF6F1] border-[#E8DDD2] text-[#7A6B63] hover:bg-[#EAE1D7]"
                       }`}
                     >
-                      <div className="flex items-center gap-2">
-                        <span className="font-bold text-xs">{item.icon}</span>
+                      <div className="flex items-center gap-2.5">
+                        <span className="font-black text-xs">{item.icon}</span>
                         <span className="text-xs font-bold">{item.name}</span>
                       </div>
-                      {isConn && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />}
+                      {isConn && <CheckCircle2 className="w-4 h-4 text-[#C87A47]" />}
                     </button>
                   );
                 })}
@@ -165,69 +161,69 @@ function ScheduleContent() {
             </div>
 
             {/* Schedule Post Form */}
-            <form onSubmit={handleSchedule} className="glass-panel p-6 rounded-3xl border border-white/[0.08] space-y-4">
+            <form onSubmit={handleSchedule} className="warm-card p-6 rounded-[28px] border border-[#E8DDD2] space-y-4">
               <div className="flex items-center justify-between">
-                <h3 className="text-base font-bold text-white flex items-center gap-2">
-                  <CalendarIcon className="w-4 h-4 text-purple-400" />
+                <h3 className="text-base font-black text-[#2B1D16] flex items-center gap-2">
+                  <CalendarIcon className="w-4 h-4 text-[#C87A47]" />
                   <span>Schedule Post</span>
                 </h3>
-                <span className="text-[11px] font-bold text-purple-300 bg-purple-500/10 px-2 py-0.5 rounded border border-purple-500/20">
+                <span className="text-[11px] font-bold text-[#C87A47] bg-[#C87A47]/10 px-2.5 py-0.5 rounded-full border border-[#C87A47]/20">
                   AI Viral Metadata
                 </span>
               </div>
 
               <div>
-                <label className="text-xs font-semibold text-zinc-400 block mb-1">
+                <label className="text-xs font-bold text-[#7A6B63] block mb-1.5">
                   Post Title & Hook Headline
                 </label>
                 <input
                   type="text"
                   value={postTitle}
                   onChange={(e) => setPostTitle(e.target.value)}
-                  className="w-full glass-input text-white text-xs sm:text-sm px-4 py-2.5 rounded-xl"
+                  className="w-full warm-input text-[#2B1D16] font-bold text-xs sm:text-sm px-4 py-3 rounded-2xl"
                 />
               </div>
 
               <div>
-                <label className="text-xs font-semibold text-zinc-400 block mb-1">
+                <label className="text-xs font-bold text-[#7A6B63] block mb-1.5">
                   Description & Viral Hashtags
                 </label>
                 <textarea
                   rows={4}
                   value={postCaption}
                   onChange={(e) => setPostCaption(e.target.value)}
-                  className="w-full glass-input text-white text-xs sm:text-sm px-4 py-2.5 rounded-xl leading-relaxed"
+                  className="w-full warm-input text-[#2B1D16] text-xs sm:text-sm px-4 py-3 rounded-2xl leading-relaxed"
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-2 gap-3.5">
                 <div>
-                  <label className="text-xs font-semibold text-zinc-400 block mb-1">
+                  <label className="text-xs font-bold text-[#7A6B63] block mb-1.5">
                     Posting Date
                   </label>
                   <input
                     type="date"
                     value={selectedDate}
                     onChange={(e) => setSelectedDate(e.target.value)}
-                    className="w-full glass-input text-white text-xs px-3 py-2 rounded-xl"
+                    className="w-full warm-input text-[#2B1D16] font-semibold text-xs px-3.5 py-2.5 rounded-2xl"
                   />
                 </div>
                 <div>
-                  <label className="text-xs font-semibold text-zinc-400 block mb-1">
+                  <label className="text-xs font-bold text-[#7A6B63] block mb-1.5">
                     Posting Time (AI Peak: 18:30)
                   </label>
                   <input
                     type="time"
                     value={selectedTime}
                     onChange={(e) => setSelectedTime(e.target.value)}
-                    className="w-full glass-input text-white text-xs px-3 py-2 rounded-xl"
+                    className="w-full warm-input text-[#2B1D16] font-semibold text-xs px-3.5 py-2.5 rounded-2xl"
                   />
                 </div>
               </div>
 
               <button
                 type="submit"
-                className="w-full btn-primary-gradient py-3 rounded-xl font-bold text-white text-xs sm:text-sm flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-purple-600/30"
+                className="w-full warm-btn-terracotta py-3.5 rounded-2xl font-bold text-white text-xs sm:text-sm flex items-center justify-center gap-2 cursor-pointer shadow-sm transition-all"
               >
                 <Send className="w-4 h-4" />
                 <span>Confirm & Schedule Auto-Post</span>
@@ -237,36 +233,38 @@ function ScheduleContent() {
 
           {/* Right: Scheduled Queue & Calendar Stream */}
           <div className="lg:col-span-5 space-y-4">
-            <div className="glass-panel p-5 rounded-3xl border border-white/[0.08]">
+            <div className="warm-card p-6 rounded-[28px] border border-[#E8DDD2]">
               <div className="flex items-center justify-between mb-4">
-                <span className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
-                  <Clock className="w-3.5 h-3.5 text-cyan-400" />
+                <span className="text-xs font-black text-[#2B1D16] uppercase tracking-wider flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-[#C87A47]" />
                   <span>Scheduled Queue ({scheduledPosts.length})</span>
                 </span>
-                <span className="text-[11px] text-zinc-400">Auto Publishing Active</span>
+                <span className="text-[11px] text-[#7A6B63] font-bold">Auto Publishing Active</span>
               </div>
 
               <div className="space-y-3">
                 {scheduledPosts.map((post) => (
                   <div
                     key={post.id}
-                    className="p-3 rounded-2xl bg-white/[0.02] border border-white/[0.06] hover:bg-white/[0.05] transition-colors"
+                    className="p-4 rounded-2xl bg-[#FAF6F1] border border-[#E8DDD2] hover:bg-[#EAE1D7] transition-colors"
                   >
-                    <div className="flex items-center justify-between mb-1.5">
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 uppercase">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-[#EAE1D7] text-[#2B1D16] uppercase">
                         {post.platform}
                       </span>
-                      <span className="text-[11px] text-zinc-400 font-mono">{post.time}</span>
+                      <span className="text-[11px] text-[#7A6B63] font-mono font-medium">{post.time}</span>
                     </div>
 
-                    <h5 className="text-xs font-bold text-white mb-2 truncate">{post.title}</h5>
+                    <h5 className="text-xs font-bold text-[#2B1D16] mb-2.5 truncate">{post.title}</h5>
 
-                    <div className="flex items-center justify-between text-[11px] text-zinc-400">
-                      <span className="flex items-center gap-1 text-emerald-400 font-bold">
-                        <Flame className="w-3 h-3 fill-emerald-400" />
-                        <span>{post.virality} Virality</span>
+                    <div className="flex items-center justify-between text-[11px] text-[#7A6B63]">
+                      <span className="flex items-center gap-1.5 text-[#C87A47] font-bold">
+                        <Flame className="w-3.5 h-3.5 fill-[#C87A47]" />
+                        <span>{post.virality} Virality Score</span>
                       </span>
-                      <span className="text-zinc-500 font-medium">Ready</span>
+                      <span className="text-[#3A7D44] font-bold bg-[#3A7D44]/10 px-2 py-0.5 rounded-full">
+                        Ready
+                      </span>
                     </div>
                   </div>
                 ))}
@@ -281,7 +279,7 @@ function ScheduleContent() {
 
 export default function SchedulePage() {
   return (
-    <Suspense fallback={<div className="min-h-screen bg-[#08090E] text-white p-8">Loading Scheduler...</div>}>
+    <Suspense fallback={<div className="min-h-screen bg-[#F5EFEB] text-[#2B1D16] p-8">Loading Scheduler...</div>}>
       <ScheduleContent />
     </Suspense>
   );
