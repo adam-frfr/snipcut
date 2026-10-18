@@ -487,6 +487,9 @@ function DashboardContent() {
         });
       } else if (url) {
         setProcessingStage("Enqueuing video URL for download and AI processing...");
+        const storedCookies = (typeof window !== "undefined" && localStorage.getItem("opus_youtube_cookies")) || "";
+        const storedProxy = (typeof window !== "undefined" && localStorage.getItem("opus_youtube_proxy")) || "";
+
         res = await fetch("/api/jobs", {
           method: "POST",
           headers: { "Content-Type": "application/json", ...getAuthHeaders() },
@@ -496,6 +499,8 @@ function DashboardContent() {
             aspectRatio: "9:16",
             reframeMode,
             captionStyle: "hormozi",
+            cookies: storedCookies,
+            proxy: storedProxy,
           }),
         });
       } else if (filePath) {

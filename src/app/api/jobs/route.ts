@@ -119,6 +119,8 @@ export async function POST(req: NextRequest) {
         aspectRatio,
         reframeMode,
         captionStyle,
+        cookies,
+        proxy,
       } = body;
 
       options = {
@@ -146,14 +148,42 @@ export async function POST(req: NextRequest) {
           const binDir = path.join(process.cwd(), "bin");
           const ytDlp = path.join(binDir, process.platform === "win32" ? "yt-dlp.exe" : "yt-dlp");
 
+          // Cookie handling for YouTube bot-check bypass
+          let cookieArg = "";
+          let tempCookiePath: string | null = null;
+          const rawCookies = cookies || process.env.YOUTUBE_COOKIES || "";
+          const localCookieFile = path.join(process.cwd(), "cookies.txt");
+
+          if (rawCookies && rawCookies.trim().length > 10) {
+            const os = require("os");
+            tempCookiePath = path.join(os.tmpdir(), `yt-cookies-${Date.now()}.txt`);
+            fs.writeFileSync(tempCookiePath, rawCookies.trim(), "utf-8");
+            cookieArg = `--cookies "${tempCookiePath}"`;
+          } else if (fs.existsSync(localCookieFile)) {
+            cookieArg = `--cookies "${localCookieFile}"`;
+          }
+
+          // Proxy handling
+          let proxyArg = "";
+          const activeProxy = proxy || process.env.YOUTUBE_PROXY || process.env.HTTP_PROXY || "";
+          if (activeProxy && activeProxy.trim().length > 5) {
+            proxyArg = `--proxy "${activeProxy.trim()}"`;
+          }
+
         const preferredFormat =
           "bestvideo[vcodec^=avc1][height<=1080]+bestaudio[ext=m4a]/bestvideo[vcodec^=avc1][height<=1080]+bestaudio/best[vcodec^=avc1][height<=1080]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best";
 
-        const cmd = `"${ytDlp}" --js-runtimes node --ffmpeg-location "${binDir}" --extractor-args "youtube:player_client=android,ios,web" -f "${preferredFormat}" --no-warnings --ignore-errors --merge-output-format mp4 -o "${outTemplate}" "${youtubeUrl}"`;
+        const cmd = `"${ytDlp}" --js-runtimes node --ffmpeg-location "${binDir}" ${cookieArg} ${proxyArg} --extractor-args "youtube:player_client=android,ios,web" -f "${preferredFormat}" --no-warnings --ignore-errors --merge-output-format mp4 -o "${outTemplate}" "${youtubeUrl}"`;
 
-        const { exec } = require("child_process");
-        const execP = util.promisify(exec);
-        await execP(cmd, { timeout: 180000 });
+        try {
+          const { exec } = require("child_process");
+          const execP = util.promisify(exec);
+          await execP(cmd, { timeout: 180000 });
+        } finally {
+          if (tempCookiePath && fs.existsSync(tempCookiePath)) {
+            try { fs.unlinkSync(tempCookiePath); } catch {}
+          }
+        }
 
         const targetMp4 = path.join(downloadDir, `${filePrefix}.mp4`);
         if (fs.existsSync(targetMp4)) {
