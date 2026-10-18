@@ -149,7 +149,7 @@ export async function POST(req: NextRequest) {
         const preferredFormat =
           "bestvideo[vcodec^=avc1][height<=1080]+bestaudio[ext=m4a]/bestvideo[vcodec^=avc1][height<=1080]+bestaudio/best[vcodec^=avc1][height<=1080]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best";
 
-        const cmd = `"${ytDlp}" --js-runtimes node --ffmpeg-location "${binDir}" -f "${preferredFormat}" --no-warnings --ignore-errors --merge-output-format mp4 -o "${outTemplate}" "${youtubeUrl}"`;
+        const cmd = `"${ytDlp}" --js-runtimes node --ffmpeg-location "${binDir}" --extractor-args "youtube:player_client=android,ios,web" -f "${preferredFormat}" --no-warnings --ignore-errors --merge-output-format mp4 -o "${outTemplate}" "${youtubeUrl}"`;
 
         const { exec } = require("child_process");
         const execP = util.promisify(exec);
