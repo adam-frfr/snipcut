@@ -19,6 +19,7 @@ interface ApiSettingsModalProps {
 export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalProps) {
   const [openaiKey, setOpenaiKey] = useState("");
   const [claudeKey, setClaudeKey] = useState("");
+  const [groqKey, setGroqKey] = useState("");
   const [preferredModel, setPreferredModel] = useState<"claude-3-5-haiku" | "gpt-4o-mini" | "claude-3-5-sonnet">("claude-3-5-haiku");
   const [youtubeCookies, setYoutubeCookies] = useState("");
   const [youtubeProxy, setYoutubeProxy] = useState("");
@@ -26,6 +27,7 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
   const [testResult, setTestResult] = useState<{
     openai?: { valid: boolean; message: string };
     claude?: { valid: boolean; message: string };
+    groq?: { valid: boolean; message: string };
   } | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [appAccessToken, setAppAccessToken] = useState("");
@@ -34,6 +36,7 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
     async function loadConfig() {
       let storedOpenai = "";
       let storedClaude = "";
+      let storedGroq = "";
       let storedModel = "claude-3-5-haiku";
       let storedCookies = "";
       let storedProxy = "";
@@ -42,6 +45,7 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
       if (typeof window !== "undefined") {
         storedOpenai = localStorage.getItem("opus_openai_key") || "";
         storedClaude = localStorage.getItem("opus_claude_key") || "";
+        storedGroq = localStorage.getItem("opus_groq_key") || "";
         storedModel = (localStorage.getItem("opus_preferred_model") as any) || "claude-3-5-haiku";
         storedCookies = localStorage.getItem("opus_youtube_cookies") || "";
         storedProxy = localStorage.getItem("opus_youtube_proxy") || "";
@@ -65,6 +69,7 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
 
       setOpenaiKey(storedOpenai);
       setClaudeKey(storedClaude);
+      setGroqKey(storedGroq);
       setPreferredModel(storedModel as any);
       setYoutubeCookies(storedCookies);
       setYoutubeProxy(storedProxy);
@@ -80,6 +85,7 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
     if (typeof window !== "undefined") {
       localStorage.setItem("opus_openai_key", openaiKey.trim());
       localStorage.setItem("opus_claude_key", claudeKey.trim());
+      localStorage.setItem("opus_groq_key", groqKey.trim());
       localStorage.setItem("opus_preferred_model", preferredModel);
       localStorage.setItem("opus_youtube_cookies", youtubeCookies.trim());
       localStorage.setItem("opus_youtube_proxy", youtubeProxy.trim());
@@ -107,6 +113,7 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
         body: JSON.stringify({
           openaiKey: openaiKey.trim(),
           claudeKey: claudeKey.trim(),
+          groqKey: groqKey.trim(),
         }),
       });
       const data = await res.json();
@@ -166,6 +173,22 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
               placeholder="sk-proj-..."
               className="w-full neo-input py-2.5 px-3 text-xs font-mono"
             />
+          </div>
+
+          <div>
+            <label className="block text-xs font-black uppercase text-black mb-1">
+              Groq API Key (Fast Whisper + Free Curation)
+            </label>
+            <input
+              type="password"
+              value={groqKey}
+              onChange={(e) => setGroqKey(e.target.value)}
+              placeholder="gsk_..."
+              className="w-full neo-input py-2.5 px-3 text-xs font-mono"
+            />
+            <p className="text-[10px] font-bold text-[#555555] mt-1">
+              Recommended: one free Groq key alone runs the whole pipeline — transcription via Whisper and curation via Llama.
+            </p>
           </div>
 
           <div>
@@ -274,6 +297,14 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
                 <span>{testResult.claude.message}</span>
               </div>
             )}
+            {testResult.groq && (
+              <div className={`p-2 border-2 border-black text-xs font-bold flex items-center gap-2 ${
+                testResult.groq.valid ? "bg-[#DCFCE7] text-[#14532D]" : "bg-[#FEE2E2] text-[#7F1D1D]"
+              }`}>
+                {testResult.groq.valid ? <CheckCircle2 className="w-3.5 h-3.5" /> : <XCircle className="w-3.5 h-3.5" />}
+                <span>{testResult.groq.message}</span>
+              </div>
+            )}
           </div>
         )}
 
@@ -282,7 +313,7 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
           <button
             type="button"
             onClick={handleTestKeys}
-            disabled={isTesting || (!openaiKey && !claudeKey)}
+            disabled={isTesting || (!openaiKey && !claudeKey && !groqKey)}
             className="flex-1 neo-btn-white py-2.5 rounded-lg text-xs font-black uppercase transition-all disabled:opacity-50 cursor-pointer"
           >
             {isTesting ? "Testing..." : "Test Keys"}

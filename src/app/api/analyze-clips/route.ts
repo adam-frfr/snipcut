@@ -12,7 +12,7 @@ export async function POST(req: NextRequest) {
   const analysisStartTime = Date.now();
   try {
     const body = await req.json();
-    const { transcriptText, words, duration, customPrompt, model, openaiKey, claudeKey } = body;
+    const { transcriptText, words, segments, duration, customPrompt, model, openaiKey, claudeKey, groqKey } = body;
 
     if (!transcriptText) {
       return NextResponse.json(
@@ -30,10 +30,12 @@ export async function POST(req: NextRequest) {
     const rawClips = await analyzeTranscriptForViralClips({
       transcriptText,
       words,
+      segments,
       customPrompt,
       model,
       openaiKey,
       claudeKey,
+      groqKey,
     });
     const llmElapsed = Date.now() - llmStartTime;
     console.log(

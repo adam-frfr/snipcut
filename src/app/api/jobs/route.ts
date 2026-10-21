@@ -6,7 +6,7 @@ import { execFile } from "child_process";
 import util from "util";
 import { verifyAuthAndRateLimit } from "@/lib/authRateLimit";
 import { jobQueue, saveJobRecord, JobRecord, JobOptions } from "@/lib/jobQueue";
-import { getFfmpegBinary, probeVideoFormat, checkZscaleSupported } from "@/lib/videoService";
+import { getFfmpegBinary, getYtDlpBinary, probeVideoFormat, checkZscaleSupported } from "@/lib/videoService";
 
 const execFilePromise = util.promisify(execFile);
 
@@ -49,6 +49,10 @@ export async function POST(req: NextRequest) {
         reframeMode,
         captionStyle,
         maxClipsToRender: 2,
+        groqKey: ((formData.get("groqKey") as string) || "").trim() || undefined,
+        openaiKey: ((formData.get("openaiKey") as string) || "").trim() || undefined,
+        claudeKey: ((formData.get("claudeKey") as string) || "").trim() || undefined,
+        preferredModel: ((formData.get("preferredModel") as string) || "").trim() || undefined,
       };
 
       const uploadsDir = path.join(process.cwd(), "public", "uploads");
@@ -121,6 +125,10 @@ export async function POST(req: NextRequest) {
         captionStyle,
         cookies,
         proxy,
+        groqKey,
+        openaiKey,
+        claudeKey,
+        preferredModel,
       } = body;
 
       options = {
@@ -131,6 +139,10 @@ export async function POST(req: NextRequest) {
         reframeMode: reframeMode || "auto-tracker",
         captionStyle: captionStyle || "hormozi",
         maxClipsToRender: 2,
+        groqKey: (groqKey || "").trim?.() || undefined,
+        openaiKey: (openaiKey || "").trim?.() || undefined,
+        claudeKey: (claudeKey || "").trim?.() || undefined,
+        preferredModel: (preferredModel || "").trim?.() || undefined,
       };
 
       if (youtubeUrl) {
@@ -145,8 +157,8 @@ export async function POST(req: NextRequest) {
         } else {
           const filePrefix = `yt-${Date.now()}`;
           const outTemplate = path.join(downloadDir, `${filePrefix}.%(ext)s`);
-          const binDir = path.join(process.cwd(), "bin");
-          const ytDlp = path.join(binDir, process.platform === "win32" ? "yt-dlp.exe" : "yt-dlp");
+          const ytDlp = getYtDlpBinary();
+          const ffmpegBin = getFfmpegBinary();
 
           // Cookie handling for YouTube bot-check bypass
           let cookieArg = "";
@@ -170,15 +182,20 @@ export async function POST(req: NextRequest) {
             proxyArg = `--proxy "${activeProxy.trim()}"`;
           }
 
+        // Resolution before codec: an avc1-only preference grabs 360p on older
+        // uploads even when 1080p VP9 exists (verified on a real MIT lecture).
+        // The render pipeline re-encodes to H.264 anyway, so source codec is secondary.
         const preferredFormat =
-          "bestvideo[vcodec^=avc1][height<=1080]+bestaudio[ext=m4a]/bestvideo[vcodec^=avc1][height<=1080]+bestaudio/best[vcodec^=avc1][height<=1080]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best";
+          "bestvideo[vcodec^=avc1][height<=1080]+bestaudio[ext=m4a]/bestvideo[height>=720][height<=1080]+bestaudio/bestvideo[vcodec^=avc1][height<=1080]+bestaudio/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best";
 
-        const cmd = `"${ytDlp}" --js-runtimes node --ffmpeg-location "${binDir}" ${cookieArg} ${proxyArg} --extractor-args "youtube:player_client=android,ios,web" -f "${preferredFormat}" --no-warnings --ignore-errors --merge-output-format mp4 -o "${outTemplate}" "${youtubeUrl}"`;
+        const cmd = `"${ytDlp}" --js-runtimes node --ffmpeg-location "${ffmpegBin}" ${cookieArg} ${proxyArg} --extractor-args "youtube:player_client=android,ios,web" -f "${preferredFormat}" --no-warnings --ignore-errors --merge-output-format mp4 -o "${outTemplate}" "${youtubeUrl}"`;
 
         try {
           const { exec } = require("child_process");
           const execP = util.promisify(exec);
-          await execP(cmd, { timeout: 180000 });
+          // Long videos at 1080p can take several minutes to download + merge;
+          // 180s was killing healthy downloads mid-flight (verified: 196MB .part at kill time)
+          await execP(cmd, { timeout: 900000, maxBuffer: 64 * 1024 * 1024 });
         } finally {
           if (tempCookiePath && fs.existsSync(tempCookiePath)) {
             try { fs.unlinkSync(tempCookiePath); } catch {}

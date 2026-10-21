@@ -24,15 +24,20 @@ export async function transcribeAudioFile(
   audioPath: string,
   keys: { groqKey?: string; openaiKey?: string } = {}
 ): Promise<TranscribeResult> {
-  const activeGroqKey = (keys.groqKey || process.env.GROQ_API_KEY || "").trim();
+  // Groq keys in priority order: per-job key, GROQ_API_KEY, GROQ_API_KEY2 (rate-limit fallback)
+  const groqKeys = [
+    (keys.groqKey || "").trim(),
+    (process.env.GROQ_API_KEY || "").trim(),
+    (process.env.GROQ_API_KEY2 || "").trim(),
+  ].filter((k, i, arr) => k && arr.indexOf(k) === i);
   const activeOpenaiKey = (keys.openaiKey || process.env.OPENAI_API_KEY || "").trim();
 
   if (!fs.existsSync(audioPath)) {
     throw new Error(`Audio file not found at ${audioPath}`);
   }
 
-  // 1. Try Groq Whisper API (whisper-large-v3-turbo)
-  if (activeGroqKey) {
+  // 1. Try Groq Whisper API (whisper-large-v3-turbo), one key at a time
+  for (const activeGroqKey of groqKeys) {
     console.log(`[Stage: Transcribe] Calling Groq Whisper API (whisper-large-v3-turbo)...`);
     const whisperApiStartTime = Date.now();
     try {
@@ -106,7 +111,7 @@ export async function transcribeAudioFile(
         };
       }
     } catch (groqErr: any) {
-      console.warn("[Stage: Transcribe] Groq Whisper API error, checking OpenAI fallback:", groqErr?.message || groqErr);
+      console.warn("[Stage: Transcribe] Groq Whisper API error, trying next key / OpenAI fallback:", groqErr?.message || groqErr);
     }
   }
 

@@ -53,6 +53,13 @@ export interface JobOptions {
   captionStyle?: "hormozi" | "neon" | "beast" | "clean";
   maxClipsToRender?: number; // default 2
   retentionHours?: number; // default 24h
+  // Per-job API keys from the user's own Settings (stored only in the on-disk
+  // job record under data/, which is gitignored and never served; stripped
+  // from API responses in /api/jobs/[id])
+  groqKey?: string;
+  openaiKey?: string;
+  claudeKey?: string;
+  preferredModel?: string;
 }
 
 export interface JobRecord {
@@ -311,7 +318,10 @@ class JobQueueManager {
           }
 
           const targetAudio = fs.existsSync(audioPath) ? audioPath : resolvedVideoPath;
-          const transcriptResult = await transcribeAudioFile(targetAudio);
+          const transcriptResult = await transcribeAudioFile(targetAudio, {
+            groqKey: job.options.groqKey,
+            openaiKey: job.options.openaiKey,
+          });
 
           job.output.transcription = transcriptResult;
           // Write to cache
@@ -355,7 +365,12 @@ class JobQueueManager {
           const rawClips = await analyzeTranscriptForViralClips({
             transcriptText: transcription.text,
             words: transcription.words,
+            segments: transcription.segments,
             customPrompt: job.options.customPrompt,
+            model: job.options.preferredModel,
+            openaiKey: job.options.openaiKey,
+            claudeKey: job.options.claudeKey,
+            groqKey: job.options.groqKey,
           });
 
           // Precision word boundary snapping & overlap resolution
@@ -364,6 +379,12 @@ class JobQueueManager {
             minDuration: 5.0,
             maxDuration: 90.0,
           });
+
+          if (snapped.length === 0) {
+            throw new Error(
+              "AI curation produced no usable clips from this transcript. Try again, or use a more specific prompt."
+            );
+          }
 
           job.output.curatedClips = snapped;
           // Write to cache

@@ -471,6 +471,13 @@ function DashboardContent() {
     try {
       let res: Response;
 
+      const storedApiKeys = {
+        groqKey: (typeof window !== "undefined" && localStorage.getItem("opus_groq_key")) || "",
+        openaiKey: (typeof window !== "undefined" && localStorage.getItem("opus_openai_key")) || "",
+        claudeKey: (typeof window !== "undefined" && localStorage.getItem("opus_claude_key")) || "",
+        preferredModel: (typeof window !== "undefined" && localStorage.getItem("opus_preferred_model")) || "",
+      };
+
       if (uploadFile) {
         setProcessingStage("Uploading video file to server...");
         const formData = new FormData();
@@ -479,6 +486,10 @@ function DashboardContent() {
         formData.append("aspectRatio", "9:16");
         formData.append("reframeMode", reframeMode);
         formData.append("captionStyle", "hormozi");
+        if (storedApiKeys.groqKey) formData.append("groqKey", storedApiKeys.groqKey);
+        if (storedApiKeys.openaiKey) formData.append("openaiKey", storedApiKeys.openaiKey);
+        if (storedApiKeys.claudeKey) formData.append("claudeKey", storedApiKeys.claudeKey);
+        if (storedApiKeys.preferredModel) formData.append("preferredModel", storedApiKeys.preferredModel);
 
         res = await fetch("/api/jobs", {
           method: "POST",
@@ -501,6 +512,7 @@ function DashboardContent() {
             captionStyle: "hormozi",
             cookies: storedCookies,
             proxy: storedProxy,
+            ...storedApiKeys,
           }),
         });
       } else if (filePath) {
@@ -515,6 +527,7 @@ function DashboardContent() {
             aspectRatio: "9:16",
             reframeMode,
             captionStyle: "hormozi",
+            ...storedApiKeys,
           }),
         });
       } else {

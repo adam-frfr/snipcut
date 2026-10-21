@@ -19,8 +19,12 @@ export async function GET(
     return NextResponse.json({ error: `Job not found: ${id}` }, { status: 404 });
   }
 
+  // Never echo the user's API keys back in API responses
+  const { groqKey, openaiKey, claudeKey, ...safeOptions } = job.options || {};
+  void groqKey; void openaiKey; void claudeKey;
+
   return NextResponse.json({
     success: true,
-    job,
+    job: { ...job, options: safeOptions },
   });
 }

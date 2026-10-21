@@ -3,6 +3,7 @@
 # dependencies
 /node_modules
 /bin
+/.venv/
 /.pnp
 .pnp.*
 .yarn/*

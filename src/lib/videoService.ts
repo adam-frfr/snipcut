@@ -87,6 +87,25 @@ try {
   console.warn("ffprobe path init notice:", e?.message || e);
 }
 
+// Resolution order: 1. Env override -> 2. ./bin -> 3. system PATH (Docker installs yt-dlp to /usr/local/bin)
+export function getYtDlpBinary(): string {
+  if (process.env.YTDLP_PATH && fs.existsSync(process.env.YTDLP_PATH)) {
+    return process.env.YTDLP_PATH;
+  }
+  const isWin = process.platform === "win32";
+  const binName = isWin ? "yt-dlp.exe" : "yt-dlp";
+  const localBin = path.join(process.cwd(), "bin", binName);
+  if (fs.existsSync(localBin)) {
+    return localBin;
+  }
+  if (checkBinaryRunnable("yt-dlp")) {
+    return "yt-dlp";
+  }
+  throw new Error(
+    `yt-dlp binary not found. Checked YTDLP_PATH env, ./bin/${binName}, and system PATH.`
+  );
+}
+
 export interface VideoStreamInfo {
   codecName: string;
   pixFmt: string;
