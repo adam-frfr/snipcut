@@ -4,6 +4,7 @@ import path from "path";
 import fs from "fs";
 import util from "util";
 import os from "os";
+import { resolveCookieArg } from "@/lib/youtubeCookies";
 
 const execPromise = util.promisify(exec);
 
@@ -169,18 +170,10 @@ export async function POST(req: NextRequest) {
     const ytDlp = getYtDlpCommand();
     const binDir = path.join(process.cwd(), "bin");
 
-    // Cookie configuration (from request body, env var, or local file)
-    let cookieArg = "";
-    const rawCookies = cookies || process.env.YOUTUBE_COOKIES || "";
-    const localCookieFile = path.join(process.cwd(), "cookies.txt");
-
-    if (rawCookies && rawCookies.trim().length > 10) {
-      tempCookiePath = path.join(os.tmpdir(), `yt-cookies-${Date.now()}.txt`);
-      fs.writeFileSync(tempCookiePath, rawCookies.trim(), "utf-8");
-      cookieArg = `--cookies "${tempCookiePath}"`;
-    } else if (fs.existsSync(localCookieFile)) {
-      cookieArg = `--cookies "${localCookieFile}"`;
-    }
+    // Cookie configuration: request cookies (auto-normalized to Netscape
+    // format), else the persistent server jar, else env/legacy file.
+    const { arg: cookieArg, tempFile: resolvedTempCookie } = resolveCookieArg(cookies);
+    tempCookiePath = resolvedTempCookie;
 
     // Proxy configuration (from request body or env var)
     let proxyArg = "";

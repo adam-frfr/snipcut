@@ -7,6 +7,7 @@ import util from "util";
 import { verifyAuthAndRateLimit } from "@/lib/authRateLimit";
 import { jobQueue, saveJobRecord, JobRecord, JobOptions } from "@/lib/jobQueue";
 import { getFfmpegBinary, getYtDlpBinary, probeVideoFormat, checkZscaleSupported } from "@/lib/videoService";
+import { resolveCookieArg, friendlyDownloadError } from "@/lib/youtubeCookies";
 
 const execFilePromise = util.promisify(execFile);
 
@@ -160,20 +161,10 @@ export async function POST(req: NextRequest) {
           const ytDlp = getYtDlpBinary();
           const ffmpegBin = getFfmpegBinary();
 
-          // Cookie handling for YouTube bot-check bypass
-          let cookieArg = "";
-          let tempCookiePath: string | null = null;
-          const rawCookies = cookies || process.env.YOUTUBE_COOKIES || "";
-          const localCookieFile = path.join(process.cwd(), "cookies.txt");
-
-          if (rawCookies && rawCookies.trim().length > 10) {
-            const os = require("os");
-            tempCookiePath = path.join(os.tmpdir(), `yt-cookies-${Date.now()}.txt`);
-            fs.writeFileSync(tempCookiePath, rawCookies.trim(), "utf-8");
-            cookieArg = `--cookies "${tempCookiePath}"`;
-          } else if (fs.existsSync(localCookieFile)) {
-            cookieArg = `--cookies "${localCookieFile}"`;
-          }
+          // Cookie handling for YouTube bot-check bypass: request cookies
+          // (auto-normalized to Netscape format), else the persistent
+          // server-side jar saved via /api/cookies, else env/legacy file.
+          const { arg: cookieArg, tempFile: tempCookiePath } = resolveCookieArg(cookies);
 
           // Proxy handling
           let proxyArg = "";
@@ -196,6 +187,9 @@ export async function POST(req: NextRequest) {
           // Long videos at 1080p can take several minutes to download + merge;
           // 180s was killing healthy downloads mid-flight (verified: 196MB .part at kill time)
           await execP(cmd, { timeout: 900000, maxBuffer: 64 * 1024 * 1024 });
+        } catch (dlErr: any) {
+          const raw = `${dlErr?.stderr || ""} ${dlErr?.message || ""}`;
+          throw new Error(friendlyDownloadError(raw));
         } finally {
           if (tempCookiePath && fs.existsSync(tempCookiePath)) {
             try { fs.unlinkSync(tempCookiePath); } catch {}

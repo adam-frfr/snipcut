@@ -81,7 +81,13 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
 
   if (!isOpen) return null;
 
-  const handleSave = () => {
+  const authHeaders = (): Record<string, string> => {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (appAccessToken.trim()) headers["x-app-access-token"] = appAccessToken.trim();
+    return headers;
+  };
+
+  const handleSave = async () => {
     if (typeof window !== "undefined") {
       localStorage.setItem("opus_openai_key", openaiKey.trim());
       localStorage.setItem("opus_claude_key", claudeKey.trim());
@@ -92,11 +98,55 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
       localStorage.setItem("app_access_token", appAccessToken.trim());
       document.cookie = `app_access_token=${encodeURIComponent(appAccessToken.trim())}; path=/; max-age=31536000; SameSite=Lax`;
     }
+    // Also persist cookies in the server-side jar so downloads work from any
+    // browser/device without re-pasting. Best-effort: local save already done.
+    if (youtubeCookies.trim().length > 10) {
+      try {
+        await fetch("/api/cookies", {
+          method: "POST",
+          headers: authHeaders(),
+          body: JSON.stringify({ cookies: youtubeCookies.trim() }),
+        });
+      } catch {}
+    }
     setSaveSuccess(true);
     setTimeout(() => {
       setSaveSuccess(false);
       onClose();
     }, 1200);
+  };
+
+  const [cookieTest, setCookieTest] = useState<{ state: "idle" | "busy" | "ok" | "fail"; msg: string }>({ state: "idle", msg: "" });
+
+  const handleTestCookies = async () => {
+    setCookieTest({ state: "busy", msg: "Saving to server and running a real YouTube check..." });
+    try {
+      if (youtubeCookies.trim().length > 10) {
+        const saveRes = await fetch("/api/cookies", {
+          method: "POST",
+          headers: authHeaders(),
+          body: JSON.stringify({ cookies: youtubeCookies.trim() }),
+        });
+        const saveData = await saveRes.json().catch(() => ({}));
+        if (!saveRes.ok) {
+          setCookieTest({ state: "fail", msg: saveData.error || "Those cookies could not be parsed." });
+          return;
+        }
+      }
+      const testRes = await fetch("/api/cookies", {
+        method: "POST",
+        headers: authHeaders(),
+        body: JSON.stringify({ action: "test" }),
+      });
+      const testData = await testRes.json().catch(() => ({}));
+      if (testData.valid) {
+        setCookieTest({ state: "ok", msg: `Cookies work — YouTube accepted them (probe video: "${testData.title}").` });
+      } else {
+        setCookieTest({ state: "fail", msg: testData.error || "YouTube rejected these cookies." });
+      }
+    } catch {
+      setCookieTest({ state: "fail", msg: "Could not reach the server to test cookies." });
+    }
   };
 
   const handleTestKeys = async () => {
@@ -240,15 +290,32 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
               YouTube Cloud Bypass (Optional Cookies)
             </label>
             <p className="text-[10px] text-[#555555] font-bold mb-1.5 leading-snug">
-              Bypasses YouTube bot-checks on Render cloud servers. Paste cookies from extension "Get cookies.txt LOCALLY".
+              YouTube bot-checks this server's IP, so downloads need cookies from a signed-in youtube.com session.
+              Export with "Get cookies.txt LOCALLY" or Cookie-Editor (JSON) — or paste the raw Cookie header. Any format works;
+              cookies are converted automatically and stored on the server, so you only paste once.
             </p>
             <textarea
               rows={2}
               value={youtubeCookies}
               onChange={(e) => setYoutubeCookies(e.target.value)}
-              placeholder="Paste cookies.txt contents here..."
+              placeholder="Paste cookies here (cookies.txt / JSON / Cookie header)..."
               className="w-full neo-input py-2 px-3 text-[10px] font-mono leading-tight resize-none"
             />
+            <div className="flex items-center gap-2 mt-1.5">
+              <button
+                type="button"
+                onClick={handleTestCookies}
+                disabled={cookieTest.state === "busy"}
+                className="neo-btn px-2.5 py-1 text-[10px] font-black uppercase disabled:opacity-50"
+              >
+                {cookieTest.state === "busy" ? "Testing..." : "Save & Test Cookies"}
+              </button>
+              {cookieTest.state !== "idle" && (
+                <span className={`text-[10px] font-bold leading-snug ${cookieTest.state === "ok" ? "text-green-700" : cookieTest.state === "fail" ? "text-red-700" : "text-[#555555]"}`}>
+                  {cookieTest.msg}
+                </span>
+              )}
+            </div>
           </div>
 
           <div>
