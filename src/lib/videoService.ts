@@ -2,6 +2,7 @@ import ffmpeg from "fluent-ffmpeg";
 import ffmpegStatic from "ffmpeg-static";
 import path from "path";
 import fs from "fs";
+import os from "os";
 import { spawn } from "child_process";
 
 // Set fluent-ffmpeg binary path to local bin or system/static ffmpeg
@@ -337,6 +338,9 @@ export interface TrackingResult {
   crop_w?: number;
   crop_h?: number;
   summary?: string;
+  version?: number;
+  speakers?: number;
+  layoutSuggestion?: string | null;
 }
 
 function formatSrtTime(seconds: number): string {
@@ -355,7 +359,8 @@ export async function detectSubjectAndReframe(
   videoPath: string,
   startTime: number,
   duration: number,
-  mode: ReframeMode = "auto-tracker"
+  mode: ReframeMode = "auto-tracker",
+  speechSpans?: { start: number; end: number }[]
 ): Promise<TrackingResult> {
   return new Promise((resolve) => {
     const scriptPath = path.join(process.cwd(), "scripts", "track_reframe.py");
@@ -372,7 +377,10 @@ export async function detectSubjectAndReframe(
     const pythonBin =
       process.env.PYTHON_BIN || (process.platform === "win32" ? "python" : "python3");
 
-    const py = spawn(/*turbopackIgnore: true*/ pythonBin, [
+    // Speech intervals (absolute source time) let the tracker gate its
+    // mouth-motion speaker detection to moments when someone is talking.
+    let wordsPath: string | null = null;
+    const args = [
       scriptPath,
       "--video",
       videoPath,
@@ -382,7 +390,18 @@ export async function detectSubjectAndReframe(
       String(duration),
       "--mode",
       mode,
-    ]);
+    ];
+    if (speechSpans && speechSpans.length > 0) {
+      try {
+        wordsPath = path.join(os.tmpdir(), `opus-speech-${process.pid}-${Date.now()}.json`);
+        fs.writeFileSync(wordsPath, JSON.stringify(speechSpans.map((s) => ({ start: s.start, end: s.end }))), "utf-8");
+        args.push("--words", wordsPath);
+      } catch {
+        wordsPath = null;
+      }
+    }
+
+    const py = spawn(/*turbopackIgnore: true*/ pythonBin, args);
 
     let stdout = "";
     let stderr = "";
@@ -396,6 +415,9 @@ export async function detectSubjectAndReframe(
     });
 
     py.on("close", (code) => {
+      if (wordsPath) {
+        try { fs.unlinkSync(wordsPath); } catch {}
+      }
       if (code === 0 && stdout.trim()) {
         try {
           const lines = stdout.trim().split("\n");
@@ -501,8 +523,29 @@ export async function renderVideoClip({
           resolvedInput,
           startTime,
           duration,
-          effectiveMode
+          effectiveMode,
+          transcript
         );
+        // Premium layout call: two genuine speakers trading lines from
+        // opposite sides of the frame read far better as a split screen
+        // than as constant camera pans between them.
+        if (
+          effectiveMode === "auto-tracker" &&
+          trackingResult.layoutSuggestion === "split-screen"
+        ) {
+          const split = await detectSubjectAndReframe(
+            resolvedInput,
+            startTime,
+            duration,
+            "split-screen"
+          );
+          if (split && split.filter_value) {
+            trackingResult = {
+              ...split,
+              summary: `Auto layout: split-screen (two active speakers detected). ${split.summary || ""}`,
+            };
+          }
+        }
       } catch (e) {
         console.warn("AI Tracking warning:", e);
       }
