@@ -31,6 +31,7 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
   } | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [appAccessToken, setAppAccessToken] = useState("");
+  const [cookieTest, setCookieTest] = useState<{ state: "idle" | "busy" | "ok" | "fail"; msg: string }>({ state: "idle", msg: "" });
 
   useEffect(() => {
     async function loadConfig() {
@@ -115,8 +116,6 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
       onClose();
     }, 1200);
   };
-
-  const [cookieTest, setCookieTest] = useState<{ state: "idle" | "busy" | "ok" | "fail"; msg: string }>({ state: "idle", msg: "" });
 
   const handleTestCookies = async () => {
     setCookieTest({ state: "busy", msg: "Saving to server and running a real YouTube check..." });
