@@ -8,7 +8,16 @@ export async function POST(req: NextRequest) {
   const authError = verifyAuthAndRateLimit(req);
   if (authError) return authError;
   try {
-    const { openaiKey, claudeKey, groqKey } = await req.json();
+    let body: any;
+    try {
+      body = await req.json();
+    } catch {
+      return NextResponse.json(
+        { error: "Request body was cut off or invalid — please retry." },
+        { status: 400 }
+      );
+    }
+    const { openaiKey, claudeKey, groqKey } = body;
     const errMsg = (err: unknown, fallback: string) =>
       err instanceof Error ? err.message : fallback;
 

@@ -697,6 +697,19 @@ export async function renderVideoClip({
       ];
     }
 
+    // Words were supplied but none landed inside this render window
+    // (misaligned timings) — never ship a silently caption-less clip when
+    // a headline exists to fall back on.
+    if (srtEntries.length === 0 && headline) {
+      srtEntries = [
+        {
+          start: 0,
+          end: duration,
+          text: headline.toUpperCase(),
+        },
+      ];
+    }
+
     let subtitleFilterStr: string | null = null;
     if (srtEntries.length > 0) {
       // Karaoke ASS: the whole phrase stays on screen, the spoken word is

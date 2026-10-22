@@ -447,7 +447,7 @@ function EditorContent() {
 
           {/* Transport */}
           <div className="mt-4 bg-white border-2 border-black shadow-[4px_4px_0px_#000000] p-3.5">
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2.5 sm:gap-3 flex-wrap sm:flex-nowrap">
               <button
                 type="button"
                 onClick={togglePlay}
@@ -466,7 +466,7 @@ function EditorContent() {
                 step={0.05}
                 value={Math.min(currentTime, duration)}
                 onChange={(e) => seekTo(Number(e.target.value))}
-                className="flex-1 accent-black"
+                className="flex-1 accent-black order-5 basis-full sm:order-none sm:basis-auto"
               />
               <button
                 type="button"

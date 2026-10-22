@@ -61,7 +61,15 @@ export async function POST(req: NextRequest) {
     }
 
     // ---- Finalize -------------------------------------------------------
-    const body = await req.json();
+    let body: any;
+    try {
+      body = await req.json();
+    } catch {
+      return NextResponse.json(
+        { error: "Request body was cut off or invalid — please retry." },
+        { status: 400 }
+      );
+    }
     if (body?.action !== "finalize") {
       return NextResponse.json({ error: "Unknown action" }, { status: 400 });
     }

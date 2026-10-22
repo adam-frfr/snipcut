@@ -116,7 +116,15 @@ export async function POST(req: NextRequest) {
       }
     } else {
       // 2. JSON Payload (Existing fileId or YouTube download)
-      const body = await req.json();
+      let body: any;
+      try {
+        body = await req.json();
+      } catch {
+        return NextResponse.json(
+          { error: "Request body was cut off or invalid — please retry." },
+          { status: 400 }
+        );
+      }
       const {
         fileId: inputId,
         filePath: inputPath,

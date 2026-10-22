@@ -283,10 +283,15 @@ export function snapAndValidateClips(
     const finalStart = Number(snappedStart.toFixed(2));
     const finalEnd = Number(snappedEnd.toFixed(2));
 
+    // CONTRACT: snappedWords carry SOURCE-ABSOLUTE times. Every consumer
+    // (renderVideoClip's caption window filter, computeKeepRanges, the
+    // dashboard's transcript mapping) expects absolute times and rebases
+    // itself where it needs clip-relative values. Rebasing here used to
+    // silently strip captions from every clip not starting near 0:00.
     const clipWords = wordsInClip.map((w) => ({
       word: w.word,
-      start: Number((w.start - finalStart).toFixed(2)),
-      end: Number((w.end - finalStart).toFixed(2)),
+      start: Number(w.start.toFixed(2)),
+      end: Number(w.end.toFixed(2)),
     }));
 
     console.log(
@@ -347,8 +352,8 @@ export function snapAndValidateClips(
           current.startTime = trimmedStart;
           current.snappedWords = trimmedWords.map((w) => ({
             word: w.word,
-            start: Number((w.start - trimmedStart).toFixed(2)),
-            end: Number((w.end - trimmedStart).toFixed(2)),
+            start: Number(w.start.toFixed(2)),
+            end: Number(w.end.toFixed(2)),
           }));
           current.durationFormatted = formatDuration(remainingDuration);
           nonOverlapping.push(current);

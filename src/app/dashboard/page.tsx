@@ -368,6 +368,14 @@ function DashboardContent() {
                     end: Math.max(0.3, Number((cw.end - c.startTime).toFixed(2))),
                     text: cw.word || cw.text,
                   }))
+                : Array.isArray(job.output?.transcription?.words)
+                ? job.output.transcription.words
+                    .filter((w: any) => w.end > c.startTime && w.start < c.endTime)
+                    .map((w: any) => ({
+                      start: Math.max(0, Number((w.start - c.startTime).toFixed(2))),
+                      end: Math.max(0.3, Number((w.end - c.startTime).toFixed(2))),
+                      text: w.word || w.text,
+                    }))
                 : [
                     { start: 0, end: 3, text: c.hookHeadline || c.title },
                     { start: 3, end: 7, text: "Key insight" },
@@ -686,14 +694,14 @@ function DashboardContent() {
   };  return (
     <div className="min-h-screen bg-[#F8F7F4] text-black font-sans selection:bg-[#FFC700] selection:text-black">
       {/* Neo-Brutalist Top Header */}
-      <header className="sticky top-0 z-40 bg-white border-b-2 border-black px-4 sm:px-6 lg:px-8 py-3.5 shadow-sm">
+      <header className="sticky top-0 z-40 bg-white border-b-2 border-black px-3 sm:px-6 lg:px-8 py-3.5 shadow-sm">
         <div className="flex items-center justify-between max-w-7xl mx-auto">
-          <div className="flex items-center gap-4 sm:gap-6">
+          <div className="flex items-center gap-2 sm:gap-6">
             <Link href="/" className="flex items-center gap-2 group">
               <div className="w-8 h-8 bg-[#FFC700] border-2 border-black text-black flex items-center justify-center font-black shadow-[2px_2px_0px_#000000] group-hover:translate-x-0.5 group-hover:translate-y-0.5 group-hover:shadow-none transition-all">
                 <Scissors className="w-4 h-4 stroke-[2.5]" />
               </div>
-              <span className="font-black text-lg tracking-tight uppercase">
+              <span className="font-black text-sm min-[420px]:text-base sm:text-lg tracking-tight uppercase">
                 OPUS<span className="bg-[#FFC700] px-1 ml-0.5 border border-black">STUDIO</span>
               </span>
             </Link>
@@ -704,10 +712,10 @@ function DashboardContent() {
             </div>
           </div>
 
-          <div className="flex items-center gap-2 sm:gap-3">
+          <div className="flex items-center gap-1.5 sm:gap-3">
             <Link
               href="/editor"
-              className="px-3 py-1.5 text-xs font-black uppercase tracking-wider bg-white hover:bg-[#FFC700] border-2 border-black shadow-[2px_2px_0px_#000000] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all flex items-center gap-1.5"
+              className="px-2 sm:px-3 py-1.5 text-xs font-black uppercase tracking-wider bg-white hover:bg-[#FFC700] border-2 border-black shadow-[2px_2px_0px_#000000] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all flex items-center gap-1.5"
             >
               <Sliders className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">Studio Editor</span>
@@ -715,7 +723,7 @@ function DashboardContent() {
 
             <Link
               href="/schedule"
-              className="px-3 py-1.5 text-xs font-black uppercase tracking-wider bg-white hover:bg-[#FFC700] border-2 border-black shadow-[2px_2px_0px_#000000] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all flex items-center gap-1.5"
+              className="px-2 sm:px-3 py-1.5 text-xs font-black uppercase tracking-wider bg-white hover:bg-[#FFC700] border-2 border-black shadow-[2px_2px_0px_#000000] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all flex items-center gap-1.5"
             >
               <Calendar className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">Scheduler</span>
@@ -723,7 +731,7 @@ function DashboardContent() {
 
             <button
               onClick={() => setSettingsOpen(true)}
-              className="px-3 py-1.5 text-xs font-black uppercase tracking-wider bg-white hover:bg-[#FFC700] border-2 border-black shadow-[2px_2px_0px_#000000] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all flex items-center gap-1.5 cursor-pointer"
+              className="px-2 sm:px-3 py-1.5 text-xs font-black uppercase tracking-wider bg-white hover:bg-[#FFC700] border-2 border-black shadow-[2px_2px_0px_#000000] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all flex items-center gap-1.5 cursor-pointer"
             >
               <Key className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">API Keys</span>
@@ -731,10 +739,10 @@ function DashboardContent() {
 
             <button
               onClick={() => setActiveTab("upload")}
-              className="px-3.5 py-1.5 text-xs font-black uppercase tracking-wider text-black bg-[#FFC700] hover:bg-[#FF5500] hover:text-white border-2 border-black shadow-[2px_2px_0px_#000000] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all flex items-center gap-1.5 cursor-pointer"
+              className="px-2.5 sm:px-3.5 py-1.5 text-xs font-black uppercase tracking-wider text-black bg-[#FFC700] hover:bg-[#FF5500] hover:text-white border-2 border-black shadow-[2px_2px_0px_#000000] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all flex items-center gap-1.5 cursor-pointer"
             >
               <Plus className="w-3.5 h-3.5 stroke-[3]" />
-              <span>New Clip</span>
+              <span className="hidden sm:inline">New Clip</span>
             </button>
           </div>
         </div>
@@ -1569,7 +1577,7 @@ function DashboardContent() {
                 value={inputToken}
                 onChange={(e) => setInputToken(e.target.value)}
                 placeholder="Enter access token..."
-                className="w-full bg-white border-2 border-black px-4 py-2 text-sm text-black mb-4 focus:outline-none focus:shadow-[3px_3px_0px_#000000]"
+                className="w-full bg-white border-2 border-black px-4 py-2.5 text-base sm:text-sm text-black mb-4 focus:outline-none focus:shadow-[3px_3px_0px_#000000]"
               />
               <div className="flex justify-end gap-2">
                 <button

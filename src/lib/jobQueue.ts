@@ -410,7 +410,9 @@ class JobQueueManager {
       // -------------------------------------------------------------
       const promptText = job.options.customPrompt || "default";
       const promptHash = crypto.createHash("md5").update(promptText).digest("hex").slice(0, 8);
-      const clipsCachePath = path.join(CLIPS_CACHE_DIR, `${sourceHash}-${promptHash}.json`);
+      // v2: snappedWords are source-absolute (v1 cached entries stored them
+      // clip-relative, which stripped captions from most clips on reuse).
+      const clipsCachePath = path.join(CLIPS_CACHE_DIR, `${sourceHash}-${promptHash}-v2.json`);
 
       if (!job.output.curatedClips || job.output.curatedClips.length === 0) {
         job.status = "analyzing";
@@ -522,11 +524,31 @@ class JobQueueManager {
         const outputPath = path.join(outputDir, outputFilename);
 
         const exactDuration = Number((clip.endTime - clip.startTime).toFixed(2));
-        const transcriptWords = (clip.snappedWords || []).map((w: any) => ({
+        let transcriptWords = (clip.snappedWords || []).map((w: any) => ({
           start: w.start,
           end: w.end,
           text: w.word,
         }));
+
+        // Snapping can return a clip with no words (e.g. boundaries landed
+        // in a pause). Rendering with an empty transcript produces a clip
+        // with NO captions at all — fall back to the full transcription's
+        // words inside the clip window so captions always burn.
+        if (transcriptWords.length < 3 && job.output.transcription?.words?.length) {
+          const fallbackWords = job.output.transcription.words
+            .filter((w: any) => w.end > clip.startTime && w.start < clip.endTime)
+            .map((w: any) => ({
+              start: w.start,
+              end: w.end,
+              text: w.word || w.text,
+            }));
+          if (fallbackWords.length > transcriptWords.length) {
+            console.log(
+              `[Stage: Render] Clip "${clip.title}": snappedWords had ${transcriptWords.length} word(s); using ${fallbackWords.length} transcription words for captions`
+            );
+            transcriptWords = fallbackWords;
+          }
+        }
 
         // Silence removal: render only the keep-ranges (speech with small
         // breaths) and concatenate them into one tightened clip.

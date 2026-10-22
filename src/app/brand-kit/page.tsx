@@ -103,14 +103,14 @@ export default function BrandKitPage() {
                     <button
                       key={font}
                       onClick={() => setSelectedFont(font)}
-                      className={`p-3 border-2 border-black rounded-xl text-left text-xs font-black uppercase transition-all flex items-center justify-between cursor-pointer ${
+                      className={`p-3 border-2 border-black rounded-xl text-left text-xs font-black uppercase transition-all flex items-center justify-between gap-2 cursor-pointer ${
                         isSelected
                           ? "bg-black text-white shadow-[2px_2px_0px_#FFC700]"
                           : "bg-[#F8F7F4] text-black hover:bg-white"
                       }`}
                     >
-                      <span className="truncate">{font}</span>
-                      {isSelected && <Check className="w-3.5 h-3.5 text-[#FFC700]" />}
+                      <span className="min-w-0 leading-snug">{font}</span>
+                      {isSelected && <Check className="w-3.5 h-3.5 text-[#FFC700] shrink-0" />}
                     </button>
                   );
                 })}

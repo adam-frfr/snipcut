@@ -177,8 +177,8 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-      <div className="bg-white max-w-lg w-full p-6 sm:p-7 rounded-2xl border-2 border-black shadow-[6px_6px_0px_#000000] animate-in zoom-in-95 duration-150 relative text-black">
+    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+      <div className="bg-white max-w-lg w-full rounded-2xl border-2 border-black shadow-[6px_6px_0px_#000000] animate-in zoom-in-95 duration-150 relative text-black flex flex-col max-h-[calc(100dvh-1.5rem)] sm:max-h-[calc(100dvh-2rem)] overflow-hidden">
         {/* Close Button */}
         <button
           onClick={onClose}
@@ -188,16 +188,17 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
         </button>
 
         {/* Modal Header */}
-        <div className="flex items-center gap-3 mb-4">
+        <div className="flex items-center gap-3 px-5 pt-5 sm:px-7 sm:pt-6 pb-4 shrink-0">
           <div className="w-9 h-9 bg-[#FFC700] border-2 border-black flex items-center justify-center font-black text-black shadow-[2px_2px_0px_#000000]">
             <Key className="w-4 h-4 stroke-[3]" />
           </div>
           <div>
             <h3 className="text-base font-black uppercase text-black">API Key Configuration</h3>
-            <p className="text-[11px] font-bold text-[#555555]">Local OpenAI and Anthropic credentials</p>
+            <p className="text-[11px] font-bold text-[#555555]">Groq, OpenAI and Anthropic credentials</p>
           </div>
         </div>
 
+        <div className="overflow-y-auto min-h-0 px-5 sm:px-7 pb-5">
         {/* Cost Notice */}
         <div className="mb-4 p-3 bg-[#F8F7F4] border-2 border-black text-xs">
           <div className="flex items-center gap-2 mb-1">
@@ -220,7 +221,7 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
               value={openaiKey}
               onChange={(e) => setOpenaiKey(e.target.value)}
               placeholder="sk-proj-..."
-              className="w-full neo-input py-2.5 px-3 text-xs font-mono"
+              className="w-full neo-input py-2.5 px-3 text-base sm:text-sm font-mono"
             />
           </div>
 
@@ -233,7 +234,7 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
               value={groqKey}
               onChange={(e) => setGroqKey(e.target.value)}
               placeholder="gsk_..."
-              className="w-full neo-input py-2.5 px-3 text-xs font-mono"
+              className="w-full neo-input py-2.5 px-3 text-base sm:text-sm font-mono"
             />
             <p className="text-[10px] font-bold text-[#555555] mt-1">
               Recommended: one free Groq key alone runs the whole pipeline — transcription via Whisper and curation via Llama.
@@ -249,7 +250,7 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
               value={claudeKey}
               onChange={(e) => setClaudeKey(e.target.value)}
               placeholder="sk-ant-..."
-              className="w-full neo-input py-2.5 px-3 text-xs font-mono"
+              className="w-full neo-input py-2.5 px-3 text-base sm:text-sm font-mono"
             />
           </div>
 
@@ -274,8 +275,8 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
                       : "bg-[#F8F7F4] text-black hover:bg-white"
                   }`}
                 >
-                  <div>{m.label}</div>
-                  <div className={`text-[9px] ${preferredModel === m.id ? "text-[#FFC700]" : "text-[#777777]"}`}>
+                  <div className="leading-tight">{m.label}</div>
+                  <div className={`text-[10px] mt-0.5 ${preferredModel === m.id ? "text-[#FFC700]" : "text-[#777777]"}`}>
                     {m.note}
                   </div>
                 </button>
@@ -298,7 +299,7 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
               value={youtubeCookies}
               onChange={(e) => setYoutubeCookies(e.target.value)}
               placeholder="Paste cookies here (cookies.txt / JSON / Cookie header)..."
-              className="w-full neo-input py-2 px-3 text-[10px] font-mono leading-tight resize-none"
+              className="w-full neo-input py-2 px-3 text-base sm:text-sm font-mono leading-tight resize-none"
             />
             <div className="flex items-center gap-2 mt-1.5">
               <button
@@ -326,7 +327,7 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
               value={youtubeProxy}
               onChange={(e) => setYoutubeProxy(e.target.value)}
               placeholder="http://user:pass@proxy.example.com:8080"
-              className="w-full neo-input py-2 px-3 text-xs font-mono"
+              className="w-full neo-input py-2 px-3 text-base sm:text-sm font-mono"
             />
           </div>
 
@@ -339,7 +340,7 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
               value={appAccessToken}
               onChange={(e) => setAppAccessToken(e.target.value)}
               placeholder="APP_ACCESS_TOKEN if configured on server"
-              className="w-full neo-input py-2 px-3 text-xs font-mono"
+              className="w-full neo-input py-2 px-3 text-base sm:text-sm font-mono"
             />
           </div>
         </div>
@@ -374,8 +375,10 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
           </div>
         )}
 
-        {/* Buttons */}
-        <div className="mt-5 flex gap-2">
+        </div>
+
+        {/* Buttons — sticky footer, always reachable */}
+        <div className="shrink-0 flex gap-2 px-5 sm:px-7 py-4 border-t-2 border-black/15 bg-white">
           <button
             type="button"
             onClick={handleTestKeys}

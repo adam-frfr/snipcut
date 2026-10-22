@@ -10,6 +10,15 @@ export async function POST(req: NextRequest) {
 
   const renderStartTime = Date.now();
   try {
+    let body: any;
+    try {
+      body = await req.json();
+    } catch {
+      return NextResponse.json(
+        { error: "Request body was cut off or invalid — please retry." },
+        { status: 400 }
+      );
+    }
     const {
       inputPath,
       startTime,
@@ -22,7 +31,7 @@ export async function POST(req: NextRequest) {
       transcript,
       headline,
       captionStyle,
-    } = await req.json();
+    } = body;
 
     if (!inputPath || startTime === undefined || !duration) {
       return NextResponse.json(
