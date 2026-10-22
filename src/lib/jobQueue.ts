@@ -4,7 +4,7 @@ import crypto from "crypto";
 import { transcribeAudioFile } from "./transcriptionService";
 import { analyzeTranscriptForViralClips, CuratedClipResult } from "./aiService";
 import { snapAndValidateClips, SnappedClipResult } from "./wordSnapping";
-import { renderVideoClip, resolveSafeFilePath, extractAudioForWhisper, getFfmpegBinary } from "./videoService";
+import { renderVideoClip, resolveSafeFilePath, extractAudioForWhisper, getFfmpegBinary, generatePreviewClip } from "./videoService";
 import { execFile } from "child_process";
 import { promisify } from "util";
 
@@ -83,6 +83,7 @@ export interface RenderedClipItem {
   endTime: number;
   duration: number;
   downloadUrl: string;
+  previewDownloadUrl?: string;
   filename: string;
   viralityScore: number;
   hookHeadline: string;
@@ -597,6 +598,10 @@ class JobQueueManager {
           });
         }
 
+        // Lightweight preview rendition for smooth in-browser playback;
+        // the master above stays the download quality. Never fatal.
+        const previewName = await generatePreviewClip(outputPath).catch(() => null);
+
         const renderedItem: RenderedClipItem = {
           clipId: `clip_${Date.now()}_${i + 1}`,
           title: clip.title,
@@ -604,6 +609,9 @@ class JobQueueManager {
           endTime: clip.endTime,
           duration: finalDuration,
           downloadUrl: `/api/media?file=rendered_clips/${outputFilename}`,
+          previewDownloadUrl: previewName
+            ? `/api/media?file=rendered_clips/${previewName}`
+            : undefined,
           filename: outputFilename,
           viralityScore: clip.viralityScore || 90,
           hookHeadline: clip.hookHeadline || clip.title,

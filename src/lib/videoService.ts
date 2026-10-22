@@ -803,6 +803,50 @@ export async function renderVideoClip({
 }
 
 /**
+ * Generates a lightweight preview rendition of a rendered clip so in-browser
+ * playback stays smooth on slow connections (max 720px wide, CRF 28, 96k
+ * audio, faststart — typically 40-60% smaller than the master). The master
+ * file remains the download/posting quality. Returns the preview file NAME
+ * (same directory as the master) or null on failure — a preview problem
+ * must never fail the render itself.
+ */
+export async function generatePreviewClip(masterPath: string): Promise<string | null> {
+  try {
+    const resolved = resolveSafeFilePath(masterPath);
+    if (!fs.existsSync(/*turbopackIgnore: true*/ resolved)) return null;
+    const dir = path.dirname(resolved);
+    const previewName = `preview-${path.basename(resolved)}`;
+    const previewPath = path.join(dir, previewName);
+    if (fs.existsSync(/*turbopackIgnore: true*/ previewPath)) return previewName;
+
+    const { execFile } = await import("child_process");
+    await new Promise<void>((resolve, reject) => {
+      execFile(
+        /*turbopackIgnore: true*/ getFfmpegBinary(),
+        [
+          "-y",
+          "-i", resolved,
+          "-vf", "scale='min(720,iw)':-2",
+          "-c:v", "libx264",
+          "-preset", "veryfast",
+          "-crf", "28",
+          "-c:a", "aac",
+          "-b:a", "96k",
+          "-movflags", "+faststart",
+          previewPath,
+        ],
+        { timeout: 180000 },
+        (err) => (err ? reject(err) : resolve())
+      );
+    });
+    return fs.existsSync(/*turbopackIgnore: true*/ previewPath) ? previewName : null;
+  } catch (err) {
+    console.error("[Stage: Preview] Generation failed (non-fatal):", err);
+    return null;
+  }
+}
+
+/**
  * Extracts a lightweight compressed MP3 audio track from any video for OpenAI Whisper
  */
 export async function extractAudioForWhisper(

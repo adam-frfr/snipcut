@@ -384,6 +384,7 @@ function DashboardContent() {
               videoFilePath: job.output?.filePath || "",
               videoUrl: initialVideoUrl,
               renderedVideoUrl: rendered ? rendered.downloadUrl : undefined,
+              previewUrl: rendered?.previewDownloadUrl || undefined,
               title: c.title || `Viral Short #${index + 1}`,
               hookHeadline: c.hookHeadline || "",
               startTime: c.startTime || 0,
@@ -647,7 +648,12 @@ function DashboardContent() {
       // Update clip so preview is permanently the cut MP4
       const updatedClips = clips.map((c) =>
         c.id === clip.id
-          ? { ...c, videoUrl: data.downloadUrl, renderedVideoUrl: data.downloadUrl }
+          ? {
+              ...c,
+              videoUrl: data.downloadUrl,
+              renderedVideoUrl: data.downloadUrl,
+              previewUrl: data.previewDownloadUrl || (c as any).previewUrl,
+            }
           : c
       );
       setClips(updatedClips);
@@ -656,6 +662,7 @@ function DashboardContent() {
           ...selectedClip,
           videoUrl: data.downloadUrl,
           renderedVideoUrl: data.downloadUrl,
+          previewUrl: data.previewDownloadUrl || (selectedClip as any).previewUrl,
         } as any);
       }
       localStorage.setItem("opus_user_clips", JSON.stringify(updatedClips));
@@ -961,7 +968,7 @@ function DashboardContent() {
                         {/* Video Preview Block */}
                         <div className="relative w-full sm:w-36 h-28 sm:h-24 border-2 border-black overflow-hidden flex-shrink-0 bg-black flex items-center justify-center">
                           <video
-                            src={`${clip.videoUrl}#t=${clip.startTime || 0.1}`}
+                            src={(clip as any).previewUrl ? `${(clip as any).previewUrl}#t=0.1` : `${clip.videoUrl}#t=${clip.startTime || 0.1}`}
                             className="w-full h-full object-cover pointer-events-none"
                             preload="metadata"
                             playsInline
@@ -1058,7 +1065,7 @@ function DashboardContent() {
                                 <video
                                   ref={videoTopRef}
                                   key={`top-${selectedClip.id}-${(selectedClip as any).renderedVideoUrl || ""}`}
-                                  src={(selectedClip as any).renderedVideoUrl || selectedClip.videoUrl}
+                                  src={(selectedClip as any).previewUrl || (selectedClip as any).renderedVideoUrl || selectedClip.videoUrl}
                                   className="w-full h-full object-cover"
                                   style={{ objectPosition: "75% center" }}
                                   preload="auto"
@@ -1075,7 +1082,7 @@ function DashboardContent() {
                                 <video
                                   ref={videoRef}
                                   key={`bot-${selectedClip.id}-${(selectedClip as any).renderedVideoUrl || ""}`}
-                                  src={(selectedClip as any).renderedVideoUrl || selectedClip.videoUrl}
+                                  src={(selectedClip as any).previewUrl || (selectedClip as any).renderedVideoUrl || selectedClip.videoUrl}
                                   className="w-full h-full object-cover"
                                   style={{ objectPosition: "15% center" }}
                                   controls={false}
@@ -1103,7 +1110,7 @@ function DashboardContent() {
                               {/* Dynamic Blurred Backdrop */}
                               <video
                                 key={`blur-${selectedClip.id}-${(selectedClip as any).renderedVideoUrl || ""}`}
-                                src={(selectedClip as any).renderedVideoUrl || selectedClip.videoUrl}
+                                src={(selectedClip as any).previewUrl || (selectedClip as any).renderedVideoUrl || selectedClip.videoUrl}
                                 className="absolute inset-0 w-full h-full object-cover blur-2xl scale-125 opacity-70"
                                 preload="auto"
                                 muted
@@ -1113,7 +1120,7 @@ function DashboardContent() {
                               <video
                                 ref={videoRef}
                                 key={`fit-${selectedClip.id}-${(selectedClip as any).renderedVideoUrl || ""}`}
-                                src={(selectedClip as any).renderedVideoUrl || selectedClip.videoUrl}
+                                src={(selectedClip as any).previewUrl || (selectedClip as any).renderedVideoUrl || selectedClip.videoUrl}
                                 className="relative z-10 w-full aspect-video object-contain shadow-2xl"
                                 controls={false}
                                 preload="auto"
@@ -1137,7 +1144,7 @@ function DashboardContent() {
                               <video
                                 ref={videoRef}
                                 key={`track-${selectedClip.id}-${(selectedClip as any).renderedVideoUrl || ""}`}
-                                src={(selectedClip as any).renderedVideoUrl || selectedClip.videoUrl}
+                                src={(selectedClip as any).previewUrl || (selectedClip as any).renderedVideoUrl || selectedClip.videoUrl}
                                 className="w-full h-full object-cover transition-all duration-700 ease-in-out"
                                 style={{
                                   objectPosition: getDynamicObjectPosition(

@@ -102,6 +102,9 @@ export async function GET(req: NextRequest) {
           fileStream.on("end", () => controller.close());
           fileStream.on("error", (err) => controller.error(err));
         },
+        cancel() {
+          fileStream.destroy();
+        },
       });
 
       return new NextResponse(stream, {
@@ -122,6 +125,9 @@ export async function GET(req: NextRequest) {
           fileStream.on("data", (chunk) => controller.enqueue(chunk));
           fileStream.on("end", () => controller.close());
           fileStream.on("error", (err) => controller.error(err));
+        },
+        cancel() {
+          fileStream.destroy();
         },
       });
 

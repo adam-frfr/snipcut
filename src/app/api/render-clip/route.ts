@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { renderVideoClip } from "@/lib/videoService";
+import { renderVideoClip, generatePreviewClip } from "@/lib/videoService";
 import path from "path";
 import os from "os";
 import { verifyAuthAndRateLimit } from "@/lib/authRateLimit";
@@ -54,10 +54,16 @@ export async function POST(req: NextRequest) {
       captionStyle,
     });
 
+    // Lightweight preview rendition for smooth in-browser playback (never fatal)
+    const previewName = await generatePreviewClip(outputPath).catch(() => null);
+
     const elapsedMs = Date.now() - renderStartTime;
     return NextResponse.json({
       success: true,
       downloadUrl: `/api/media?file=rendered_clips/${outputFilename}`,
+      previewDownloadUrl: previewName
+        ? `/api/media?file=rendered_clips/${previewName}`
+        : undefined,
       filename: outputFilename,
       tracking: renderResult.tracking,
       timingMs: elapsedMs,

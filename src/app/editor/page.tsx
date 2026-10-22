@@ -64,6 +64,7 @@ function EditorContent() {
   // Playback (all from the real <video> element)
   const videoRef = useRef<HTMLVideoElement>(null);
   const [previewUrl, setPreviewUrl] = useState("");
+  const [masterUrl, setMasterUrl] = useState("");
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -101,7 +102,10 @@ function EditorContent() {
 
   const applyClip = useCallback((c: any) => {
     setClip(c);
-    setPreviewUrl(c.renderedVideoUrl || c.videoUrl || "");
+    // Playback prefers the lightweight preview rendition (smooth on slow
+    // connections); downloads always use the full-quality master.
+    setPreviewUrl(c.previewUrl || c.renderedVideoUrl || c.videoUrl || "");
+    setMasterUrl(c.renderedVideoUrl || c.videoUrl || "");
     setDuration(Number(c.duration) || 0);
     setTrimStart(0);
     setTrimEnd(Number(c.duration) || 0);
@@ -251,6 +255,7 @@ function EditorContent() {
         duration: newDuration,
         videoUrl: data.downloadUrl,
         renderedVideoUrl: data.downloadUrl,
+        previewUrl: data.previewDownloadUrl || undefined,
         transcript: rebasedWords,
       };
 
@@ -267,7 +272,8 @@ function EditorContent() {
       } catch {}
 
       applyClip(updated);
-      setPreviewUrl(data.downloadUrl);
+      setPreviewUrl(data.previewDownloadUrl || data.downloadUrl);
+      setMasterUrl(data.downloadUrl);
       setRenderNote(
         `Re-rendered in ${Math.round((data.timingMs || 0) / 100) / 10}s${data.tracking?.summary ? ` — ${data.tracking.summary}` : ""}`
       );
@@ -349,7 +355,7 @@ function EditorContent() {
               ))}
             </select>
             <a
-              href={previewUrl}
+              href={masterUrl}
               download
               className="px-3 py-1.5 text-xs font-black uppercase bg-white hover:bg-[#FFC700] border-2 border-black shadow-[2px_2px_0px_#000000] flex items-center gap-1.5"
             >

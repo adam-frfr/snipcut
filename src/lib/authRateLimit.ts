@@ -66,10 +66,14 @@ export function verifyAuthAndRateLimit(req: NextRequest): NextResponse | null {
   // Job status polling (GET /api/jobs/[id]) is allowed up to 180 req/min (3 req/sec)
   // so polling every 2-3s never trips the rate limit.
   const isPolling = req.nextUrl.pathname.startsWith("/api/jobs") && req.method === "GET";
-  const effectiveMax = isPolling ? 180 : MAX_REQUESTS_PER_WINDOW;
+  // Media playback issues many small range requests (plus seeks and
+  // download resumes) — counting those against the general 60/min bucket
+  // made videos stall on 429s mid-playback. Media gets its own bucket.
+  const isMedia = req.nextUrl.pathname.startsWith("/api/media") && req.method === "GET";
+  const effectiveMax = isPolling ? 180 : isMedia ? 1200 : MAX_REQUESTS_PER_WINDOW;
 
   const now = Date.now();
-  const bucketKey = isPolling ? `${clientIp}:poll` : clientIp;
+  const bucketKey = isPolling ? `${clientIp}:poll` : isMedia ? `${clientIp}:media` : clientIp;
   let record = rateLimitMap.get(bucketKey);
   if (!record || now > record.resetAt) {
     record = { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS };
