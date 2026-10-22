@@ -64,6 +64,9 @@ export async function POST(req: NextRequest) {
         openaiKey: ((formData.get("openaiKey") as string) || "").trim() || undefined,
         claudeKey: ((formData.get("claudeKey") as string) || "").trim() || undefined,
         preferredModel: ((formData.get("preferredModel") as string) || "").trim() || undefined,
+        broll: (formData.get("broll") as string) === "true",
+        musicBed: (formData.get("musicBed") as string) === "true",
+        pexelsKey: ((formData.get("pexelsKey") as string) || "").trim() || undefined,
       };
 
       const uploadsDir = path.join(process.cwd(), "public", "uploads");
@@ -149,6 +152,9 @@ export async function POST(req: NextRequest) {
         openaiKey,
         claudeKey,
         preferredModel,
+        broll,
+        musicBed,
+        pexelsKey,
       } = body;
 
       if (youtubeUrl !== undefined && youtubeUrl !== null && typeof youtubeUrl !== "string") {
@@ -168,6 +174,9 @@ export async function POST(req: NextRequest) {
         openaiKey: (openaiKey || "").trim?.() || undefined,
         claudeKey: (claudeKey || "").trim?.() || undefined,
         preferredModel: (preferredModel || "").trim?.() || undefined,
+        broll: broll === true,
+        musicBed: musicBed === true,
+        pexelsKey: (pexelsKey || "").trim?.() || undefined,
       };
 
       if (youtubeUrl) {

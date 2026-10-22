@@ -54,7 +54,7 @@ export interface RealClip {
     emoji?: string;
   }[];
   aspectRatio: "9:16" | "1:1" | "16:9";
-  captionStyle: "hormozi" | "neon" | "beast" | "clean";
+  captionStyle: "hormozi" | "neon" | "beast" | "clean" | "kinetic";
 }
 
 function DashboardContent() {
@@ -122,6 +122,9 @@ function DashboardContent() {
 
   const [reframeMode, setReframeMode] = useState<"auto-tracker" | "split-screen" | "blurred-fit" | "center">("auto-tracker");
   const [removeSilences, setRemoveSilences] = useState(false);
+  const [jobCaptionStyle, setJobCaptionStyle] = useState<"hormozi" | "neon" | "beast" | "clean" | "kinetic">("kinetic");
+  const [brollEnabled, setBrollEnabled] = useState(true);
+  const [musicBedEnabled, setMusicBedEnabled] = useState(true);
   const [lastTrackingSummary, setLastTrackingSummary] = useState<string>("");
   const [dynamicShots, setDynamicShots] = useState<
     {
@@ -477,6 +480,7 @@ function DashboardContent() {
         openaiKey: (typeof window !== "undefined" && localStorage.getItem("opus_openai_key")) || "",
         claudeKey: (typeof window !== "undefined" && localStorage.getItem("opus_claude_key")) || "",
         preferredModel: (typeof window !== "undefined" && localStorage.getItem("opus_preferred_model")) || "",
+        pexelsKey: (typeof window !== "undefined" && localStorage.getItem("opus_pexels_key")) || "",
       };
 
       if (uploadFile) {
@@ -535,8 +539,10 @@ function DashboardContent() {
             customPrompt: prompt || promptInput,
             aspectRatio: "9:16",
             reframeMode,
-            captionStyle: "hormozi",
+            captionStyle: jobCaptionStyle,
             removeSilences,
+            broll: brollEnabled,
+            musicBed: musicBedEnabled,
             ...storedApiKeys,
           }),
         });
@@ -553,8 +559,10 @@ function DashboardContent() {
             customPrompt: prompt || promptInput,
             aspectRatio: "9:16",
             reframeMode,
-            captionStyle: "hormozi",
+            captionStyle: jobCaptionStyle,
             removeSilences,
+            broll: brollEnabled,
+            musicBed: musicBedEnabled,
             cookies: storedCookies,
             proxy: storedProxy,
             ...storedApiKeys,
@@ -571,8 +579,10 @@ function DashboardContent() {
             customPrompt: prompt || promptInput,
             aspectRatio: "9:16",
             reframeMode,
-            captionStyle: "hormozi",
+            captionStyle: jobCaptionStyle,
             removeSilences,
+            broll: brollEnabled,
+            musicBed: musicBedEnabled,
             ...storedApiKeys,
           }),
         });
@@ -1534,6 +1544,56 @@ function DashboardContent() {
                   </span>
                   <span className="text-[10px] font-medium text-neutral-500 normal-case tracking-normal">
                     Tightens each clip by cutting pauses over half a second and um/uh fillers
+                  </span>
+                </label>
+              </div>
+
+              <div>
+                <label className="block text-xs font-black uppercase tracking-wider text-black mb-1.5">
+                  Caption Style
+                </label>
+                <div className="flex flex-wrap gap-1.5">
+                  {(["kinetic", "hormozi", "neon", "beast", "clean"] as const).map((st) => (
+                    <button
+                      key={st}
+                      type="button"
+                      onClick={() => setJobCaptionStyle(st)}
+                      className={`px-2.5 py-1.5 border-2 border-black text-[10px] font-black uppercase cursor-pointer ${
+                        jobCaptionStyle === st ? "bg-black text-white shadow-[2px_2px_0px_#FFC700]" : "bg-[#F8F7F4] hover:bg-white text-black"
+                      }`}
+                    >
+                      {st === "kinetic" ? "⚡ Kinetic" : st}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[10px] font-medium text-neutral-500 mt-1">
+                  Kinetic = huge center-screen words that pop per phrase, like high-retention edits.
+                </p>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={brollEnabled}
+                    onChange={(e) => setBrollEnabled(e.target.checked)}
+                    className="w-4 h-4 accent-black cursor-pointer"
+                  />
+                  <span className="text-xs font-black uppercase tracking-wider text-black">AI B-Roll cutaways</span>
+                  <span className="text-[10px] font-medium text-neutral-500 normal-case tracking-normal">
+                    AI picks stock photos/videos that match each sentence and cuts away to them
+                  </span>
+                </label>
+                <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={musicBedEnabled}
+                    onChange={(e) => setMusicBedEnabled(e.target.checked)}
+                    className="w-4 h-4 accent-black cursor-pointer"
+                  />
+                  <span className="text-xs font-black uppercase tracking-wider text-black">Music bed + punch-in zooms</span>
+                  <span className="text-[10px] font-medium text-neutral-500 normal-case tracking-normal">
+                    Quiet background pad that ducks under speech, plus zoom punches on big words
                   </span>
                 </label>
               </div>

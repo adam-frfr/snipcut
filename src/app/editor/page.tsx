@@ -37,7 +37,7 @@ import confetti from "canvas-confetti";
  */
 
 type LayoutMode = "auto-tracker" | "split-screen" | "blurred-fit" | "center";
-type CaptionStyle = "hormozi" | "neon" | "beast" | "clean";
+type CaptionStyle = "hormozi" | "neon" | "beast" | "clean" | "kinetic";
 type Aspect = "9:16" | "1:1" | "16:9";
 
 interface EditorWord {
@@ -608,8 +608,8 @@ function EditorContent() {
           </div>
 
           <label className="block text-[10px] font-black uppercase mb-1.5">Caption style</label>
-          <div className="grid grid-cols-4 gap-1.5 mb-4">
-            {(["hormozi", "neon", "beast", "clean"] as CaptionStyle[]).map((s) => (
+          <div className="grid grid-cols-5 gap-1.5 mb-4">
+            {(["kinetic", "hormozi", "neon", "beast", "clean"] as CaptionStyle[]).map((s) => (
               <button
                 key={s}
                 type="button"

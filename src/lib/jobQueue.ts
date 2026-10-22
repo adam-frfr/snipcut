@@ -4,6 +4,8 @@ import crypto from "crypto";
 import { transcribeAudioFile } from "./transcriptionService";
 import { analyzeTranscriptForViralClips, CuratedClipResult } from "./aiService";
 import { snapAndValidateClips, SnappedClipResult } from "./wordSnapping";
+import { buildSentences, planBroll, fetchBrollAssets } from "./brollService";
+import { applyPostEffects } from "./videoService";
 import { renderVideoClip, resolveSafeFilePath, extractAudioForWhisper, getFfmpegBinary, generatePreviewClip } from "./videoService";
 import { execFile } from "child_process";
 import { promisify } from "util";
@@ -116,7 +118,7 @@ export interface JobOptions {
   customPrompt?: string;
   aspectRatio?: "9:16" | "1:1" | "16:9";
   reframeMode?: "auto-tracker" | "split-screen" | "blurred-fit" | "center";
-  captionStyle?: "hormozi" | "neon" | "beast" | "clean";
+  captionStyle?: "hormozi" | "neon" | "beast" | "clean" | "kinetic";
   removeSilences?: boolean; // tighten clips by cutting internal pauses > 0.55s
   maxClipsToRender?: number; // default 2
   retentionHours?: number; // default 24h
@@ -127,6 +129,10 @@ export interface JobOptions {
   openaiKey?: string;
   claudeKey?: string;
   preferredModel?: string;
+  // Reference-style post effects (B-roll cutaways / punch zooms / music bed)
+  broll?: boolean;
+  musicBed?: boolean;
+  pexelsKey?: string;
 }
 
 export interface JobRecord {
@@ -518,7 +524,7 @@ class JobQueueManager {
         const captionStyle = job.options.captionStyle || "hormozi";
 
         // Render cache key: sha256(sourceHash:start:end:mode:captionStyle:aspectRatio)
-        const renderKeyRaw = `${sourceHash}:${clip.startTime}:${clip.endTime}:${reframeMode}:${captionStyle}:${aspectRatio}:${job.options.removeSilences ? "tight2" : "full"}`;
+        const renderKeyRaw = `${sourceHash}:${clip.startTime}:${clip.endTime}:${reframeMode}:${captionStyle}:${aspectRatio}:${job.options.removeSilences ? "tight2" : "full"}:fx${job.options.broll ? "b" : ""}${job.options.musicBed ? "m" : ""}`;
         const renderKey = crypto.createHash("sha256").update(renderKeyRaw).digest("hex");
         const renderCachePath = path.join(RENDERS_CACHE_DIR, `${renderKey}.json`);
 
@@ -571,6 +577,7 @@ class JobQueueManager {
         // Silence removal: render only the keep-ranges (speech with small
         // breaths) and concatenate them into one tightened clip.
         let renderRes: Awaited<ReturnType<typeof renderVideoClip>> | null = null;
+        let fxSummary: string | undefined;
         let finalDuration = exactDuration;
         const keep = job.options.removeSilences
           ? computeKeepRanges(clip.snappedWords || [], clip.startTime, clip.endTime)
@@ -625,17 +632,95 @@ class JobQueueManager {
         }
 
         if (!renderRes) {
-          renderRes = await renderVideoClip({
-            inputPath: resolvedVideoPath,
-            outputPath,
-            startTime: clip.startTime,
-            duration: exactDuration,
-            aspectRatio,
-            reframeMode,
-            transcript: transcriptWords,
-            headline: clip.hookHeadline || clip.title,
-            captionStyle,
-          });
+          // Post effects (B-roll / music / punch zooms) need a caption-less
+          // base: captions are burned in the composite pass so they sit on
+          // top of the cutaways. Silence-tightened clips skip FX (their
+          // timeline is re-cut, so cue timings would drift).
+          const fxOn = Boolean(job.options.broll || job.options.musicBed);
+          let fxApplied = false;
+          if (fxOn) {
+            const basePath = path.join(outputDir, `base-${outputFilename}`);
+            try {
+              renderRes = await renderVideoClip({
+                inputPath: resolvedVideoPath,
+                outputPath: basePath,
+                startTime: clip.startTime,
+                duration: exactDuration,
+                aspectRatio,
+                reframeMode,
+                transcript: transcriptWords,
+                headline: clip.hookHeadline || clip.title,
+                captionStyle,
+                skipCaptions: true,
+              });
+
+              const relWords = transcriptWords.map((w) => ({
+                start: Math.max(0, Number((w.start - clip.startTime).toFixed(2))),
+                end: Math.max(0.05, Number((w.end - clip.startTime).toFixed(2))),
+                text: w.text,
+              }));
+
+              let cues: { start: number; end: number; assetPath: string; kind: "image" | "video" }[] = [];
+              if (job.options.broll && job.output.transcription?.segments?.length) {
+                const sentences = buildSentences(job.output.transcription.segments, clip.startTime, clip.endTime);
+                const plan = await planBroll(sentences, {
+                  groqKey: job.options.groqKey,
+                  openaiKey: job.options.openaiKey,
+                  claudeKey: job.options.claudeKey,
+                });
+                if (plan.length > 0) {
+                  const assets = await fetchBrollAssets(plan, {
+                    pexelsKey: job.options.pexelsKey,
+                    destDir: path.join(process.cwd(), "data", "broll"),
+                    tag: `broll-${job.id.slice(5, 13)}-${i + 1}`,
+                  });
+                  cues = assets.map((a) => ({ start: a.start, end: a.end, assetPath: a.assetPath, kind: a.kind }));
+                }
+              }
+
+              // Punch-in zooms on emphasis words (long / digit-bearing),
+              // max 3, spaced out.
+              const punches: { start: number; end: number }[] = [];
+              for (const w of relWords) {
+                const clean = w.text.replace(/[^A-Za-z0-9]/g, "");
+                if (clean.length < 8 && !/\d/.test(clean)) continue;
+                if (punches.length > 0 && w.start - punches[punches.length - 1].start < 2.4) continue;
+                punches.push({ start: Math.max(0, w.start - 0.05), end: w.start + 0.85 });
+                if (punches.length >= 3) break;
+              }
+
+              await applyPostEffects({
+                basePath,
+                outputPath,
+                duration: exactDuration,
+                aspectRatio,
+                words: relWords,
+                captionStyle,
+                broll: cues,
+                punches,
+                musicBed: Boolean(job.options.musicBed),
+              });
+              fxApplied = true;
+              fxSummary = `🎬 Reference FX: ${cues.length} B-roll cutaway${cues.length === 1 ? "" : "s"}, ${punches.length} punch zoom${punches.length === 1 ? "" : "s"}${job.options.musicBed ? ", music bed" : ""}`;
+            } catch (fxErr) {
+              console.warn(`[PostFX] Failed for clip "${clip.title}"; falling back to a standard captioned render:`, fxErr);
+            } finally {
+              try { fs.unlinkSync(basePath); } catch {}
+            }
+          }
+          if (!fxApplied) {
+            renderRes = await renderVideoClip({
+              inputPath: resolvedVideoPath,
+              outputPath,
+              startTime: clip.startTime,
+              duration: exactDuration,
+              aspectRatio,
+              reframeMode,
+              transcript: transcriptWords,
+              headline: clip.hookHeadline || clip.title,
+              captionStyle,
+            });
+          }
         }
 
         // Lightweight preview rendition for smooth in-browser playback;
@@ -656,8 +741,8 @@ class JobQueueManager {
           viralityScore: clip.viralityScore || 90,
           hookHeadline: clip.hookHeadline || clip.title,
           trackingSummary: tightening
-            ? `${renderRes.tracking?.summary || ""} · ✂ Tightened: ${exactDuration}s → ${finalDuration}s${keep.fillersRemoved > 0 ? ` (${keep.fillersRemoved} filler${keep.fillersRemoved === 1 ? "" : "s"} cut)` : ""}`
-            : renderRes.tracking?.summary,
+            ? `${renderRes?.tracking?.summary || ""} · ✂ Tightened: ${exactDuration}s → ${finalDuration}s${keep.fillersRemoved > 0 ? ` (${keep.fillersRemoved} filler${keep.fillersRemoved === 1 ? "" : "s"} cut)` : ""}`
+            : [renderRes?.tracking?.summary, fxSummary].filter(Boolean).join(" · ") || undefined,
           hookStrength: clip.hookStrength,
           engagementScore: clip.engagementScore,
           trendMatch: clip.trendMatch,

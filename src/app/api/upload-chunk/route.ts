@@ -148,6 +148,9 @@ export async function POST(req: NextRequest) {
       openaiKey: (body.openaiKey || "").trim?.() || undefined,
       claudeKey: (body.claudeKey || "").trim?.() || undefined,
       preferredModel: (body.preferredModel || "").trim?.() || undefined,
+      broll: body.broll === true,
+      musicBed: body.musicBed === true,
+      pexelsKey: (body.pexelsKey || "").trim?.() || undefined,
     };
 
     const jobId = `job_${crypto.randomUUID()}`;

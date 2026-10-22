@@ -20,6 +20,7 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
   const [openaiKey, setOpenaiKey] = useState("");
   const [claudeKey, setClaudeKey] = useState("");
   const [groqKey, setGroqKey] = useState("");
+  const [pexelsKey, setPexelsKey] = useState("");
   const [preferredModel, setPreferredModel] = useState<"claude-3-5-haiku" | "gpt-4o-mini" | "claude-3-5-sonnet">("claude-3-5-haiku");
   const [youtubeCookies, setYoutubeCookies] = useState("");
   const [youtubeProxy, setYoutubeProxy] = useState("");
@@ -47,6 +48,7 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
         storedOpenai = localStorage.getItem("opus_openai_key") || "";
         storedClaude = localStorage.getItem("opus_claude_key") || "";
         storedGroq = localStorage.getItem("opus_groq_key") || "";
+        setPexelsKey(localStorage.getItem("opus_pexels_key") || "");
         storedModel = (localStorage.getItem("opus_preferred_model") as any) || "claude-3-5-haiku";
         storedCookies = localStorage.getItem("opus_youtube_cookies") || "";
         storedProxy = localStorage.getItem("opus_youtube_proxy") || "";
@@ -93,6 +95,7 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
       localStorage.setItem("opus_openai_key", openaiKey.trim());
       localStorage.setItem("opus_claude_key", claudeKey.trim());
       localStorage.setItem("opus_groq_key", groqKey.trim());
+      localStorage.setItem("opus_pexels_key", pexelsKey.trim());
       localStorage.setItem("opus_preferred_model", preferredModel);
       localStorage.setItem("opus_youtube_cookies", youtubeCookies.trim());
       localStorage.setItem("opus_youtube_proxy", youtubeProxy.trim());
@@ -238,6 +241,22 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
             />
             <p className="text-[10px] font-bold text-[#555555] mt-1">
               Recommended: one free Groq key alone runs the whole pipeline — transcription via Whisper and curation via Llama.
+            </p>
+          </div>
+
+          <div>
+            <label className="block text-xs font-black uppercase text-black mb-1">
+              Pexels API Key (Stock B-Roll — Optional)
+            </label>
+            <input
+              type="password"
+              value={pexelsKey}
+              onChange={(e) => setPexelsKey(e.target.value)}
+              placeholder="Free key from pexels.com/api"
+              className="w-full neo-input py-2.5 px-3 text-base sm:text-sm font-mono"
+            />
+            <p className="text-[10px] font-bold text-[#555555] mt-1">
+              Enables stock VIDEO cutaways for AI B-Roll. Without it, B-Roll still works with free photos via Openverse.
             </p>
           </div>
 
