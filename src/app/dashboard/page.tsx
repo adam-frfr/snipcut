@@ -85,6 +85,14 @@ function DashboardContent() {
   const [hasServerKey, setHasServerKey] = useState(true);
   const [tokenPromptOpen, setTokenPromptOpen] = useState(false);
   const [inputToken, setInputToken] = useState("");
+  const [tokenError, setTokenError] = useState("");
+  // After the user cancels the token prompt, background 401s (job polling,
+  // retries) must not keep reopening it every few seconds — that trapped
+  // anyone with a wrong/expired stored token in an endless modal loop.
+  const tokenPromptSuppressedRef = React.useRef(false);
+  const openTokenPrompt = () => {
+    if (!tokenPromptSuppressedRef.current) setTokenPromptOpen(true);
+  };
 
   // Phase 4: Async Job State & Worker Polling
   const [currentJobId, setCurrentJobId] = useState<string | null>(null);
@@ -125,26 +133,7 @@ function DashboardContent() {
       label: string;
       details: string;
     }[]
-  >([
-    {
-      start: 0,
-      end: 1.5,
-      position: "left",
-      crop_x: 0,
-      subject_center_x: 240,
-      label: "Speaker Reaction (Left)",
-      details: "Active focus on speaker reaction facecam",
-    },
-    {
-      start: 1.5,
-      end: 30,
-      position: "center",
-      crop_x: 553,
-      subject_center_x: 857,
-      label: "Main Action (Center)",
-      details: "Main video stage & action",
-    },
-  ]);
+  >([]);
 
   // Sync video time when selected clip changes
   useEffect(() => {
@@ -320,7 +309,7 @@ function DashboardContent() {
         });
 
         if (res.status === 401) {
-          setTokenPromptOpen(true);
+          openTokenPrompt();
           return;
         }
 
@@ -447,7 +436,7 @@ function DashboardContent() {
         headers: { "Content-Type": "application/json", ...getAuthHeaders() },
       });
       if (res.status === 401) {
-        setTokenPromptOpen(true);
+        openTokenPrompt();
         return;
       }
       const data = await res.json();
@@ -514,7 +503,7 @@ function DashboardContent() {
                 body: fd,
               });
               if (r.status === 401) {
-                setTokenPromptOpen(true);
+                openTokenPrompt();
                 throw new Error("Access token required or invalid. Please provide APP_ACCESS_TOKEN.");
               }
               if (!r.ok) throw new Error(`chunk ${i} rejected (HTTP ${r.status})`);
@@ -592,7 +581,7 @@ function DashboardContent() {
       }
 
       if (res.status === 401) {
-        setTokenPromptOpen(true);
+        openTokenPrompt();
         throw new Error("Access token required or invalid. Please provide APP_ACCESS_TOKEN.");
       }
 
@@ -636,12 +625,24 @@ function DashboardContent() {
           aspectRatio: clip.aspectRatio || "9:16",
           reframeMode: reframeMode,
           splitScreen: reframeMode === "split-screen",
-          transcript: clip.transcript,
+          // clip.transcript is stored clip-relative (for the editor's
+          // display); /api/render-clip expects source-absolute word times,
+          // so rebase on send — the same pattern the editor uses.
+          transcript: (clip.transcript || []).map((w) => ({
+            ...w,
+            start: w.start + clip.startTime,
+            end: w.end + clip.startTime,
+          })),
           headline: clip.hookHeadline || clip.title,
           captionStyle: clip.captionStyle || "hormozi",
         }),
       });
-      const data = await res.json();
+      let data: any = {};
+      try {
+        data = await res.json();
+      } catch {
+        throw new Error("The server reply was cut off — please retry the render.");
+      }
       if (!res.ok || data.error) {
         throw new Error(data.error || "FFmpeg rendering failed");
       }
@@ -1049,7 +1050,7 @@ function DashboardContent() {
                   <div className="lg:col-span-5 space-y-5">
                     <div className="bg-white p-6 border-2 border-black shadow-[6px_6px_0px_#000000] flex flex-col items-center">
                       {/* Vertical Video Viewport */}
-                      <div className="relative w-[260px] sm:w-[280px] h-[480px] bg-black border-2 border-black overflow-hidden shadow-[4px_4px_0px_#000000] flex flex-col">
+                      <div className="relative w-[260px] max-w-full sm:w-[280px] h-[480px] bg-black border-2 border-black overflow-hidden shadow-[4px_4px_0px_#000000] flex flex-col">
                         <div className="relative flex-1 bg-black flex flex-col justify-center items-center overflow-hidden">
                           {/* Reframe Mode Floating Tag */}
                           <div className="absolute top-3 left-3 z-30 flex items-center gap-1.5 px-2.5 py-1 bg-black text-[10px] font-black uppercase text-[#FFC700] border-2 border-[#FFC700] pointer-events-none">
@@ -1466,7 +1467,7 @@ function DashboardContent() {
                   value={urlInput}
                   onChange={(e) => setUrlInput(e.target.value)}
                   placeholder="https://www.youtube.com/watch?v=..."
-                  className="w-full bg-[#F8F7F4] text-black text-sm px-4 py-3 border-2 border-black placeholder:text-neutral-500 focus:outline-none focus:bg-white focus:shadow-[3px_3px_0px_#000000] transition-all font-mono"
+                  className="w-full bg-[#F8F7F4] text-black text-base sm:text-sm px-4 py-3 border-2 border-black placeholder:text-neutral-500 focus:outline-none focus:bg-white focus:shadow-[3px_3px_0px_#000000] transition-all font-mono"
                 />
 
                 {/* 1-Click Samples (Clean badges without emojis) */}
@@ -1546,7 +1547,7 @@ function DashboardContent() {
                   value={promptInput}
                   onChange={(e) => setPromptInput(e.target.value)}
                   placeholder="e.g. Focus on AI discussion, extract the funny story..."
-                  className="w-full bg-[#F8F7F4] text-black text-sm px-4 py-2.5 border-2 border-black placeholder:text-neutral-500 focus:outline-none focus:bg-white focus:shadow-[3px_3px_0px_#000000] transition-all"
+                  className="w-full bg-[#F8F7F4] text-black text-base sm:text-sm px-4 py-2.5 border-2 border-black placeholder:text-neutral-500 focus:outline-none focus:bg-white focus:shadow-[3px_3px_0px_#000000] transition-all"
                 />
               </div>
 
@@ -1575,14 +1576,22 @@ function DashboardContent() {
               <input
                 type="password"
                 value={inputToken}
-                onChange={(e) => setInputToken(e.target.value)}
+                onChange={(e) => { setInputToken(e.target.value); setTokenError(""); }}
                 placeholder="Enter access token..."
-                className="w-full bg-white border-2 border-black px-4 py-2.5 text-base sm:text-sm text-black mb-4 focus:outline-none focus:shadow-[3px_3px_0px_#000000]"
+                className="w-full bg-white border-2 border-black px-4 py-2.5 text-base sm:text-sm text-black mb-2 focus:outline-none focus:shadow-[3px_3px_0px_#000000]"
               />
+              {tokenError ? (
+                <p className="text-xs font-bold text-red-600 mb-3">{tokenError}</p>
+              ) : (
+                <div className="mb-2" />
+              )}
               <div className="flex justify-end gap-2">
                 <button
                   type="button"
-                  onClick={() => setTokenPromptOpen(false)}
+                  onClick={() => {
+                    tokenPromptSuppressedRef.current = true;
+                    setTokenPromptOpen(false);
+                  }}
                   className="px-4 py-2 border-2 border-black text-xs font-black uppercase hover:bg-neutral-200"
                 >
                   Cancel

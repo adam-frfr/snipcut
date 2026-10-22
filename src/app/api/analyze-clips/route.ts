@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
     }
     const { transcriptText, words, segments, duration, customPrompt, model, openaiKey, claudeKey, groqKey } = body;
 
-    if (!transcriptText) {
+    if (!transcriptText || typeof transcriptText !== "string") {
       return NextResponse.json(
         { error: "Transcript text is required for AI clip analysis" },
         { status: 400 }

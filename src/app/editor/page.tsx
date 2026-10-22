@@ -629,7 +629,7 @@ function EditorContent() {
             value={headline}
             onChange={(e) => setHeadline(e.target.value)}
             placeholder="Hook headline shown on the clip"
-            className="w-full neo-input py-2 px-2.5 text-xs font-bold mb-4"
+            className="w-full neo-input py-2 px-2.5 text-base sm:text-xs font-bold mb-4"
           />
 
           <label className="text-[10px] font-bold uppercase text-neutral-500 flex justify-between mb-1">

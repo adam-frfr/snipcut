@@ -40,6 +40,18 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Non-numeric values would otherwise flow into ffmpeg as NaN and fail
+    // with an opaque 500.
+    if (
+      typeof startTime !== "number" || !Number.isFinite(startTime) || startTime < 0 ||
+      typeof duration !== "number" || !Number.isFinite(duration) || duration <= 0
+    ) {
+      return NextResponse.json(
+        { error: "startTime and duration must be valid numbers" },
+        { status: 400 }
+      );
+    }
+
     const outputDir = path.join(process.cwd(), "public", "rendered_clips");
     const outputFilename = `clip-${Date.now()}.mp4`;
     const outputPath = path.join(outputDir, outputFilename);

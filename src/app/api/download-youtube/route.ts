@@ -249,7 +249,7 @@ export async function POST(req: NextRequest) {
           error: isBotBlocked
             ? "YouTube has bot-checked this cloud server IP for this video. You can upload the video file directly (drag & drop below) or add YouTube cookies in API Settings."
             : "Video download failed. Please upload your video file directly or try another link.",
-          isBotBlocked: true,
+          isBotBlocked,
           suggestion: "upload_direct",
         },
         { status: 422 }
@@ -298,7 +298,7 @@ export async function POST(req: NextRequest) {
         error:
           err?.message ||
           "Failed to download YouTube video. Please upload your MP4 file directly.",
-        isBotBlocked: true,
+        isBotBlocked: false,
       },
       { status: 500 }
     );

@@ -20,6 +20,38 @@ export interface TranscribeResult {
  * Transcribes audio file using Groq Whisper (primary) or OpenAI Whisper (fallback)
  * Supports audio chunking if file size exceeds Groq's 25MB threshold.
  */
+/**
+ * Some provider responses (or individual chunks) omit word-level timestamps
+ * while still returning segments. Without words, karaoke captions, silence
+ * removal and the editor transcript all go empty. Synthesize evenly-spaced
+ * word timings from the segment text so captions always exist.
+ */
+function ensureWords<T extends { words?: any[]; segments?: any[] }>(result: T): T {
+  if ((result.words && result.words.length > 0) || !result.segments || result.segments.length === 0) {
+    return result;
+  }
+  const words: { word: string; start: number; end: number }[] = [];
+  for (const seg of result.segments as any[]) {
+    const tokens = String(seg.text || "").trim().split(/\s+/).filter(Boolean);
+    if (tokens.length === 0) continue;
+    const segStart = Number(seg.start) || 0;
+    const segEnd = Number(seg.end) || segStart;
+    const step = Math.max(0.05, (segEnd - segStart) / tokens.length);
+    tokens.forEach((tok, i) => {
+      words.push({
+        word: tok,
+        start: Number((segStart + i * step).toFixed(2)),
+        end: Number((segStart + (i + 1) * step).toFixed(2)),
+      });
+    });
+  }
+  if (words.length > 0) {
+    console.log(`[Stage: Transcribe] Provider returned no word timestamps; synthesized ${words.length} words from segments`);
+    return { ...result, words };
+  }
+  return result;
+}
+
 export async function transcribeAudioFile(
   audioPath: string,
   keys: { groqKey?: string; openaiKey?: string } = {}
@@ -84,13 +116,13 @@ export async function transcribeAudioFile(
         try { fs.rmdirSync(chunkDir); } catch {}
 
         const merged = mergeAndDeduplicateChunkTranscripts(chunkOutputs, totalDur);
-        return {
+        return ensureWords({
           text: merged.text,
           words: merged.words,
           segments: merged.segments,
           duration: merged.duration,
           provider: `groq-whisper-large-v3-turbo (${chunks.length} chunks)`,
-        };
+        });
       } else {
         const res = (await groq.audio.transcriptions.create({
           file: fs.createReadStream(audioPath) as any,
@@ -102,13 +134,13 @@ export async function transcribeAudioFile(
         const duration = await probeAudioDuration(audioPath);
         console.log(`[Stage: Transcribe] Groq Whisper API finished in ${Date.now() - whisperApiStartTime}ms`);
 
-        return {
+        return ensureWords({
           text: res.text || "",
           words: res.words || [],
           segments: res.segments || [],
           duration: res.duration || duration,
           provider: "groq-whisper-large-v3-turbo",
-        };
+        });
       }
     } catch (groqErr: any) {
       console.warn("[Stage: Transcribe] Groq Whisper API error, trying next key / OpenAI fallback:", groqErr?.message || groqErr);
@@ -131,13 +163,13 @@ export async function transcribeAudioFile(
       const duration = await probeAudioDuration(audioPath);
       console.log(`[Stage: Transcribe] OpenAI Whisper API finished in ${Date.now() - whisperApiStartTime}ms`);
 
-      return {
+      return ensureWords({
         text: res.text || "",
         words: res.words || [],
         segments: res.segments || [],
         duration: res.duration || duration,
         provider: "openai-whisper-1",
-      };
+      });
     } catch (openaiErr: any) {
       console.warn("[Stage: Transcribe] OpenAI Whisper API error:", openaiErr?.message || openaiErr);
     }

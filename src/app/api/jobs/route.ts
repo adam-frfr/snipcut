@@ -30,6 +30,15 @@ export async function POST(req: NextRequest) {
 
     if (contentType.includes("multipart/form-data")) {
       // 1. Multipart Form Data (File Upload)
+      // Upload size guard (2 GB, matching the landing page's promise):
+      // reject before the pipeline spends RAM/CPU on an unbounded file.
+      const declaredLen = Number(req.headers.get("content-length") || 0);
+      if (declaredLen > 2_300_000_000) {
+        return NextResponse.json(
+          { error: "That file is over the 2 GB upload limit. Trim it or compress it and try again." },
+          { status: 413 }
+        );
+      }
       const formData = await req.formData();
       const file = formData.get("file") as File;
 
@@ -142,6 +151,10 @@ export async function POST(req: NextRequest) {
         preferredModel,
       } = body;
 
+      if (youtubeUrl !== undefined && youtubeUrl !== null && typeof youtubeUrl !== "string") {
+        return NextResponse.json({ error: "youtubeUrl must be a string" }, { status: 400 });
+      }
+
       options = {
         sourceType: youtubeUrl ? "youtube" : "upload",
         youtubeUrl,
@@ -178,11 +191,11 @@ export async function POST(req: NextRequest) {
           const { arg: cookieArg, tempFile: tempCookiePath } = resolveCookieArg(cookies);
 
           // Proxy handling
-          let proxyArg = "";
           const activeProxy = proxy || process.env.YOUTUBE_PROXY || process.env.HTTP_PROXY || "";
-          if (activeProxy && activeProxy.trim().length > 5) {
-            proxyArg = `--proxy "${activeProxy.trim()}"`;
-          }
+          const proxyArgs: string[] =
+            activeProxy && activeProxy.trim().length > 5 ? ["--proxy", activeProxy.trim()] : [];
+          const cookiePath = cookieArg.match(/"([^"]+)"/)?.[1];
+          const cookieArgs: string[] = cookiePath ? ["--cookies", cookiePath] : [];
 
         // Resolution before codec: an avc1-only preference grabs 360p on older
         // uploads even when 1080p VP9 exists (verified on a real MIT lecture).
@@ -190,14 +203,25 @@ export async function POST(req: NextRequest) {
         const preferredFormat =
           "bestvideo[vcodec^=avc1][height<=1080]+bestaudio[ext=m4a]/bestvideo[height>=720][height<=1080]+bestaudio/bestvideo[vcodec^=avc1][height<=1080]+bestaudio/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best";
 
-        const cmd = `"${ytDlp}" --js-runtimes node --ffmpeg-location "${ffmpegBin}" ${cookieArg} ${proxyArg} --extractor-args "youtube:player_client=android,ios,web" -f "${preferredFormat}" --no-warnings --ignore-errors --merge-output-format mp4 -o "${outTemplate}" "${youtubeUrl}"`;
+        // Args array (no shell): a URL or proxy value containing quotes can
+        // no longer break the command line.
+        const dlArgs = [
+          "--js-runtimes", "node",
+          "--ffmpeg-location", ffmpegBin,
+          ...cookieArgs,
+          ...proxyArgs,
+          "--extractor-args", "youtube:player_client=android,ios,web",
+          "-f", preferredFormat,
+          "--no-warnings", "--ignore-errors",
+          "--merge-output-format", "mp4",
+          "-o", outTemplate,
+          youtubeUrl,
+        ];
 
         try {
-          const { exec } = require("child_process");
-          const execP = util.promisify(exec);
           // Long videos at 1080p can take several minutes to download + merge;
           // 180s was killing healthy downloads mid-flight (verified: 196MB .part at kill time)
-          await execP(cmd, { timeout: 900000, maxBuffer: 64 * 1024 * 1024 });
+          await execFilePromise(ytDlp, dlArgs, { timeout: 900000, maxBuffer: 64 * 1024 * 1024 });
         } catch (dlErr: any) {
           const raw = `${dlErr?.stderr || ""} ${dlErr?.message || ""}`;
           throw new Error(friendlyDownloadError(raw));

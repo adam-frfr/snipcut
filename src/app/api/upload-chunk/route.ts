@@ -109,7 +109,8 @@ export async function POST(req: NextRequest) {
       await new Promise<void>((resolve, reject) => out.write(data, (e) => (e ? reject(e) : resolve())));
     }
     await new Promise<void>((resolve, reject) => out.end((e?: Error | null) => (e ? reject(e) : resolve())));
-    fs.rmSync(dir, { recursive: true, force: true });
+    // NOTE: the chunk dir is deleted only after the job is created (below).
+    // Deleting here would force a full re-upload if the transcode failed.
 
     // Probe + normalize to a web-playable MP4 (mirrors /api/jobs multipart)
     const webMp4Filename = `${baseName}.mp4`;
@@ -165,6 +166,7 @@ export async function POST(req: NextRequest) {
 
     saveJobRecord(jobRecord);
     jobQueue.enqueue(jobId);
+    fs.rmSync(dir, { recursive: true, force: true });
     console.log(`[Stage: UploadChunk] Assembled ${totalChunks} chunks and enqueued job ${jobId}`);
 
     return NextResponse.json(

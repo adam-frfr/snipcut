@@ -28,26 +28,41 @@ export default function HeroSection() {
       try {
         const formData = new FormData();
         formData.append("file", uploadFile);
+        const storedToken =
+          typeof window !== "undefined" ? localStorage.getItem("app_access_token") : null;
         const res = await fetch("/api/upload", {
           method: "POST",
+          headers: storedToken ? { "x-app-access-token": storedToken } : {},
           body: formData,
         });
-        const data = await res.json();
-        if (data.filePath) {
-          const params = new URLSearchParams({
-            filePath: data.filePath,
-            fileUrl: data.fileUrl,
-            fileName: data.fileName,
-            prompt: promptInput,
-            duration: selectedDuration,
-            ratio: selectedRatio,
-            autostart: "true",
-          });
-          router.push(`/dashboard?${params.toString()}`);
-          return;
+        let data: any = {};
+        try {
+          data = await res.json();
+        } catch {
+          throw new Error("The upload reply was cut off — please try again.");
         }
-      } catch (err) {
-        alert("Upload failed. Please try again.");
+        // /api/upload returns { fileId, fileUrl, fileName }; the dashboard's
+        // autostart expects them as filePath + fileUrl query params.
+        if (!res.ok || !data.fileId) {
+          throw new Error(
+            res.status === 401
+              ? "This server needs an access token. Open the Studio dashboard once and enter it, then come back and upload here."
+              : data.error || "Upload failed. Please try again."
+          );
+        }
+        const params = new URLSearchParams({
+          filePath: data.fileId,
+          fileUrl: data.fileUrl,
+          fileName: data.fileName,
+          prompt: promptInput,
+          duration: selectedDuration,
+          ratio: selectedRatio,
+          autostart: "true",
+        });
+        router.push(`/dashboard?${params.toString()}`);
+        return;
+      } catch (err: any) {
+        alert(err?.message || "Upload failed. Please try again.");
       } finally {
         setIsUploading(false);
       }
@@ -145,7 +160,7 @@ export default function HeroSection() {
                     value={urlInput}
                     onChange={(e) => setUrlInput(e.target.value)}
                     placeholder="https://www.youtube.com/watch?v=..."
-                    className="w-full neo-input py-3 pl-4 pr-4 text-xs sm:text-sm font-bold text-black placeholder:text-[#999999]"
+                    className="w-full neo-input py-3 pl-4 pr-4 text-base sm:text-sm font-bold text-black placeholder:text-[#999999]"
                   />
                 </div>
 
@@ -206,7 +221,7 @@ export default function HeroSection() {
                 value={promptInput}
                 onChange={(e) => setPromptInput(e.target.value)}
                 placeholder="e.g. Find key insights about future tech or the funniest moment"
-                className="w-full neo-input py-2.5 px-3.5 text-xs font-bold text-black placeholder:text-[#999999]"
+                className="w-full neo-input py-2.5 px-3.5 text-base sm:text-xs font-bold text-black placeholder:text-[#999999]"
               />
             </div>
 

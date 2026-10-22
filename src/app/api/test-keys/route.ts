@@ -27,9 +27,9 @@ export async function POST(req: NextRequest) {
       groq?: { valid: boolean; message: string };
     } = {};
 
-    const activeOpenai = (openaiKey || "").trim();
-    const activeClaude = (claudeKey || "").trim();
-    const activeGroq = (groqKey || process.env.GROQ_API_KEY || "").trim();
+    const activeOpenai = (typeof openaiKey === "string" ? openaiKey : "").trim();
+    const activeClaude = (typeof claudeKey === "string" ? claudeKey : "").trim();
+    const activeGroq = (typeof groqKey === "string" ? groqKey : process.env.GROQ_API_KEY || "").trim();
 
     if (!activeOpenai && !activeClaude && !activeGroq) {
       return NextResponse.json({ error: "No API key provided" }, { status: 400 });

@@ -180,7 +180,8 @@ export function saveJobRecord(job: JobRecord): void {
  * Load job state from data/jobs/<id>.json
  */
 export function getJobRecord(id: string): JobRecord | null {
-  const filePath = path.join(JOBS_DIR, `${id}.json`);
+  // basename(): a crafted id with ../ segments must not escape JOBS_DIR.
+  const filePath = path.join(JOBS_DIR, `${path.basename(id)}.json`);
   if (!fs.existsSync(filePath)) return null;
   try {
     const data = fs.readFileSync(filePath, "utf-8");
@@ -220,6 +221,23 @@ export function cleanupExpiredFiles(retentionHours = 24): { deletedFiles: number
           if (stat.isFile() && now - stat.mtimeMs > maxAgeMs) {
             freedBytes += stat.size;
             fs.unlinkSync(fullPath);
+            deletedFiles++;
+          }
+        } catch {}
+      }
+    } catch {}
+  }
+
+  // Abandoned chunked-upload dirs (per-upload subdirectories of .part files)
+  const chunkRoot = path.join(process.cwd(), "data", "chunk-uploads");
+  if (fs.existsSync(chunkRoot)) {
+    try {
+      for (const entry of fs.readdirSync(chunkRoot)) {
+        const fullPath = path.join(chunkRoot, entry);
+        try {
+          const stat = fs.statSync(fullPath);
+          if (stat.isDirectory() && now - stat.mtimeMs > maxAgeMs) {
+            fs.rmSync(fullPath, { recursive: true, force: true });
             deletedFiles++;
           }
         } catch {}

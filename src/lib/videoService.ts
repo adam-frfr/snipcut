@@ -374,7 +374,8 @@ interface KaraokeWord {
 export function buildKaraokeAss(
   words: KaraokeWord[],
   captionStyle: "hormozi" | "neon" | "beast" | "clean",
-  marginV: number
+  marginV: number,
+  playRes: { x: number; y: number } = { x: 1080, y: 1920 }
 ): string {
   // ASS colours are &HAABBGGRR.
   const palettes = {
@@ -384,18 +385,21 @@ export function buildKaraokeAss(
     clean: { base: "&H00FFFFFF", accent: "&H00FFFFFF", size: 46, outline: 3 },
   } as const;
   const pal = palettes[captionStyle] || palettes.hormozi;
+  // Font size is authored against a 1920px-tall canvas; scale it to the
+  // actual PlayRes so 16:9 / 1:1 renders don't get oversized captions.
+  const fontSize = Math.max(20, Math.round(pal.size * (playRes.y / 1920)));
 
   const header = `[Script Info]
 Title: OpusClip Karaoke Captions
 ScriptType: v4.00+
-PlayResX: 1080
-PlayResY: 1920
+PlayResX: ${playRes.x}
+PlayResY: ${playRes.y}
 WrapStyle: 2
 ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Karaoke,Arial,${pal.size},${pal.base},${pal.base},&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,${pal.outline},2,2,60,60,${marginV},1
+Style: Karaoke,Arial,${fontSize},${pal.base},${pal.base},&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,${pal.outline},2,2,60,60,${marginV},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -662,6 +666,15 @@ export async function renderVideoClip({
       .setDuration(duration);
 
     // Prepare subtitles
+    // Emoji have no glyphs in the caption fonts (Arial/Liberation) and burn
+    // as blank boxes — strip them from the headline fallback text only
+    // (titles elsewhere keep their emoji).
+    const burnHeadline = headline
+      ? headline
+          .replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{2B00}-\u{2BFF}]/gu, "")
+          .replace(/\s+/g, " ")
+          .trim()
+      : headline;
     let tempSrtPath: string | null = null;
     let srtEntries: { start: number; end: number; text: string }[] = [];
 
@@ -687,12 +700,12 @@ export async function renderVideoClip({
           text: wordText.toUpperCase(),
         };
       });
-    } else if (headline) {
+    } else if (burnHeadline) {
       srtEntries = [
         {
           start: 0,
           end: duration,
-          text: headline.toUpperCase(),
+          text: burnHeadline.toUpperCase(),
         },
       ];
     }
@@ -700,12 +713,12 @@ export async function renderVideoClip({
     // Words were supplied but none landed inside this render window
     // (misaligned timings) — never ship a silently caption-less clip when
     // a headline exists to fall back on.
-    if (srtEntries.length === 0 && headline) {
+    if (srtEntries.length === 0 && burnHeadline) {
       srtEntries = [
         {
           start: 0,
           end: duration,
-          text: headline.toUpperCase(),
+          text: burnHeadline.toUpperCase(),
         },
       ];
     }
@@ -714,14 +727,21 @@ export async function renderVideoClip({
     if (srtEntries.length > 0) {
       // Karaoke ASS: the whole phrase stays on screen, the spoken word is
       // highlighted. (Previously one SRT entry per word in a single colour.)
-      let marginV = 520;
+      const playRes =
+        aspectRatio === "16:9"
+          ? { x: 1920, y: 1080 }
+          : aspectRatio === "1:1"
+            ? { x: 1080, y: 1080 }
+            : { x: 1080, y: 1920 };
+      let marginV = Math.round(playRes.y * 0.27);
       if (captionPositionY !== undefined) {
-        marginV = Math.max(60, Math.min(1800, Math.round(1920 * (1 - captionPositionY / 100))));
+        marginV = Math.max(60, Math.min(playRes.y - 120, Math.round(playRes.y * (1 - captionPositionY / 100))));
       }
       const assContent = buildKaraokeAss(
         srtEntries.map((e) => ({ start: e.start, end: e.end, text: e.text })),
         captionStyle,
-        marginV
+        marginV,
+        playRes
       );
 
       tempSrtPath = path.join(dir, `sub-${Date.now()}-${Math.floor(Math.random() * 1000)}.ass`);
