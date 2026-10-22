@@ -482,23 +482,65 @@ function DashboardContent() {
       };
 
       if (uploadFile) {
-        setProcessingStage("Uploading video file to server...");
-        const formData = new FormData();
-        formData.append("file", uploadFile);
-        if (prompt || promptInput) formData.append("customPrompt", prompt || promptInput);
-        formData.append("aspectRatio", "9:16");
-        formData.append("reframeMode", reframeMode);
-        formData.append("captionStyle", "hormozi");
-        formData.append("removeSilences", removeSilences ? "true" : "false");
-        if (storedApiKeys.groqKey) formData.append("groqKey", storedApiKeys.groqKey);
-        if (storedApiKeys.openaiKey) formData.append("openaiKey", storedApiKeys.openaiKey);
-        if (storedApiKeys.claudeKey) formData.append("claudeKey", storedApiKeys.claudeKey);
-        if (storedApiKeys.preferredModel) formData.append("preferredModel", storedApiKeys.preferredModel);
+        // Chunked upload: a single all-or-nothing POST of a 10MB+ file dies
+        // whenever the connection hiccups mid-body (ECONNRESET on slower
+        // uplinks). Send 2MB pieces instead — each is quick and retried
+        // individually — then the server assembles them and creates the job.
+        const CHUNK_SIZE = 2 * 1024 * 1024;
+        const uploadId = crypto.randomUUID();
+        const totalChunks = Math.max(1, Math.ceil(uploadFile.size / CHUNK_SIZE));
 
-        res = await fetch("/api/jobs", {
+        for (let i = 0; i < totalChunks; i++) {
+          const blob = uploadFile.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+          let sent = false;
+          for (let attempt = 1; attempt <= 3 && !sent; attempt++) {
+            try {
+              const fd = new FormData();
+              fd.append("uploadId", uploadId);
+              fd.append("index", String(i));
+              fd.append("chunk", blob, `part-${i}`);
+              const r = await fetch("/api/upload-chunk", {
+                method: "POST",
+                headers: { ...getAuthHeaders() },
+                body: fd,
+              });
+              if (r.status === 401) {
+                setTokenPromptOpen(true);
+                throw new Error("Access token required or invalid. Please provide APP_ACCESS_TOKEN.");
+              }
+              if (!r.ok) throw new Error(`chunk ${i} rejected (HTTP ${r.status})`);
+              sent = true;
+            } catch (chunkErr: any) {
+              if (chunkErr?.message?.includes("Access token")) throw chunkErr;
+              if (attempt === 3) {
+                throw new Error(
+                  "The upload kept dropping — your connection to the server is unstable right now, so the file never fully arrived. Wait a few seconds and press Run again; nothing was lost."
+                );
+              }
+              setProcessingStage(`Upload connection dropped — retrying piece ${i + 1} of ${totalChunks} (attempt ${attempt + 1})...`);
+              await new Promise((resolve) => setTimeout(resolve, 1500 * attempt));
+            }
+          }
+          const pct = Math.round(((i + 1) / totalChunks) * 100);
+          setProcessingStage(`Uploading video file to server... ${pct}%`);
+          setJobProgress(5 + Math.round(((i + 1) / totalChunks) * 10));
+        }
+
+        res = await fetch("/api/upload-chunk", {
           method: "POST",
-          headers: { ...getAuthHeaders() },
-          body: formData,
+          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+          body: JSON.stringify({
+            action: "finalize",
+            uploadId,
+            totalChunks,
+            fileName: uploadFile.name,
+            customPrompt: prompt || promptInput,
+            aspectRatio: "9:16",
+            reframeMode,
+            captionStyle: "hormozi",
+            removeSilences,
+            ...storedApiKeys,
+          }),
         });
       } else if (url) {
         setProcessingStage("Enqueuing video URL for download and AI processing...");
@@ -545,7 +587,14 @@ function DashboardContent() {
         throw new Error("Access token required or invalid. Please provide APP_ACCESS_TOKEN.");
       }
 
-      const data = await res.json();
+      let data: any;
+      try {
+        data = await res.json();
+      } catch {
+        throw new Error(
+          "The server's reply was cut off — the connection dropped at the last step. Please press Run again; if it keeps happening, the hosting connection is having a bad spell."
+        );
+      }
       if (!res.ok || data.error) {
         throw new Error(data.error || "Failed to create processing job");
       }
