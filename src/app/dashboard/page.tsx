@@ -46,6 +46,7 @@ export interface RealClip {
   engagementScore: number;
   trendMatch: number;
   viralityReason: string;
+  description?: string;
   transcript: {
     start: number;
     end: number;
@@ -112,6 +113,7 @@ function DashboardContent() {
   };
 
   const [reframeMode, setReframeMode] = useState<"auto-tracker" | "split-screen" | "blurred-fit" | "center">("auto-tracker");
+  const [removeSilences, setRemoveSilences] = useState(false);
   const [lastTrackingSummary, setLastTrackingSummary] = useState<string>("");
   const [dynamicShots, setDynamicShots] = useState<
     {
@@ -393,6 +395,7 @@ function DashboardContent() {
               engagementScore: c.engagementScore || 90,
               trendMatch: c.trendMatch || 92,
               viralityReason: c.viralityReason || "High-retention narrative segment",
+              description: c.description || rendered?.description || "",
               aspectRatio: job.options?.aspectRatio || "9:16",
               captionStyle: job.options?.captionStyle || "hormozi",
               transcript: clipWords,
@@ -486,6 +489,7 @@ function DashboardContent() {
         formData.append("aspectRatio", "9:16");
         formData.append("reframeMode", reframeMode);
         formData.append("captionStyle", "hormozi");
+        formData.append("removeSilences", removeSilences ? "true" : "false");
         if (storedApiKeys.groqKey) formData.append("groqKey", storedApiKeys.groqKey);
         if (storedApiKeys.openaiKey) formData.append("openaiKey", storedApiKeys.openaiKey);
         if (storedApiKeys.claudeKey) formData.append("claudeKey", storedApiKeys.claudeKey);
@@ -510,6 +514,7 @@ function DashboardContent() {
             aspectRatio: "9:16",
             reframeMode,
             captionStyle: "hormozi",
+            removeSilences,
             cookies: storedCookies,
             proxy: storedProxy,
             ...storedApiKeys,
@@ -527,6 +532,7 @@ function DashboardContent() {
             aspectRatio: "9:16",
             reframeMode,
             captionStyle: "hormozi",
+            removeSilences,
             ...storedApiKeys,
           }),
         });
@@ -1341,6 +1347,26 @@ function DashboardContent() {
                       <p className="text-xs text-neutral-800 leading-relaxed font-medium">
                         {selectedClip.viralityReason}
                       </p>
+                      <div className="flex gap-3 mt-3 text-[11px] font-black uppercase tracking-wide">
+                        <span className="px-2 py-1 border border-black bg-white">Hook {selectedClip.hookStrength}</span>
+                        <span className="px-2 py-1 border border-black bg-white">Retention {selectedClip.engagementScore}</span>
+                        <span className="px-2 py-1 border border-black bg-white">Trend {selectedClip.trendMatch}</span>
+                      </div>
+                      {selectedClip.description && (
+                        <div className="mt-3 pt-3 border-t border-dashed border-neutral-300">
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-[10px] font-black uppercase tracking-wider text-neutral-500">Post caption</span>
+                            <button
+                              type="button"
+                              onClick={() => navigator.clipboard?.writeText(selectedClip.description || "")}
+                              className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 border border-black bg-[#FFC700] hover:bg-[#ffd83d]"
+                            >
+                              Copy
+                            </button>
+                          </div>
+                          <p className="text-xs text-neutral-800 leading-relaxed font-medium">{selectedClip.description}</p>
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
@@ -1428,6 +1454,23 @@ function DashboardContent() {
                     {uploadFile ? `${(uploadFile.size / (1024 * 1024)).toFixed(1)} MB` : "Up to 2GB MP4 / MOV"}
                   </div>
                 </div>
+              </div>
+
+              <div>
+                <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={removeSilences}
+                    onChange={(e) => setRemoveSilences(e.target.checked)}
+                    className="w-4 h-4 accent-black cursor-pointer"
+                  />
+                  <span className="text-xs font-black uppercase tracking-wider text-black">
+                    Remove silences, pauses &amp; fillers
+                  </span>
+                  <span className="text-[10px] font-medium text-neutral-500 normal-case tracking-normal">
+                    Tightens each clip by cutting pauses over half a second and um/uh fillers
+                  </span>
+                </label>
               </div>
 
               <div>

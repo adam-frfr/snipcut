@@ -351,6 +351,97 @@ function formatSrtTime(seconds: number): string {
   return `${h < 10 ? "0" : ""}${h}:${m < 10 ? "0" : ""}${m}:${s < 10 ? "0" : ""}${s},${ms < 100 ? (ms < 10 ? "00" : "0") : ""}${ms}`;
 }
 
+function formatAssTime(seconds: number): string {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  return `${h}:${m < 10 ? "0" : ""}${m}:${s < 10 ? "0" : ""}${s.toFixed(2)}`;
+}
+
+interface KaraokeWord {
+  start: number;
+  end: number;
+  text: string;
+}
+
+/**
+ * Karaoke-style captions (the OpusClip/Hormozi look): a short phrase stays
+ * on screen while the currently-spoken word is highlighted in the accent
+ * colour. Emitted as ASS with one Dialogue event per word; each event
+ * re-renders the whole phrase with a different word highlighted, so there
+ * is never a flicker or a lonely single word on screen.
+ */
+export function buildKaraokeAss(
+  words: KaraokeWord[],
+  captionStyle: "hormozi" | "neon" | "beast" | "clean",
+  marginV: number
+): string {
+  // ASS colours are &HAABBGGRR.
+  const palettes = {
+    hormozi: { base: "&H00FFFFFF", accent: "&H0000FFFF", size: 56, outline: 6 },
+    neon: { base: "&H00FFFFFF", accent: "&H0000FF00", size: 56, outline: 6 },
+    beast: { base: "&H00FFFFFF", accent: "&H0000FFFF", size: 62, outline: 8 },
+    clean: { base: "&H00FFFFFF", accent: "&H00FFFFFF", size: 46, outline: 3 },
+  } as const;
+  const pal = palettes[captionStyle] || palettes.hormozi;
+
+  const header = `[Script Info]
+Title: OpusClip Karaoke Captions
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+WrapStyle: 2
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Karaoke,Arial,${pal.size},${pal.base},${pal.base},&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,${pal.outline},2,2,60,60,${marginV},1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+`;
+
+  // Group words into phrases: max 4 words, break on sentence punctuation
+  // or a pause longer than 0.45s.
+  const phrases: KaraokeWord[][] = [];
+  let current: KaraokeWord[] = [];
+  for (const w of words) {
+    if (current.length > 0) {
+      const prev = current[current.length - 1];
+      const gap = w.start - prev.end;
+      if (current.length >= 4 || gap > 0.45 || /[.!?]$/.test(prev.text)) {
+        phrases.push(current);
+        current = [];
+      }
+    }
+    current.push(w);
+  }
+  if (current.length > 0) phrases.push(current);
+
+  const escapeAss = (t: string) => t.replace(/\\/g, "\\\\").replace(/\{/g, "\\{").replace(/\}/g, "\\}");
+  const events: string[] = [];
+  for (const phrase of phrases) {
+    for (let i = 0; i < phrase.length; i++) {
+      const w = phrase[i];
+      const nextStart = i + 1 < phrase.length ? phrase[i + 1].start : w.end;
+      const evStart = w.start;
+      const evEnd = Math.max(w.end, Math.min(nextStart, w.start + 0.12));
+      const parts = phrase.map((pw, j) => {
+        const txt = escapeAss(pw.text.toUpperCase());
+        if (captionStyle === "clean") {
+          return j === i ? `{\\b1}${txt}{\\b0}` : txt;
+        }
+        if (j === i) return `{\\c${pal.accent}\\fs${Math.round(pal.size * 1.12)}}${txt}{\\r}`;
+        return txt;
+      });
+      events.push(
+        `Dialogue: 0,${formatAssTime(evStart)},${formatAssTime(evEnd)},Karaoke,,0,0,0,,${parts.join(" ")}`
+      );
+    }
+  }
+  return header + events.join("\n") + "\n";
+}
+
 /**
  * Runs deep-learning AI Subject Tracking (OpusClip ReframeAnything)
  * Computes optimal 9:16 crop box keeping speaker centered or multi-mode layout
@@ -608,48 +699,34 @@ export async function renderVideoClip({
 
     let subtitleFilterStr: string | null = null;
     if (srtEntries.length > 0) {
-      const srtLines: string[] = [];
-      srtEntries.forEach((entry, idx) => {
-        srtLines.push(`${idx + 1}`);
-        srtLines.push(`${formatSrtTime(entry.start)} --> ${formatSrtTime(entry.end)}`);
-        srtLines.push(entry.text);
-        srtLines.push("");
-      });
+      // Karaoke ASS: the whole phrase stays on screen, the spoken word is
+      // highlighted. (Previously one SRT entry per word in a single colour.)
+      let marginV = 520;
+      if (captionPositionY !== undefined) {
+        marginV = Math.max(60, Math.min(1800, Math.round(1920 * (1 - captionPositionY / 100))));
+      }
+      const assContent = buildKaraokeAss(
+        srtEntries.map((e) => ({ start: e.start, end: e.end, text: e.text })),
+        captionStyle,
+        marginV
+      );
 
-      tempSrtPath = path.join(dir, `sub-${Date.now()}-${Math.floor(Math.random() * 1000)}.srt`);
-      fs.writeFileSync(tempSrtPath, srtLines.join("\n"), "utf-8");
+      tempSrtPath = path.join(dir, `sub-${Date.now()}-${Math.floor(Math.random() * 1000)}.ass`);
+      fs.writeFileSync(tempSrtPath, assContent, "utf-8");
 
       // Save a debug copy to data/debug for validation/testing
       try {
         const debugDir = path.join(process.cwd(), "data", "debug");
         if (!fs.existsSync(debugDir)) fs.mkdirSync(debugDir, { recursive: true });
-        fs.writeFileSync(path.join(debugDir, "last_subtitles.srt"), srtLines.join("\n"), "utf-8");
+        fs.writeFileSync(path.join(debugDir, "last_subtitles.ass"), assContent, "utf-8");
       } catch {}
 
       console.log(
-        `[Stage: Subtitle Alignment] Burning ${srtEntries.length} words into clip: first="${srtEntries[0]?.text}" at relative ${srtEntries[0]?.start.toFixed(2)}s, last="${srtEntries[srtEntries.length - 1]?.text}" at relative ${srtEntries[srtEntries.length - 1]?.end.toFixed(2)}s`
+        `[Stage: Subtitle Alignment] Burning karaoke captions for ${srtEntries.length} words into clip: first="${srtEntries[0]?.text}" at relative ${srtEntries[0]?.start.toFixed(2)}s, last="${srtEntries[srtEntries.length - 1]?.text}" at relative ${srtEntries[srtEntries.length - 1]?.end.toFixed(2)}s`
       );
 
-      let marginV = 130;
-      if (captionPositionY !== undefined) {
-        marginV = Math.max(40, Math.min(1800, Math.round(1920 * (1 - captionPositionY / 100))));
-      }
-
-      let forceStyle =
-        `Fontname=Arial,Fontsize=24,PrimaryColour=&H0000FFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=3,Alignment=2,MarginV=${marginV}`;
-      if (captionStyle === "neon") {
-        forceStyle =
-          `Fontname=Arial,Fontsize=24,PrimaryColour=&H0000FF00,OutlineColour=&H00000000,BorderStyle=1,Outline=3,Alignment=2,MarginV=${marginV}`;
-      } else if (captionStyle === "beast") {
-        forceStyle =
-          `Fontname=Arial,Fontsize=26,PrimaryColour=&H0000FFFF,OutlineColour=&H000000FF,BorderStyle=1,Outline=4,Alignment=2,MarginV=${marginV}`;
-      } else if (captionStyle === "clean") {
-        forceStyle =
-          `Fontname=Arial,Fontsize=22,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Alignment=2,MarginV=${marginV}`;
-      }
-
-      const srtEscaped = tempSrtPath.replace(/\\/g, "/").replace(/:/g, "\\:");
-      subtitleFilterStr = `subtitles='${srtEscaped}':force_style='${forceStyle}'`;
+      const assEscaped = tempSrtPath.replace(/\\/g, "/").replace(/:/g, "\\:");
+      subtitleFilterStr = `subtitles='${assEscaped}'`;
     }
 
     // Apply filters based on aspect ratio and tracking

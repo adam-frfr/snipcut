@@ -4,7 +4,68 @@ import crypto from "crypto";
 import { transcribeAudioFile } from "./transcriptionService";
 import { analyzeTranscriptForViralClips, CuratedClipResult } from "./aiService";
 import { snapAndValidateClips, SnappedClipResult } from "./wordSnapping";
-import { renderVideoClip, resolveSafeFilePath, extractAudioForWhisper } from "./videoService";
+import { renderVideoClip, resolveSafeFilePath, extractAudioForWhisper, getFfmpegBinary } from "./videoService";
+import { execFile } from "child_process";
+import { promisify } from "util";
+
+const execFileAsync = promisify(execFile);
+
+const FILLER_WORDS = new Set([
+  "um", "umm", "uh", "uhh", "er", "erm", "hmm", "mm", "mhm", "uhm", "eh",
+]);
+
+export function isFillerWord(text: string): boolean {
+  const clean = String(text || "").toLowerCase().replace(/[^a-z]/g, "");
+  return FILLER_WORDS.has(clean);
+}
+
+/**
+ * Keep-ranges for silence/filler removal: span from just before the first
+ * real word to just after the last one, splitting wherever the gap between
+ * consecutive words exceeds 0.55s (keeping a small breath of padding around
+ * each cut) and cutting standalone filler words (um, uh, er...) entirely.
+ * Returns the ranges plus how many fillers were cut.
+ */
+export function computeKeepRanges(
+  words: { start: number; end: number; word?: string; text?: string }[],
+  clipStart: number,
+  clipEnd: number
+): { ranges: { start: number; end: number }[]; fillersRemoved: number } {
+  const ws = (words || [])
+    .filter((w) => w.end > clipStart && w.start < clipEnd)
+    .sort((a, b) => a.start - b.start);
+  if (ws.length === 0) return { ranges: [], fillersRemoved: 0 };
+  const ranges: { start: number; end: number }[] = [];
+  let fillersRemoved = 0;
+  let rangeStart: number | null = null;
+  let prevEnd = 0;
+  const closeRange = (end: number) => {
+    if (rangeStart !== null) {
+      ranges.push({ start: rangeStart, end: Math.min(clipEnd, end) });
+      rangeStart = null;
+    }
+  };
+  for (const w of ws) {
+    if (isFillerWord(w.word || w.text || "")) {
+      fillersRemoved++;
+      closeRange(prevEnd + 0.08);
+      prevEnd = w.end;
+      continue;
+    }
+    if (rangeStart === null) {
+      rangeStart = Math.max(clipStart, w.start - (ranges.length === 0 && fillersRemoved === 0 ? 0.1 : 0.12));
+    } else if (w.start - prevEnd > 0.55) {
+      closeRange(prevEnd + 0.15);
+      rangeStart = Math.max(clipStart, w.start - 0.12);
+    }
+    prevEnd = Math.max(prevEnd, w.end);
+  }
+  closeRange(prevEnd + 0.18);
+  // 0.25s floor: anything shorter is encoder noise, but a lone real word
+  // (e.g. "So" before an "um") legitimately forms a ~0.35s segment and
+  // must never be dropped.
+  return { ranges: ranges.filter((r) => r.end - r.start >= 0.25), fillersRemoved };
+}
 
 export type JobStatus =
   | "uploaded"
@@ -26,6 +87,10 @@ export interface RenderedClipItem {
   viralityScore: number;
   hookHeadline: string;
   trackingSummary?: string;
+  hookStrength?: number;
+  engagementScore?: number;
+  trendMatch?: number;
+  description?: string;
 }
 
 export interface JobOutput {
@@ -51,6 +116,7 @@ export interface JobOptions {
   aspectRatio?: "9:16" | "1:1" | "16:9";
   reframeMode?: "auto-tracker" | "split-screen" | "blurred-fit" | "center";
   captionStyle?: "hormozi" | "neon" | "beast" | "clean";
+  removeSilences?: boolean; // tighten clips by cutting internal pauses > 0.55s
   maxClipsToRender?: number; // default 2
   retentionHours?: number; // default 24h
   // Per-job API keys from the user's own Settings (stored only in the on-disk
@@ -431,7 +497,7 @@ class JobQueueManager {
         const captionStyle = job.options.captionStyle || "hormozi";
 
         // Render cache key: sha256(sourceHash:start:end:mode:captionStyle:aspectRatio)
-        const renderKeyRaw = `${sourceHash}:${clip.startTime}:${clip.endTime}:${reframeMode}:${captionStyle}:${aspectRatio}`;
+        const renderKeyRaw = `${sourceHash}:${clip.startTime}:${clip.endTime}:${reframeMode}:${captionStyle}:${aspectRatio}:${job.options.removeSilences ? "tight2" : "full"}`;
         const renderKey = crypto.createHash("sha256").update(renderKeyRaw).digest("hex");
         const renderCachePath = path.join(RENDERS_CACHE_DIR, `${renderKey}.json`);
 
@@ -461,29 +527,93 @@ class JobQueueManager {
           text: w.word,
         }));
 
-        const renderRes = await renderVideoClip({
-          inputPath: resolvedVideoPath,
-          outputPath,
-          startTime: clip.startTime,
-          duration: exactDuration,
-          aspectRatio,
-          reframeMode,
-          transcript: transcriptWords,
-          headline: clip.hookHeadline || clip.title,
-          captionStyle,
-        });
+        // Silence removal: render only the keep-ranges (speech with small
+        // breaths) and concatenate them into one tightened clip.
+        let renderRes: Awaited<ReturnType<typeof renderVideoClip>> | null = null;
+        let finalDuration = exactDuration;
+        const keep = job.options.removeSilences
+          ? computeKeepRanges(clip.snappedWords || [], clip.startTime, clip.endTime)
+          : { ranges: [] as { start: number; end: number }[], fillersRemoved: 0 };
+        const keepRanges = keep.ranges;
+        const keptDuration = keepRanges.reduce((s, r) => s + (r.end - r.start), 0);
+        const tightening =
+          keepRanges.length > 0 &&
+          (keepRanges.length > 1 || keptDuration < exactDuration * 0.92 || keep.fillersRemoved > 0);
+
+        if (tightening) {
+          const partPaths: string[] = [];
+          try {
+            for (let pi = 0; pi < keepRanges.length; pi++) {
+              const range = keepRanges[pi];
+              const partPath = path.join(outputDir, `part-${Date.now()}-${i + 1}-${pi}.mp4`);
+              const partRes = await renderVideoClip({
+                inputPath: resolvedVideoPath,
+                outputPath: partPath,
+                startTime: range.start,
+                duration: Number((range.end - range.start).toFixed(2)),
+                aspectRatio,
+                reframeMode,
+                transcript: transcriptWords,
+                headline: clip.hookHeadline || clip.title,
+                captionStyle,
+              });
+              if (!renderRes) renderRes = partRes;
+              partPaths.push(partPath);
+            }
+            const listPath = path.join(outputDir, `concat-${Date.now()}-${i + 1}.txt`);
+            fs.writeFileSync(
+              listPath,
+              partPaths.map((p) => `file '${p.replace(/'/g, "'\\''")}'`).join("\n"),
+              "utf-8"
+            );
+            await execFileAsync(getFfmpegBinary(), [
+              "-y", "-f", "concat", "-safe", "0", "-i", listPath,
+              "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+              "-c:a", "aac", "-movflags", "+faststart", outputPath,
+            ], { maxBuffer: 64 * 1024 * 1024 });
+            try { fs.unlinkSync(listPath); } catch {}
+            finalDuration = Number(keptDuration.toFixed(2));
+            console.log(
+              `[Stage: Silence Removal] Clip "${clip.title}": ${exactDuration}s -> ${finalDuration}s across ${keepRanges.length} keep-range(s)`
+            );
+          } finally {
+            for (const p of partPaths) {
+              try { fs.unlinkSync(p); } catch {}
+            }
+          }
+        }
+
+        if (!renderRes) {
+          renderRes = await renderVideoClip({
+            inputPath: resolvedVideoPath,
+            outputPath,
+            startTime: clip.startTime,
+            duration: exactDuration,
+            aspectRatio,
+            reframeMode,
+            transcript: transcriptWords,
+            headline: clip.hookHeadline || clip.title,
+            captionStyle,
+          });
+        }
 
         const renderedItem: RenderedClipItem = {
           clipId: `clip_${Date.now()}_${i + 1}`,
           title: clip.title,
           startTime: clip.startTime,
           endTime: clip.endTime,
-          duration: exactDuration,
+          duration: finalDuration,
           downloadUrl: `/api/media?file=rendered_clips/${outputFilename}`,
           filename: outputFilename,
           viralityScore: clip.viralityScore || 90,
           hookHeadline: clip.hookHeadline || clip.title,
-          trackingSummary: renderRes.tracking?.summary,
+          trackingSummary: tightening
+            ? `${renderRes.tracking?.summary || ""} · ✂ Tightened: ${exactDuration}s → ${finalDuration}s${keep.fillersRemoved > 0 ? ` (${keep.fillersRemoved} filler${keep.fillersRemoved === 1 ? "" : "s"} cut)` : ""}`
+            : renderRes.tracking?.summary,
+          hookStrength: clip.hookStrength,
+          engagementScore: clip.engagementScore,
+          trendMatch: clip.trendMatch,
+          description: clip.description,
         };
 
         job.output.renderedClips.push(renderedItem);

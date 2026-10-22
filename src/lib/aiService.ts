@@ -20,6 +20,7 @@ export interface CuratedClipResult {
   viralityReason: string;
   keyPhrases: string[];
   suggestedEmojis: string[];
+  description?: string;
 }
 
 export function isHackClubKey(key: string): boolean {
@@ -137,7 +138,8 @@ You MUST respond strictly in valid JSON matching this schema:
       "trendMatch": 95,
       "viralityReason": "Detailed explanation of why this segment will hook viewers on social feeds",
       "keyPhrases": ["exponential compute", "obsolete", "inflection point"],
-      "suggestedEmojis": []
+      "suggestedEmojis": [],
+      "description": "Ready-to-post social caption: 1-2 punchy sentences about this clip, ending with 3-5 relevant hashtags like #publicspeaking #communication"
     }
   ]
 }`;
@@ -318,6 +320,26 @@ You MUST respond strictly in valid JSON matching this schema:
     if (clips.length >= 6) break;
   }
 
+  // Normalize factor scores + guarantee a post-ready description per clip
+  const clampScore = (v: unknown, fallback: number) =>
+    Math.max(0, Math.min(100, Math.round(typeof v === "number" && isFinite(v) ? v : fallback)));
+  for (const c of clips) {
+    const overall = clampScore(c.viralityScore, 85);
+    c.viralityScore = overall;
+    c.hookStrength = clampScore(c.hookStrength, overall);
+    c.engagementScore = clampScore(c.engagementScore, overall);
+    c.trendMatch = clampScore(c.trendMatch, overall);
+    if (!c.description || typeof c.description !== "string" || c.description.trim().length < 10) {
+      const tags = (c.keyPhrases || [])
+        .slice(0, 4)
+        .map((p) => "#" + String(p).replace(/[^a-z0-9]+/gi, ""))
+        .filter((t) => t.length > 1)
+        .join(" ");
+      const lead = (c.viralityReason || c.hookHeadline || c.title || "").split(/(?<=[.!?])\s/)[0];
+      c.description = `${lead}${tags ? " " + tags : ""}`.trim();
+    }
+  }
+
   // Safety fallback: If AI didn't return any clips, create an intelligent clip from transcript
   if (!clips || clips.length === 0) {
     const firstWords = transcriptText.split(/\s+/).slice(0, 8).join(" ");
@@ -335,6 +357,7 @@ You MUST respond strictly in valid JSON matching this schema:
         viralityReason: "Top retention introductory segment with fast emotional delivery.",
         keyPhrases: ["viral moment", "trending"],
         suggestedEmojis: [],
+        description: "The moment that hooks you in the first three seconds. #viralmoment #trending",
       },
     ];
   }
