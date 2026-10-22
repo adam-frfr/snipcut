@@ -904,6 +904,38 @@ export async function renderVideoClip({
  * (same directory as the master) or null on failure — a preview problem
  * must never fail the render itself.
  */
+
+/**
+ * Extract a small JPEG poster (frame at ~1s) for a rendered clip. The
+ * dashboard shows posters instead of auto-preloading every video —
+ * on slow links a wall of <video preload="auto"> elements starves the
+ * browser's per-host connection pool (6), which left players black
+ * and even blocked API POSTs behind queued media fetches.
+ */
+export async function generatePosterImage(masterPath: string): Promise<string | null> {
+  try {
+    const resolved = resolveSafeFilePath(masterPath);
+    if (!fs.existsSync(/*turbopackIgnore: true*/ resolved)) return null;
+    const dir = path.dirname(resolved);
+    const posterName = `poster-${path.basename(resolved).replace(/\.mp4$/i, "")}.jpg`;
+    const posterPath = path.join(dir, posterName);
+    if (fs.existsSync(/*turbopackIgnore: true*/ posterPath)) return posterName;
+    const { execFile } = await import("child_process");
+    await new Promise<void>((resolve, reject) => {
+      execFile(
+        /*turbopackIgnore: true*/ getFfmpegBinary(),
+        ["-y", "-ss", "1", "-i", resolved, "-frames:v", "1", "-vf", "scale=360:-2", "-q:v", "4", posterPath],
+        { timeout: 60000 },
+        (err) => (err ? reject(err) : resolve())
+      );
+    });
+    return fs.existsSync(/*turbopackIgnore: true*/ posterPath) ? posterName : null;
+  } catch (err) {
+    console.error("[Stage: Poster] Generation failed (non-fatal):", err);
+    return null;
+  }
+}
+
 export async function generatePreviewClip(masterPath: string): Promise<string | null> {
   try {
     const resolved = resolveSafeFilePath(masterPath);

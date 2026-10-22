@@ -6,7 +6,7 @@ import { analyzeTranscriptForViralClips, CuratedClipResult } from "./aiService";
 import { snapAndValidateClips, SnappedClipResult } from "./wordSnapping";
 import { buildSentences, planBroll, fetchBrollAssets } from "./brollService";
 import { applyPostEffects } from "./videoService";
-import { renderVideoClip, resolveSafeFilePath, extractAudioForWhisper, getFfmpegBinary, generatePreviewClip } from "./videoService";
+import { renderVideoClip, resolveSafeFilePath, extractAudioForWhisper, getFfmpegBinary, generatePreviewClip, generatePosterImage } from "./videoService";
 import { execFile } from "child_process";
 import { promisify } from "util";
 
@@ -86,6 +86,7 @@ export interface RenderedClipItem {
   duration: number;
   downloadUrl: string;
   previewDownloadUrl?: string;
+  posterUrl?: string;
   filename: string;
   viralityScore: number;
   hookHeadline: string;
@@ -726,6 +727,7 @@ class JobQueueManager {
         // Lightweight preview rendition for smooth in-browser playback;
         // the master above stays the download quality. Never fatal.
         const previewName = await generatePreviewClip(outputPath).catch(() => null);
+        const posterName = await generatePosterImage(outputPath).catch(() => null);
 
         const renderedItem: RenderedClipItem = {
           clipId: `clip_${Date.now()}_${i + 1}`,
@@ -736,6 +738,9 @@ class JobQueueManager {
           downloadUrl: `/api/media?file=rendered_clips/${outputFilename}`,
           previewDownloadUrl: previewName
             ? `/api/media?file=rendered_clips/${previewName}`
+            : undefined,
+          posterUrl: posterName
+            ? `/api/media?file=rendered_clips/${posterName}`
             : undefined,
           filename: outputFilename,
           viralityScore: clip.viralityScore || 90,

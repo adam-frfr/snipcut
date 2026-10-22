@@ -31,10 +31,24 @@ import {
 import ApiSettingsModal from "@/components/ApiSettingsModal";
 import confetti from "canvas-confetti";
 
+
+// Poster thumbnails: the server drops poster-<clip>.jpg next to every
+// rendered clip. Older stored clips have no posterUrl field, so derive
+// it from their preview/master URL by the same naming convention.
+export function derivePosterUrl(clip: any): string | undefined {
+  if (clip?.posterUrl) return clip.posterUrl;
+  const src: string | undefined = clip?.previewUrl || clip?.renderedVideoUrl || clip?.videoUrl;
+  if (!src) return undefined;
+  const m = src.match(/rendered_clips\/(?:preview-)?(clip-[^.?&#]+)\.mp4/);
+  if (!m) return undefined;
+  return `/api/media?file=rendered_clips/poster-${m[1]}.jpg`;
+}
+
 export interface RealClip {
   id: string;
   videoFilePath: string;
   videoUrl: string;
+  posterUrl?: string;
   title: string;
   hookHeadline: string;
   startTime: number;
@@ -385,6 +399,7 @@ function DashboardContent() {
               videoUrl: initialVideoUrl,
               renderedVideoUrl: rendered ? rendered.downloadUrl : undefined,
               previewUrl: rendered?.previewDownloadUrl || undefined,
+              posterUrl: rendered?.posterUrl || undefined,
               title: c.title || `Viral Short #${index + 1}`,
               hookHeadline: c.hookHeadline || "",
               startTime: c.startTime || 0,
@@ -624,9 +639,15 @@ function DashboardContent() {
   // Real FFmpeg Render & Download
   const handleRenderAndDownload = async (clip: RealClip) => {
     setIsRendering(true);
+    // A render takes ~30s server-side; if the connection stalls (slow
+    // link, proxy hiccup) the fetch must fail loudly instead of spinning
+    // forever — a stuck button reads as a broken app.
+    const renderAbort = new AbortController();
+    const renderTimeout = setTimeout(() => renderAbort.abort(), 240000);
     try {
       const res = await fetch("/api/render-clip", {
         method: "POST",
+        signal: renderAbort.signal,
         headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({
           inputPath: clip.videoFilePath,
@@ -647,6 +668,7 @@ function DashboardContent() {
           captionStyle: clip.captionStyle || "hormozi",
         }),
       });
+      clearTimeout(renderTimeout);
       let data: any = {};
       try {
         data = await res.json();
@@ -672,6 +694,7 @@ function DashboardContent() {
               videoUrl: data.downloadUrl,
               renderedVideoUrl: data.downloadUrl,
               previewUrl: data.previewDownloadUrl || (c as any).previewUrl,
+              posterUrl: data.posterUrl || (c as any).posterUrl,
             }
           : c
       );
@@ -682,6 +705,7 @@ function DashboardContent() {
           videoUrl: data.downloadUrl,
           renderedVideoUrl: data.downloadUrl,
           previewUrl: data.previewDownloadUrl || (selectedClip as any).previewUrl,
+          posterUrl: data.posterUrl || (selectedClip as any).posterUrl,
         } as any);
       }
       localStorage.setItem("opus_user_clips", JSON.stringify(updatedClips));
@@ -698,7 +722,12 @@ function DashboardContent() {
         confetti({ particleCount: 60, spread: 60 });
       } catch (e) {}
     } catch (err: any) {
-      alert(`Render Error: ${err.message}`);
+      clearTimeout(renderTimeout);
+      if (err?.name === "AbortError") {
+        alert("Render Error: the render request timed out — your connection may have stalled. The clip is probably still fine; press the button again to retry.");
+      } else {
+        alert(`Render Error: ${err.message}`);
+      }
     } finally {
       setIsRendering(false);
     }
@@ -988,8 +1017,9 @@ function DashboardContent() {
                         <div className="relative w-full sm:w-36 h-28 sm:h-24 border-2 border-black overflow-hidden flex-shrink-0 bg-black flex items-center justify-center">
                           <video
                             src={(clip as any).previewUrl ? `${(clip as any).previewUrl}#t=0.1` : `${clip.videoUrl}#t=${clip.startTime || 0.1}`}
+                            poster={derivePosterUrl(clip)}
                             className="w-full h-full object-cover pointer-events-none"
-                            preload="metadata"
+                            preload="none"
                             playsInline
                             muted
                           />
@@ -1085,9 +1115,10 @@ function DashboardContent() {
                                   ref={videoTopRef}
                                   key={`top-${selectedClip.id}-${(selectedClip as any).renderedVideoUrl || ""}`}
                                   src={(selectedClip as any).previewUrl || (selectedClip as any).renderedVideoUrl || selectedClip.videoUrl}
+                                  poster={derivePosterUrl(selectedClip)}
                                   className="w-full h-full object-cover"
                                   style={{ objectPosition: "75% center" }}
-                                  preload="auto"
+                                  preload="metadata"
                                   muted
                                   playsInline
                                 />
@@ -1102,10 +1133,11 @@ function DashboardContent() {
                                   ref={videoRef}
                                   key={`bot-${selectedClip.id}-${(selectedClip as any).renderedVideoUrl || ""}`}
                                   src={(selectedClip as any).previewUrl || (selectedClip as any).renderedVideoUrl || selectedClip.videoUrl}
+                                  poster={derivePosterUrl(selectedClip)}
                                   className="w-full h-full object-cover"
                                   style={{ objectPosition: "15% center" }}
                                   controls={false}
-                                  preload="auto"
+                                  preload="metadata"
                                   muted={isMuted}
                                   playsInline
                                   onLoadedMetadata={handleLoadedMetadata}
@@ -1130,8 +1162,9 @@ function DashboardContent() {
                               <video
                                 key={`blur-${selectedClip.id}-${(selectedClip as any).renderedVideoUrl || ""}`}
                                 src={(selectedClip as any).previewUrl || (selectedClip as any).renderedVideoUrl || selectedClip.videoUrl}
+                                poster={derivePosterUrl(selectedClip)}
                                 className="absolute inset-0 w-full h-full object-cover blur-2xl scale-125 opacity-70"
-                                preload="auto"
+                                preload="metadata"
                                 muted
                                 playsInline
                               />
@@ -1140,9 +1173,10 @@ function DashboardContent() {
                                 ref={videoRef}
                                 key={`fit-${selectedClip.id}-${(selectedClip as any).renderedVideoUrl || ""}`}
                                 src={(selectedClip as any).previewUrl || (selectedClip as any).renderedVideoUrl || selectedClip.videoUrl}
+                                poster={derivePosterUrl(selectedClip)}
                                 className="relative z-10 w-full aspect-video object-contain shadow-2xl"
                                 controls={false}
-                                preload="auto"
+                                preload="metadata"
                                 muted={isMuted}
                                 playsInline
                                 onLoadedMetadata={handleLoadedMetadata}
@@ -1164,6 +1198,7 @@ function DashboardContent() {
                                 ref={videoRef}
                                 key={`track-${selectedClip.id}-${(selectedClip as any).renderedVideoUrl || ""}`}
                                 src={(selectedClip as any).previewUrl || (selectedClip as any).renderedVideoUrl || selectedClip.videoUrl}
+                                poster={derivePosterUrl(selectedClip)}
                                 className="w-full h-full object-cover transition-all duration-700 ease-in-out"
                                 style={{
                                   objectPosition: getDynamicObjectPosition(
@@ -1173,7 +1208,7 @@ function DashboardContent() {
                                   ),
                                 }}
                                 controls={false}
-                                preload="auto"
+                                preload="metadata"
                                 muted={isMuted}
                                 playsInline
                                 onLoadedMetadata={handleLoadedMetadata}
