@@ -54,10 +54,14 @@ export function normalizeCookiesToNetscape(raw: string): { content: string; coun
   }
 
   // Format 1: already Netscape (tab-separated lines mentioning a domain)
+  // NOTE: HttpOnly cookies are written by export extensions with a
+  // "#HttpOnly_" prefix on the domain field. Those lines are NOT comments —
+  // they carry the session-critical cookies (SID, LOGIN_INFO, ...). Keep
+  // them verbatim; yt-dlp understands the prefix natively.
   if (text.includes("\t") && /(youtube|google)\.com/.test(text)) {
     const lines = text
       .split(/\r?\n/)
-      .filter((l) => l.trim().length > 0 && !l.startsWith("#"))
+      .filter((l) => l.trim().length > 0 && (!l.startsWith("#") || l.startsWith("#HttpOnly_")))
       .filter((l) => l.split("\t").length >= 7);
     if (lines.length > 0) {
       return { content: NETSCAPE_HEADER + lines.join("\n") + "\n", count: lines.length };
@@ -95,7 +99,7 @@ export function getServerCookieJar(): { filePath: string; count: number; savedAt
   if (!fs.existsSync(jar)) return null;
   try {
     const content = fs.readFileSync(jar, "utf-8");
-    const count = content.split("\n").filter((l) => l.includes("\t") && !l.startsWith("#")).length;
+    const count = content.split("\n").filter((l) => l.includes("\t") && (!l.startsWith("#") || l.startsWith("#HttpOnly_"))).length;
     if (count === 0) return null;
     return { filePath: jar, count, savedAt: fs.statSync(jar).mtime.toISOString() };
   } catch {
