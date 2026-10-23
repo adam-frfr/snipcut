@@ -87,6 +87,8 @@ export interface RenderedClipItem {
   downloadUrl: string;
   previewDownloadUrl?: string;
   posterUrl?: string;
+  fileSize?: number;
+  previewFileSize?: number;
   filename: string;
   viralityScore: number;
   hookHeadline: string;
@@ -742,6 +744,12 @@ class JobQueueManager {
           posterUrl: posterName
             ? `/api/media?file=rendered_clips/${posterName}`
             : undefined,
+          fileSize: (() => { try { return fs.statSync(outputPath).size; } catch { return undefined; } })(),
+          previewFileSize: (() => {
+            try {
+              return previewName ? fs.statSync(path.join(path.dirname(outputPath), previewName)).size : undefined;
+            } catch { return undefined; }
+          })(),
           filename: outputFilename,
           viralityScore: clip.viralityScore || 90,
           hookHeadline: clip.hookHeadline || clip.title,

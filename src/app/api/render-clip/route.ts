@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { renderVideoClip, generatePreviewClip, generatePosterImage } from "@/lib/videoService";
 import path from "path";
+import fs from "fs";
 import os from "os";
 import { verifyAuthAndRateLimit } from "@/lib/authRateLimit";
 
@@ -78,6 +79,15 @@ export async function POST(req: NextRequest) {
     // Lightweight preview rendition for smooth in-browser playback (never fatal)
     const previewName = await generatePreviewClip(outputPath).catch(() => null);
     const posterName = await generatePosterImage(outputPath).catch(() => null);
+    // Exact byte sizes so the dashboard's downloader can show real
+    // progress/ETA (the hosting proxy strips Content-Length, so the
+    // browser's own download bar cannot).
+    const fileSize = (() => { try { return fs.statSync(outputPath).size; } catch { return undefined; } })();
+    const previewFileSize = (() => {
+      try {
+        return previewName ? fs.statSync(path.join(path.dirname(outputPath), previewName)).size : undefined;
+      } catch { return undefined; }
+    })();
 
     const elapsedMs = Date.now() - renderStartTime;
     return NextResponse.json({
@@ -89,6 +99,8 @@ export async function POST(req: NextRequest) {
       posterUrl: posterName
         ? `/api/media?file=rendered_clips/${posterName}`
         : undefined,
+      fileSize,
+      previewFileSize,
       filename: outputFilename,
       tracking: renderResult.tracking,
       timingMs: elapsedMs,

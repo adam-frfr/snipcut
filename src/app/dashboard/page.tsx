@@ -49,6 +49,8 @@ export interface RealClip {
   videoFilePath: string;
   videoUrl: string;
   posterUrl?: string;
+  fileSize?: number;
+  previewFileSize?: number;
   title: string;
   hookHeadline: string;
   startTime: number;
@@ -95,6 +97,7 @@ function DashboardContent() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingStage, setProcessingStage] = useState("");
   const [isRendering, setIsRendering] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState<{ loaded: number; total?: number; speed: number } | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
   const [hasServerKey, setHasServerKey] = useState(true);
   const [tokenPromptOpen, setTokenPromptOpen] = useState(false);
@@ -400,6 +403,8 @@ function DashboardContent() {
               renderedVideoUrl: rendered ? rendered.downloadUrl : undefined,
               previewUrl: rendered?.previewDownloadUrl || undefined,
               posterUrl: rendered?.posterUrl || undefined,
+              fileSize: rendered?.fileSize || undefined,
+              previewFileSize: rendered?.previewFileSize || undefined,
               title: c.title || `Viral Short #${index + 1}`,
               hookHeadline: c.hookHeadline || "",
               startTime: c.startTime || 0,
@@ -636,9 +641,56 @@ function DashboardContent() {
     }
   };
 
+  // In-app download with REAL progress. The hosting proxy strips
+  // Content-Length (responses arrive chunked), so the browser's own
+  // download bar shows "Unknown time left" and no speed. Fetching the
+  // file ourselves lets us show exact MB, speed and ETA — the total
+  // comes from the sizes the server reports with each render.
+  const downloadWithProgress = async (url: string, filename: string, total?: number) => {
+    try {
+      const res = await fetch(url, { headers: { ...getAuthHeaders() } });
+      if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+      const reader = res.body.getReader();
+      const chunks: BlobPart[] = [];
+      let loaded = 0;
+      const started = Date.now();
+      setDownloadProgress({ loaded: 0, total, speed: 0 });
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value) {
+          chunks.push(value as BlobPart);
+          loaded += value.byteLength;
+          const secs = Math.max(0.2, (Date.now() - started) / 1000);
+          setDownloadProgress({ loaded, total, speed: loaded / secs });
+        }
+      }
+      const blob = new Blob(chunks, { type: "video/mp4" });
+      const objUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = objUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(objUrl), 5000);
+    } catch (e) {
+      // Fallback: hand the URL to the browser's own downloader.
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } finally {
+      setDownloadProgress(null);
+    }
+  };
+
   // Real FFmpeg Render & Download
   const handleRenderAndDownload = async (clip: RealClip) => {
     setIsRendering(true);
+    let pendingDownload: { url: string; filename: string; size?: number } | null = null;
     // A render takes ~30s server-side; if the connection stalls (slow
     // link, proxy hiccup) the fetch must fail loudly instead of spinning
     // forever — a stuck button reads as a broken app.
@@ -695,6 +747,8 @@ function DashboardContent() {
               renderedVideoUrl: data.downloadUrl,
               previewUrl: data.previewDownloadUrl || (c as any).previewUrl,
               posterUrl: data.posterUrl || (c as any).posterUrl,
+              fileSize: data.fileSize || (c as any).fileSize,
+              previewFileSize: data.previewFileSize || (c as any).previewFileSize,
             }
           : c
       );
@@ -706,17 +760,18 @@ function DashboardContent() {
           renderedVideoUrl: data.downloadUrl,
           previewUrl: data.previewDownloadUrl || (selectedClip as any).previewUrl,
           posterUrl: data.posterUrl || (selectedClip as any).posterUrl,
+          fileSize: data.fileSize || (selectedClip as any).fileSize,
+          previewFileSize: data.previewFileSize || (selectedClip as any).previewFileSize,
         } as any);
       }
       localStorage.setItem("opus_user_clips", JSON.stringify(updatedClips));
 
-      // Trigger actual download of the rendered MP4
-      const a = document.createElement("a");
-      a.href = data.downloadUrl;
-      a.download = data.filename || `${clip.title}.mp4`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
+      // Download happens after the render state clears, with progress.
+      pendingDownload = {
+        url: data.downloadUrl,
+        filename: data.filename || `${clip.title}.mp4`,
+        size: data.fileSize,
+      };
 
       try {
         confetti({ particleCount: 60, spread: 60 });
@@ -730,6 +785,9 @@ function DashboardContent() {
       }
     } finally {
       setIsRendering(false);
+    }
+    if (pendingDownload) {
+      await downloadWithProgress(pendingDownload.url, pendingDownload.filename, pendingDownload.size);
     }
   };  return (
     <div className="min-h-screen bg-[#F8F7F4] text-black font-sans selection:bg-[#FFC700] selection:text-black">
@@ -1415,10 +1473,23 @@ function DashboardContent() {
                       <div className="w-full mt-4">
                         <button
                           onClick={() => handleRenderAndDownload(selectedClip)}
-                          disabled={isRendering}
+                          disabled={isRendering || !!downloadProgress}
                           className="w-full bg-[#FFC700] hover:bg-[#FF5500] hover:text-white py-3.5 border-2 border-black font-black text-xs sm:text-sm text-black uppercase tracking-wider flex items-center justify-center gap-2 cursor-pointer shadow-[4px_4px_0px_#000000] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all disabled:opacity-50"
                         >
-                          {isRendering ? (
+                          {downloadProgress ? (
+                            <>
+                              <div className="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin" />
+                              <span>
+                                {downloadProgress.total
+                                  ? `Downloading ${Math.floor((downloadProgress.loaded / downloadProgress.total) * 100)}% · ${(downloadProgress.loaded / 1048576).toFixed(1)} / ${(downloadProgress.total / 1048576).toFixed(1)} MB · ${(downloadProgress.speed / 1048576).toFixed(2)} MB/s${
+                                      downloadProgress.speed > 0 && downloadProgress.total > downloadProgress.loaded
+                                        ? ` · ~${(() => { const s = Math.ceil((downloadProgress.total - downloadProgress.loaded) / downloadProgress.speed); return s >= 120 ? `${Math.round(s / 60)} min` : `${s}s`; })()} left`
+                                        : ""
+                                    }`
+                                  : `Downloading ${(downloadProgress.loaded / 1048576).toFixed(1)} MB · ${(downloadProgress.speed / 1048576).toFixed(2)} MB/s`}
+                              </span>
+                            </>
+                          ) : isRendering ? (
                             <>
                               <div className="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin" />
                               <span>Rendering 9:16 MP4 with FFmpeg...</span>
@@ -1441,6 +1512,29 @@ function DashboardContent() {
                           )}
                         </button>
                       </div>
+                      {(selectedClip as any).previewUrl && (
+                        <div className="w-full mt-2">
+                          <button
+                            onClick={() =>
+                              downloadWithProgress(
+                                (selectedClip as any).previewUrl,
+                                `${(selectedClip.title || "clip").replace(/[^\w\- ]+/g, "").trim().replace(/\s+/g, "_") || "clip"}-fast.mp4`,
+                                (selectedClip as any).previewFileSize
+                              )
+                            }
+                            disabled={isRendering || !!downloadProgress}
+                            className="w-full bg-white hover:bg-neutral-100 py-2.5 border-2 border-black font-black text-[11px] text-black uppercase tracking-wider flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                          >
+                            <Download className="w-3.5 h-3.5 stroke-[2.5]" />
+                            <span>
+                              Fast download · smaller file
+                              {(selectedClip as any).previewFileSize
+                                ? ` (${((selectedClip as any).previewFileSize / 1048576).toFixed(1)} MB)`
+                                : ""}
+                            </span>
+                          </button>
+                        </div>
+                      )}
                     </div>
 
                     {/* Virality Card */}
