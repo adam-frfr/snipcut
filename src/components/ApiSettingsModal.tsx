@@ -31,6 +31,8 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
     groq?: { valid: boolean; message: string };
   } | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [tokenError, setTokenError] = useState("");
+  const [tokenChecking, setTokenChecking] = useState(false);
   const [appAccessToken, setAppAccessToken] = useState("");
   const [cookieTest, setCookieTest] = useState<{ state: "idle" | "busy" | "ok" | "fail"; msg: string }>({ state: "idle", msg: "" });
 
@@ -91,6 +93,32 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
   };
 
   const handleSave = async () => {
+    // A new app access token is verified with the server BEFORE anything
+    // is stored — this modal used to save whatever was typed on faith,
+    // so a wrong passcode looked accepted and then every API call 401'd.
+    const candidate = appAccessToken.trim();
+    if (candidate) {
+      setTokenChecking(true);
+      let valid: boolean | null = null;
+      try {
+        const res = await fetch("/api/auth-check", {
+          headers: { Authorization: `Bearer ${candidate}` },
+        });
+        valid = res.ok ? true : res.status === 401 || res.status === 403 ? false : null;
+      } catch {
+        valid = null;
+      }
+      setTokenChecking(false);
+      if (valid === false) {
+        setTokenError("That app access token isn't right — the server rejected it, so nothing was saved.");
+        return;
+      }
+      if (valid === null) {
+        setTokenError("Couldn't reach the server to verify the access token — try again in a moment.");
+        return;
+      }
+      setTokenError("");
+    }
     if (typeof window !== "undefined") {
       localStorage.setItem("opus_openai_key", openaiKey.trim());
       localStorage.setItem("opus_claude_key", claudeKey.trim());
@@ -361,6 +389,9 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
               placeholder="APP_ACCESS_TOKEN if configured on server"
               className="w-full neo-input py-2 px-3 text-base sm:text-sm font-mono"
             />
+            {tokenError && (
+              <p className="text-xs font-bold text-red-600 mt-1.5">{tokenError}</p>
+            )}
           </div>
         </div>
 

@@ -103,12 +103,43 @@ function DashboardContent() {
   const [tokenPromptOpen, setTokenPromptOpen] = useState(false);
   const [inputToken, setInputToken] = useState("");
   const [tokenError, setTokenError] = useState("");
+  const [tokenChecking, setTokenChecking] = useState(false);
   // After the user cancels the token prompt, background 401s (job polling,
   // retries) must not keep reopening it every few seconds — that trapped
   // anyone with a wrong/expired stored token in an endless modal loop.
   const tokenPromptSuppressedRef = React.useRef(false);
   const openTokenPrompt = () => {
     if (!tokenPromptSuppressedRef.current) setTokenPromptOpen(true);
+  };
+
+  // Ask the SERVER whether a passcode is correct - the prompt used to
+  // store whatever was typed on faith, so any junk "password" appeared
+  // to log you in (the page and saved clips load without the API, and
+  // the rejection only surfaced later, invisibly, on API calls).
+  // Returns true (valid), false (server said 401), or null (unreachable:
+  // the gate fails closed, the background re-check stays silent so a
+  // network hiccup never locks anyone out).
+  const verifyTokenWithServer = async (candidate: string): Promise<boolean | null> => {
+    try {
+      const res = await fetch("/api/auth-check", {
+        headers: { Authorization: `Bearer ${candidate}` },
+      });
+      if (res.ok) return true;
+      if (res.status === 401 || res.status === 403) return false;
+      return null;
+    } catch {
+      return null;
+    }
+  };
+
+  const storeToken = (token: string) => {
+    localStorage.setItem("app_access_token", token);
+    document.cookie = `app_access_token=${encodeURIComponent(token)}; path=/; max-age=31536000; SameSite=Lax`;
+  };
+
+  const clearStoredToken = () => {
+    localStorage.removeItem("app_access_token");
+    document.cookie = "app_access_token=; path=/; max-age=0; SameSite=Lax";
   };
 
   // Phase 4: Async Job State & Worker Polling
@@ -274,6 +305,15 @@ function DashboardContent() {
             setTokenPromptOpen(true);
           } else {
             document.cookie = `app_access_token=${encodeURIComponent(storedToken)}; path=/; max-age=31536000; SameSite=Lax`;
+            // A stored token the server no longer accepts (wrong, or
+            // the passcode was rotated) is cleared and the prompt
+            // reopens, instead of every API call failing mysteriously.
+            verifyTokenWithServer(storedToken).then((valid) => {
+              if (valid === false) {
+                clearStoredToken();
+                openTokenPrompt();
+              }
+            });
           }
         }
       } catch (err) {
@@ -1792,16 +1832,29 @@ function DashboardContent() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => {
-                    if (inputToken.trim()) {
-                      localStorage.setItem("app_access_token", inputToken.trim());
-                      document.cookie = `app_access_token=${encodeURIComponent(inputToken.trim())}; path=/; max-age=31536000; SameSite=Lax`;
+                  disabled={tokenChecking}
+                  onClick={async () => {
+                    const candidate = inputToken.trim();
+                    if (!candidate) {
+                      setTokenError("Enter the passcode first.");
+                      return;
+                    }
+                    setTokenChecking(true);
+                    const valid = await verifyTokenWithServer(candidate);
+                    setTokenChecking(false);
+                    if (valid === true) {
+                      storeToken(candidate);
+                      setTokenError("");
                       setTokenPromptOpen(false);
+                    } else if (valid === false) {
+                      setTokenError("That passcode isn't right - the server rejected it. Check it and try again.");
+                    } else {
+                      setTokenError("Couldn't reach the server to check the passcode - try again in a moment.");
                     }
                   }}
-                  className="px-4 py-2 bg-[#FFC700] hover:bg-[#FF5500] hover:text-white border-2 border-black text-xs font-black uppercase shadow-[3px_3px_0px_#000000] active:translate-x-0.5 active:translate-y-0.5"
+                  className="px-4 py-2 bg-[#FFC700] hover:bg-[#FF5500] hover:text-white border-2 border-black text-xs font-black uppercase shadow-[3px_3px_0px_#000000] active:translate-x-0.5 active:translate-y-0.5 disabled:opacity-50"
                 >
-                  Save Token
+                  {tokenChecking ? "Checking..." : "Save Token"}
                 </button>
               </div>
             </div>
