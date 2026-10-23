@@ -168,6 +168,47 @@ function DashboardContent() {
     return t ? { "x-app-access-token": t } : {};
   };
 
+  // /api/render-clip is async: POST starts the render (202 + renderId)
+  // and this polls GET until the result lands. A single synchronous
+  // request used to sit open for the whole 30-60s render, which the
+  // Cloudflare Worker front door cut at ~30s with a 502. Throws with
+  // the server's message on failure, like the old inline fetch did.
+  const renderClipWithPolling = async (body: any): Promise<any> => {
+    const res = await fetch("/api/render-clip", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+      body: JSON.stringify(body),
+    });
+    let data: any = {};
+    try {
+      data = await res.json();
+    } catch {
+      throw new Error("The server reply was cut off — please retry the render.");
+    }
+    if (!res.ok || data.error) throw new Error(data.error || "FFmpeg rendering failed");
+    if (data.status !== "rendering") return data;
+    const renderId = data.renderId;
+    const deadline = Date.now() + 12 * 60 * 1000;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 2500));
+      const pr = await fetch(`/api/render-clip?id=${encodeURIComponent(renderId)}`, {
+        headers: getAuthHeaders(),
+      });
+      let pd: any = {};
+      try {
+        pd = await pr.json();
+      } catch {
+        continue;
+      }
+      if (pd.status === "completed") return pd;
+      if (pd.status === "failed") throw new Error(pd.error || "FFmpeg rendering failed");
+      if (!pr.ok && pd.error) throw new Error(pd.error);
+    }
+    throw new Error(
+      "The render is taking unusually long — it may still finish on the server. Press the button again in a moment to pick up the result."
+    );
+  };
+
   const [reframeMode, setReframeMode] = useState<"auto-tracker" | "split-screen" | "blurred-fit" | "center">("auto-tracker");
   const [removeSilences, setRemoveSilences] = useState(false);
   const [jobCaptionStyle, setJobCaptionStyle] = useState<"hormozi" | "neon" | "beast" | "clean" | "kinetic" | "opus">("opus");
@@ -731,17 +772,8 @@ function DashboardContent() {
   const handleRenderAndDownload = async (clip: RealClip) => {
     setIsRendering(true);
     let pendingDownload: { url: string; filename: string; size?: number } | null = null;
-    // A render takes ~30s server-side; if the connection stalls (slow
-    // link, proxy hiccup) the fetch must fail loudly instead of spinning
-    // forever — a stuck button reads as a broken app.
-    const renderAbort = new AbortController();
-    const renderTimeout = setTimeout(() => renderAbort.abort(), 240000);
     try {
-      const res = await fetch("/api/render-clip", {
-        method: "POST",
-        signal: renderAbort.signal,
-        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-        body: JSON.stringify({
+      const data = await renderClipWithPolling({
           inputPath: clip.videoFilePath,
           startTime: clip.startTime,
           duration: clip.duration,
@@ -763,18 +795,7 @@ function DashboardContent() {
           broll: brollEnabled,
           music: musicBedEnabled,
           pexelsKey: localStorage.getItem("opus_pexels_key") || undefined,
-        }),
       });
-      clearTimeout(renderTimeout);
-      let data: any = {};
-      try {
-        data = await res.json();
-      } catch {
-        throw new Error("The server reply was cut off — please retry the render.");
-      }
-      if (!res.ok || data.error) {
-        throw new Error(data.error || "FFmpeg rendering failed");
-      }
 
       if (data.tracking?.summary) {
         setLastTrackingSummary(data.tracking.summary);
@@ -822,12 +843,7 @@ function DashboardContent() {
         confetti({ particleCount: 60, spread: 60 });
       } catch (e) {}
     } catch (err: any) {
-      clearTimeout(renderTimeout);
-      if (err?.name === "AbortError") {
-        alert("Render Error: the render request timed out — your connection may have stalled. The clip is probably still fine; press the button again to retry.");
-      } else {
-        alert(`Render Error: ${err.message}`);
-      }
+      alert(`Render Error: ${err.message}`);
     } finally {
       setIsRendering(false);
     }

@@ -98,6 +98,52 @@ function EditorContent() {
     return t ? { "x-app-access-token": t } : {};
   };
 
+  // /api/render-clip is async: POST starts the render (202 + renderId)
+  // and this polls GET until the result lands. A single synchronous
+  // request used to sit open for the whole 30-60s render, which the
+  // Cloudflare Worker front door cut at ~30s with a 502. Throws with
+  // the server's message on failure, like the old inline fetch did.
+  // A 401 keeps the editor's friendlier token message.
+  const renderClipWithPolling = async (body: any): Promise<any> => {
+    const res = await fetch("/api/render-clip", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+      body: JSON.stringify(body),
+    });
+    if (res.status === 401) {
+      throw new Error("Access token required — set your APP_ACCESS_TOKEN on the dashboard first (it appears as a prompt there), then come back.");
+    }
+    let data: any = {};
+    try {
+      data = await res.json();
+    } catch {
+      throw new Error("The server reply was cut off — please retry the render.");
+    }
+    if (!res.ok || data.error) throw new Error(data.error || "FFmpeg rendering failed");
+    if (data.status !== "rendering") return data;
+    const renderId = data.renderId;
+    const deadline = Date.now() + 12 * 60 * 1000;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 2500));
+      const pr = await fetch(`/api/render-clip?id=${encodeURIComponent(renderId)}`, {
+        headers: getAuthHeaders(),
+      });
+      let pd: any = {};
+      try {
+        pd = await pr.json();
+      } catch {
+        continue;
+      }
+      if (pd.status === "completed") return pd;
+      if (pd.status === "failed") throw new Error(pd.error || "FFmpeg rendering failed");
+      if (!pr.ok && pd.error) throw new Error(pd.error);
+    }
+    throw new Error(
+      "The render is taking unusually long — it may still finish on the server. Press the button again in a moment to pick up the result."
+    );
+  };
+
+
   const words: EditorWord[] = Array.isArray(clip?.transcript) ? clip.transcript : [];
 
   const applyClip = useCallback((c: any) => {
@@ -207,10 +253,7 @@ function EditorContent() {
         text: w.text,
       }));
 
-      const res = await fetch("/api/render-clip", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-        body: JSON.stringify({
+      const data = await renderClipWithPolling({
           inputPath: clip.videoFilePath,
           startTime: Number(((clip.startTime || 0) + trimStart).toFixed(2)),
           duration: Number((trimEnd - trimStart).toFixed(2)),
@@ -225,19 +268,7 @@ function EditorContent() {
           transcript: absoluteWords,
           headline: headline.trim() || undefined,
           captionStyle,
-        }),
       });
-
-      if (res.status === 401) {
-        throw new Error("Access token required — set your APP_ACCESS_TOKEN on the dashboard first (it appears as a prompt there), then come back.");
-      }
-      let data: any;
-      try {
-        data = await res.json();
-      } catch {
-        throw new Error("The render reply was cut off (connection dropped). Try the render again.");
-      }
-      if (!res.ok || data.error) throw new Error(data.error || "Render failed");
 
       // Rebase the stored clip to the newly rendered segment
       const newDuration = Number((trimEnd - trimStart).toFixed(2));

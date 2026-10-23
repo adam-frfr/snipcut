@@ -11,22 +11,13 @@ import path from "path";
 import fs from "fs";
 import os from "os";
 import { verifyAuthAndRateLimit } from "@/lib/authRateLimit";
+import crypto from "crypto";
 
-export async function POST(req: NextRequest) {
-  const authError = verifyAuthAndRateLimit(req);
-  if (authError) return authError;
-
+async function performRender(
+  body: any
+): Promise<{ status: number; payload: any }> {
   const renderStartTime = Date.now();
   try {
-    let body: any;
-    try {
-      body = await req.json();
-    } catch {
-      return NextResponse.json(
-        { error: "Request body was cut off or invalid — please retry." },
-        { status: 400 }
-      );
-    }
     const {
       inputPath,
       startTime,
@@ -48,10 +39,7 @@ export async function POST(req: NextRequest) {
     } = body;
 
     if (!inputPath || startTime === undefined || !duration) {
-      return NextResponse.json(
-        { error: "inputPath, startTime, and duration are required" },
-        { status: 400 }
-      );
+      return { status: 400, payload: { error: "inputPath, startTime, and duration are required" } };
     }
 
     // Non-numeric values would otherwise flow into ffmpeg as NaN and fail
@@ -60,10 +48,7 @@ export async function POST(req: NextRequest) {
       typeof startTime !== "number" || !Number.isFinite(startTime) || startTime < 0 ||
       typeof duration !== "number" || !Number.isFinite(duration) || duration <= 0
     ) {
-      return NextResponse.json(
-        { error: "startTime and duration must be valid numbers" },
-        { status: 400 }
-      );
+      return { status: 400, payload: { error: "startTime and duration must be valid numbers" } };
     }
 
     const outputDir = path.join(process.cwd(), "public", "rendered_clips");
@@ -209,7 +194,7 @@ export async function POST(req: NextRequest) {
     })();
 
     const elapsedMs = Date.now() - renderStartTime;
-    return NextResponse.json({
+    return { status: 200, payload: {
       success: true,
       downloadUrl: `/api/media?file=rendered_clips/${outputFilename}`,
       previewDownloadUrl: previewName
@@ -224,12 +209,143 @@ export async function POST(req: NextRequest) {
       filename: outputFilename,
       tracking: renderResult.tracking,
       timingMs: elapsedMs,
-    });
+    } };
   } catch (error: any) {
     console.error("[Stage: Render Clip API] FFmpeg Render Error:", error);
+    return { status: 500, payload: { error: error?.message || "FFmpeg video rendering failed" } };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Async render registry.
+//
+// Manual renders run 30-60s+ synchronously, which dies behind proxies
+// with short response waits — the Cloudflare Worker front door cut
+// them at ~30s with a 502 while the render itself finished fine on the
+// server. POST now validates, starts the render detached and returns
+// a renderId immediately; clients poll GET until the result lands
+// (the same pattern job processing already uses). Identical in-flight
+// requests share one render, and a completed result is replayed for
+// 10 minutes so a re-click is instant.
+// ---------------------------------------------------------------------------
+type RenderEntry = {
+  status: "rendering" | "completed" | "failed";
+  startedAt: number;
+  payload?: any;
+  error?: string;
+};
+const renderRegistry = new Map<string, RenderEntry>();
+const RENDER_KEEP_MS = 10 * 60 * 1000;
+const RENDER_MAX_AGE_MS = 30 * 60 * 1000;
+
+function sweepRenders() {
+  const now = Date.now();
+  for (const [k, v] of renderRegistry) {
+    if (now - v.startedAt > RENDER_MAX_AGE_MS) renderRegistry.delete(k);
+  }
+}
+
+function renderKeyFor(body: any): string {
+  const stable = JSON.stringify({
+    inputPath: body.inputPath,
+    startTime: body.startTime,
+    duration: body.duration,
+    aspectRatio: body.aspectRatio || "9:16",
+    reframeMode: body.reframeMode || "auto-tracker",
+    splitScreen: Boolean(body.splitScreen),
+    splitScreenOptions: body.splitScreenOptions,
+    captionPositionY: body.captionPositionY,
+    headline: body.headline,
+    captionStyle: body.captionStyle || "kinetic",
+    broll: Boolean(body.broll),
+    music: Boolean(body.music),
+    transcript: Array.isArray(body.transcript) ? body.transcript : undefined,
+  });
+  return "r_" + crypto.createHash("sha256").update(stable).digest("hex").slice(0, 32);
+}
+
+export async function POST(req: NextRequest) {
+  const authError = verifyAuthAndRateLimit(req);
+  if (authError) return authError;
+
+  let body: any;
+  try {
+    body = await req.json();
+  } catch {
     return NextResponse.json(
-      { error: error?.message || "FFmpeg video rendering failed" },
-      { status: 500 }
+      { error: "Request body was cut off or invalid — please retry." },
+      { status: 400 }
     );
   }
+
+  if (!body?.inputPath || body.startTime === undefined || !body.duration) {
+    return NextResponse.json(
+      { error: "inputPath, startTime, and duration are required" },
+      { status: 400 }
+    );
+  }
+  if (
+    typeof body.startTime !== "number" || !Number.isFinite(body.startTime) || body.startTime < 0 ||
+    typeof body.duration !== "number" || !Number.isFinite(body.duration) || body.duration <= 0
+  ) {
+    return NextResponse.json(
+      { error: "startTime and duration must be valid numbers" },
+      { status: 400 }
+    );
+  }
+
+  sweepRenders();
+  const key = renderKeyFor(body);
+  const existing = renderRegistry.get(key);
+  if (existing?.status === "completed" && Date.now() - existing.startedAt < RENDER_KEEP_MS) {
+    return NextResponse.json({ ...existing.payload, status: "completed", renderId: key });
+  }
+  if (existing?.status === "rendering") {
+    return NextResponse.json({ status: "rendering", renderId: key }, { status: 202 });
+  }
+
+  const entry: RenderEntry = { status: "rendering", startedAt: Date.now() };
+  renderRegistry.set(key, entry);
+  performRender(body)
+    .then(({ status, payload }) => {
+      if (status === 200 && payload?.success) {
+        entry.status = "completed";
+        entry.payload = payload;
+      } else {
+        entry.status = "failed";
+        entry.error = payload?.error || "Render failed";
+      }
+    })
+    .catch((err: any) => {
+      entry.status = "failed";
+      entry.error = err?.message || "Render failed";
+    });
+
+  return NextResponse.json({ status: "rendering", renderId: key }, { status: 202 });
+}
+
+export async function GET(req: NextRequest) {
+  const authError = verifyAuthAndRateLimit(req);
+  if (authError) return authError;
+
+  const id = req.nextUrl.searchParams.get("id") || "";
+  sweepRenders();
+  const entry = renderRegistry.get(id);
+  if (!entry) {
+    return NextResponse.json(
+      { error: "Unknown or expired render id — please start the render again." },
+      { status: 404 }
+    );
+  }
+  if (entry.status === "rendering") {
+    return NextResponse.json({
+      status: "rendering",
+      renderId: id,
+      elapsedMs: Date.now() - entry.startedAt,
+    });
+  }
+  if (entry.status === "failed") {
+    return NextResponse.json({ status: "failed", renderId: id, error: entry.error || "Render failed" });
+  }
+  return NextResponse.json({ ...entry.payload, status: "completed", renderId: id });
 }
