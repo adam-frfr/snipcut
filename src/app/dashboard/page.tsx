@@ -139,7 +139,7 @@ function DashboardContent() {
 
   const [reframeMode, setReframeMode] = useState<"auto-tracker" | "split-screen" | "blurred-fit" | "center">("auto-tracker");
   const [removeSilences, setRemoveSilences] = useState(false);
-  const [jobCaptionStyle, setJobCaptionStyle] = useState<"hormozi" | "neon" | "beast" | "clean" | "kinetic">("kinetic");
+  const [jobCaptionStyle, setJobCaptionStyle] = useState<"hormozi" | "neon" | "beast" | "clean" | "kinetic" | "opus">("opus");
   const [brollEnabled, setBrollEnabled] = useState(true);
   const [musicBedEnabled, setMusicBedEnabled] = useState(true);
   const [lastTrackingSummary, setLastTrackingSummary] = useState<string>("");
@@ -1687,7 +1687,7 @@ function DashboardContent() {
                   Caption Style
                 </label>
                 <div className="flex flex-wrap gap-1.5">
-                  {(["kinetic", "hormozi", "neon", "beast", "clean"] as const).map((st) => (
+                  {(["opus", "kinetic", "hormozi", "neon", "beast", "clean"] as const).map((st) => (
                     <button
                       key={st}
                       type="button"
@@ -1696,7 +1696,7 @@ function DashboardContent() {
                         jobCaptionStyle === st ? "bg-black text-white shadow-[2px_2px_0px_#FFC700]" : "bg-[#F8F7F4] hover:bg-white text-black"
                       }`}
                     >
-                      {st === "kinetic" ? "⚡ Kinetic" : st}
+                      {st === "kinetic" ? "⚡ Kinetic" : st === "opus" ? "★ Opus" : st}
                     </button>
                   ))}
                 </div>

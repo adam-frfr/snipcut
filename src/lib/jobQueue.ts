@@ -121,7 +121,7 @@ export interface JobOptions {
   customPrompt?: string;
   aspectRatio?: "9:16" | "1:1" | "16:9";
   reframeMode?: "auto-tracker" | "split-screen" | "blurred-fit" | "center";
-  captionStyle?: "hormozi" | "neon" | "beast" | "clean" | "kinetic";
+  captionStyle?: "hormozi" | "neon" | "beast" | "clean" | "kinetic" | "opus";
   removeSilences?: boolean; // tighten clips by cutting internal pauses > 0.55s
   maxClipsToRender?: number; // default 2
   retentionHours?: number; // default 24h

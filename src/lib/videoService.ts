@@ -316,7 +316,7 @@ export interface RenderOptions {
   captionPositionY?: number;
   transcript?: { start: number; end: number; text: string }[];
   headline?: string;
-  captionStyle?: "hormozi" | "neon" | "beast" | "clean" | "kinetic";
+  captionStyle?: "hormozi" | "neon" | "beast" | "clean" | "kinetic" | "opus";
   // Render picture only; captions are burned later by applyPostEffects so
   // they can sit ON TOP of B-roll cutaways instead of underneath them.
   skipCaptions?: boolean;
@@ -389,7 +389,7 @@ interface KaraokeWord {
  */
 export function buildKaraokeAss(
   words: KaraokeWord[],
-  captionStyle: "hormozi" | "neon" | "beast" | "clean" | "kinetic",
+  captionStyle: "hormozi" | "neon" | "beast" | "clean" | "kinetic" | "opus",
   marginV: number,
   playRes: { x: number; y: number } = { x: 1080, y: 1920 }
 ): string {
@@ -400,6 +400,7 @@ export function buildKaraokeAss(
     beast: { base: "&H00FFFFFF", accent: "&H0000FFFF", size: 62, outline: 8 },
     clean: { base: "&H00FFFFFF", accent: "&H00FFFFFF", size: 46, outline: 3 },
     kinetic: { base: "&H00FFFFFF", accent: "&H0000FFFF", size: 98, outline: 9 },
+    opus: { base: "&H00FFFFFF", accent: "&H0000FFFF", size: 74, outline: 10 },
   } as const;
   const pal = palettes[captionStyle] || palettes.hormozi;
   // Font size is authored against a 1920px-tall canvas; scale it to the
@@ -418,12 +419,60 @@ ScaledBorderAndShadow: yes
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Karaoke,Arial,${fontSize},${pal.base},${pal.base},&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,${pal.outline},2,2,60,60,${marginV},1
 Style: Kinetic,Arial,${fontSize},${pal.base},${pal.base},&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,${pal.outline},3,5,40,40,0,1
+Style: Opus,Arial,${Math.max(20, Math.round(74 * (playRes.y / 1920)))},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,10,2,2,50,50,${Math.round(playRes.y * 0.16)},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 `;
 
   const escapeAssText = (t: string) => t.replace(/\\/g, "\\\\").replace(/\{/g, "\\{").replace(/\}/g, "\\}");
+
+  if (captionStyle === "opus") {
+    // OPUS: the reference app's own caption look — phrases of up to 5
+    // words sit low-centre; the whole phrase stays on screen while the
+    // spoken word turns accent-yellow with a slight pop. Auto-fit keeps
+    // long phrases inside the frame (theirs occasionally overflow).
+    const opusFont = Math.max(20, Math.round(74 * (playRes.y / 1920)));
+    const phrases: KaraokeWord[][] = [];
+    let cur: KaraokeWord[] = [];
+    for (const w of words) {
+      if (cur.length > 0) {
+        const prev = cur[cur.length - 1];
+        if (cur.length >= 5 || w.start - prev.end > 0.5 || /[.!?]$/.test(prev.text)) {
+          phrases.push(cur);
+          cur = [];
+        }
+      }
+      cur.push(w);
+    }
+    if (cur.length > 0) phrases.push(cur);
+    const evts: string[] = [];
+    for (const phrase of phrases) {
+      // Auto-fit per phrase at its widest (active word is 1.16x).
+      const avail = playRes.x - 100;
+      const est = phrase.reduce(
+        (sum, w, i) => sum + w.text.length * 0.66 * opusFont * 1.16 + (i > 0 ? 0.32 * opusFont : 0),
+        0
+      );
+      const fit = est > avail ? Math.max(0.6, avail / est) : 1;
+      for (let i = 0; i < phrase.length; i++) {
+        const w = phrase[i];
+        const nextStart = i + 1 < phrase.length ? phrase[i + 1].start : w.end;
+        const evEnd = Math.max(w.end, Math.min(nextStart, w.start + 0.12));
+        const parts = phrase.map((pw, j) => {
+          const txt = escapeAssText(pw.text.toUpperCase());
+          if (j === i) {
+            return `{\\c${pal.accent}\\fs${Math.round(opusFont * fit * 1.16)}\\fscx116\\fscy116\\t(0,90,1,\\fscx100\\fscy100)}${txt}{\\r}`;
+          }
+          return fit < 1 ? `{\\fs${Math.round(opusFont * fit)}}${txt}{\\r}` : txt;
+        });
+        evts.push(
+          `Dialogue: 0,${formatAssTime(w.start)},${formatAssTime(evEnd)},Opus,,0,0,0,,${parts.join(" ")}`
+        );
+      }
+    }
+    return header + evts.join("\n") + "\n";
+  }
 
   if (captionStyle === "kinetic") {
     // KINETIC: 1-3 word chunks, center-screen, each chunk pops in with a
@@ -1083,7 +1132,7 @@ export interface PostFxOptions {
   duration: number;
   aspectRatio: "9:16" | "1:1" | "16:9";
   words: { start: number; end: number; text: string }[]; // clip-relative
-  captionStyle: "hormozi" | "neon" | "beast" | "clean" | "kinetic";
+  captionStyle: "hormozi" | "neon" | "beast" | "clean" | "kinetic" | "opus";
   broll: BrollCue[];
   punches: { start: number; end: number }[]; // clip-relative
   musicBed: boolean;
