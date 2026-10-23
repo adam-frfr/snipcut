@@ -1304,12 +1304,70 @@ export async function renderSegmentedClip(opts: {
   }
 }
 
+/**
+ * B-roll cue discipline. Cues used to inherit full sentence lengths
+ * (up to ~8s each), could sit back-to-back, and together cover most of
+ * a clip — burying the actual footage and any split-screen work under
+ * stock imagery. Now: max 2.5s per cue, at least 1.5s of real footage
+ * between cues, and total coverage capped at ~20% of the clip.
+ */
+export function shapeBrollCues<T extends { start: number; end: number }>(cues: T[], duration: number): T[] {
+  const MAX_CUE = 2.5;
+  const MIN_GAP = 1.5;
+  const budget = Math.max(0, duration * 0.2);
+  const sorted = [...cues].sort((a, b) => a.start - b.start);
+  const out: T[] = [];
+  let used = 0;
+  let lastEnd = -Infinity;
+  for (const cue of sorted) {
+    const start = Math.max(cue.start, lastEnd + MIN_GAP);
+    if (start >= duration - 0.4) continue;
+    let len = Math.min(MAX_CUE, cue.end - cue.start, duration - start);
+    if (len < 0.6) continue;
+    if (used + len > budget) {
+      if (out.length === 0) len = Math.max(0.6, Math.min(len, budget));
+      else continue;
+    }
+    const shaped = { ...cue, start: Number(start.toFixed(2)), end: Number((start + len).toFixed(2)) };
+    out.push(shaped);
+    used += len;
+    lastEnd = shaped.end;
+  }
+  if (out.length !== cues.length) {
+    console.log(`[PostFX] B-roll discipline: ${cues.length} cue(s) -> ${out.length} (coverage ${used.toFixed(1)}s of ${duration.toFixed(1)}s)`);
+  }
+  return out;
+}
+
+/**
+ * Never bury a split-screen under B-roll: the split IS the visual.
+ * Drops cues overlapping a split layout segment by more than 0.4s.
+ * All times are clip-relative.
+ */
+export function dropCuesOverlappingSplits<T extends { start: number; end: number }>(
+  cues: T[],
+  layoutSegments?: { layout: string; start: number; end: number }[] | null
+): T[] {
+  if (!layoutSegments?.length) return cues;
+  const splits = layoutSegments.filter((s) => s.layout === "split");
+  if (!splits.length) return cues;
+  const kept = cues.filter(
+    (cue) => !splits.some((s) => Math.min(cue.end, s.end) - Math.max(cue.start, s.start) > 0.4)
+  );
+  if (kept.length !== cues.length) {
+    console.log(`[PostFX] Dropped ${cues.length - kept.length} B-roll cue(s) overlapping split-screen segments`);
+  }
+  return kept;
+}
+
 export async function applyPostEffects(opts: PostFxOptions): Promise<void> {
   const W = opts.aspectRatio === "16:9" ? 1920 : 1080;
   const H = opts.aspectRatio === "16:9" ? 1080 : opts.aspectRatio === "1:1" ? 1080 : 1920;
 
+  const broll = shapeBrollCues(opts.broll, opts.duration);
+
   const args: string[] = ["-y", "-i", opts.basePath];
-  for (const cue of opts.broll) {
+  for (const cue of broll) {
     const win = Math.max(0.6, cue.end - cue.start);
     if (cue.kind === "image") {
       args.push("-loop", "1", "-framerate", "30", "-t", win.toFixed(2), "-i", cue.assetPath);
@@ -1321,7 +1379,7 @@ export async function applyPostEffects(opts: PostFxOptions): Promise<void> {
   if (opts.musicBed) {
     const bed = await ensureMusicBed();
     if (bed) {
-      musicIdx = 1 + opts.broll.length;
+      musicIdx = 1 + broll.length;
       args.push("-stream_loop", "-1", "-i", bed);
     }
   }
@@ -1336,7 +1394,7 @@ export async function applyPostEffects(opts: PostFxOptions): Promise<void> {
   }
 
   let last = "base";
-  opts.broll.forEach((cue, i) => {
+  broll.forEach((cue, i) => {
     const idx = i + 1;
     const win = Math.max(0.6, cue.end - cue.start);
     const frames = Math.max(10, Math.round(win * 30));
@@ -1401,7 +1459,7 @@ export async function applyPostEffects(opts: PostFxOptions): Promise<void> {
   try {
     await execFileP(getFfmpegBinary(), args, { maxBuffer: 64 * 1024 * 1024 });
     console.log(
-      `[PostFX] Applied ${opts.broll.length} B-roll cue(s), ${opts.punches.length} punch zoom(s), music=${hasMusic}, captions=${opts.words.length > 0}`
+      `[PostFX] Applied ${broll.length} B-roll cue(s), ${opts.punches.length} punch zoom(s), music=${hasMusic}, captions=${opts.words.length > 0}`
     );
   } finally {
     if (assPath) {

@@ -5,7 +5,7 @@ import { transcribeAudioFile } from "./transcriptionService";
 import { analyzeTranscriptForViralClips, CuratedClipResult } from "./aiService";
 import { snapAndValidateClips, SnappedClipResult } from "./wordSnapping";
 import { buildSentences, planBroll, fetchBrollAssets } from "./brollService";
-import { applyPostEffects } from "./videoService";
+import { applyPostEffects, dropCuesOverlappingSplits, probeVideoFormat } from "./videoService";
 import { renderVideoClip, resolveSafeFilePath, extractAudioForWhisper, getFfmpegBinary, generatePreviewClip, generatePosterImage } from "./videoService";
 import { execFile } from "child_process";
 import { promisify } from "util";
@@ -103,6 +103,8 @@ export interface JobOutput {
   fileId?: string;
   filePath?: string;
   sourceSha256?: string;
+  sourceWidth?: number;
+  sourceHeight?: number;
   transcription?: {
     text: string;
     words: any[];
@@ -369,6 +371,14 @@ class JobQueueManager {
 
       if (!fs.existsSync(resolvedVideoPath)) {
         throw new Error(`Video file not found at ${resolvedVideoPath}`);
+      }
+
+      if (!job.output.sourceHeight) {
+        try {
+          const info = await probeVideoFormat(resolvedVideoPath);
+          if (info.width) job.output.sourceWidth = info.width;
+          if (info.height) job.output.sourceHeight = info.height;
+        } catch {}
       }
 
       if (!job.output.sourceSha256) {
@@ -691,6 +701,8 @@ class JobQueueManager {
                 punches.push({ start: Math.max(0, w.start - 0.05), end: w.start + 0.85 });
                 if (punches.length >= 3) break;
               }
+
+              cues = dropCuesOverlappingSplits(cues, (renderRes as any)?.tracking?.layoutSegments);
 
               await applyPostEffects({
                 basePath,

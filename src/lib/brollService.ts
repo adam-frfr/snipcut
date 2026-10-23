@@ -251,6 +251,36 @@ function looksLikeImage(p: string): boolean {
   }
 }
 
+const GATE_STOPWORDS = new Set([
+  "the", "and", "for", "with", "that", "this", "from", "your", "you", "are",
+  "was", "were", "has", "have", "into", "over", "under", "about", "stock",
+  "footage", "video", "photo", "image", "free", "download",
+]);
+
+function queryTerms(query: string): string[] {
+  return query
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter((w) => w.length >= 3 && !GATE_STOPWORDS.has(w));
+}
+
+/**
+ * Relevance gate for no-key image sources. Wikimedia Commons' full-text
+ * search drifts badly (a "money" query returned antique maps, which
+ * then sat on screen for ~10s of a real clip), so a candidate only
+ * passes when its own title/tags actually share the planned query's
+ * meaningful terms: at least 1 term for short queries, 2 for longer
+ * ones. No pass -> the cue is dropped and the real footage stays.
+ */
+export function brollTitleMatches(query: string, title: string): boolean {
+  const terms = queryTerms(query);
+  if (terms.length === 0) return true;
+  const hay = " " + String(title || "").toLowerCase().replace(/[^a-z0-9\s]/g, " ") + " ";
+  const hits = terms.filter((t) => hay.includes(" " + t) || hay.includes(t + " ")).length;
+  return hits >= (terms.length >= 3 ? 2 : 1);
+}
+
 export async function fetchBrollAssets(
   plan: BrollPlanItem[],
   opts: { pexelsKey?: string; destDir: string; tag: string }
@@ -299,13 +329,15 @@ export async function fetchBrollAssets(
         });
         if (res.ok) {
           const data: any = await res.json();
-          const photo = (data.photos || [])[0];
-          const src = photo?.src?.large2x || photo?.src?.large || photo?.src?.original;
-          if (src) {
+          for (const photo of (data.photos || []).slice(0, 3)) {
+            if (photo?.alt && !brollTitleMatches(item.query, photo.alt)) continue;
+            const src = photo?.src?.large2x || photo?.src?.large || photo?.src?.original;
+            if (!src) continue;
             const dest = path.join(opts.destDir, `${opts.tag}-${i}.jpg`);
             if ((await downloadToFile(src, dest)) && looksLikeImage(dest)) {
               assets.push({ ...item, kind: "image", assetPath: dest });
               done = true;
+              break;
             }
           }
         }
@@ -332,6 +364,7 @@ export async function fetchBrollAssets(
           for (const page of pages) {
             const info = page.imageinfo?.[0];
             if (!info?.thumburl || (info.width || 0) < 700) continue;
+            if (!brollTitleMatches(item.query, page.title || "")) continue;
             if (info.mime && !["image/jpeg", "image/png", "image/webp"].includes(info.mime)) continue;
             const dest = path.join(opts.destDir, `${opts.tag}-${i}.jpg`);
             if ((await downloadToFile(info.thumburl, dest)) && looksLikeImage(dest)) {
@@ -359,6 +392,8 @@ export async function fetchBrollAssets(
           const data: any = await res.json();
           for (const r of (data.results || []).slice(0, 4)) {
             if (!r.url) continue;
+            const tagText = Array.isArray(r.tags) ? r.tags.map((t: any) => t?.name || "").join(" ") : "";
+            if (!brollTitleMatches(item.query, `${r.title || ""} ${tagText}`)) continue;
             const dest = path.join(opts.destDir, `${opts.tag}-${i}.jpg`);
             if ((await downloadToFile(r.url, dest)) && looksLikeImage(dest)) {
               assets.push({ ...item, kind: "image", assetPath: dest });

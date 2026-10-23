@@ -215,6 +215,7 @@ function DashboardContent() {
   const [brollEnabled, setBrollEnabled] = useState(true);
   const [musicBedEnabled, setMusicBedEnabled] = useState(true);
   const [lastTrackingSummary, setLastTrackingSummary] = useState<string>("");
+  const [sourceWarning, setSourceWarning] = useState<string>("");
   const [dynamicShots, setDynamicShots] = useState<
     {
       start: number;
@@ -503,6 +504,18 @@ function DashboardContent() {
               transcript: clipWords,
             };
           });
+
+          // A very low-res source (e.g. a downloader's default 144p/240p)
+          // physically caps how good any clip can look — every crop is a
+          // tiny pixel patch upscaled. Say so plainly instead of letting
+          // the user blame the engine.
+          if (job.output?.sourceHeight && job.output.sourceHeight < 480) {
+            setSourceWarning(
+              `Source video is only ${job.output.sourceHeight}p — clips from it will look soft no matter what, because every crop is a tiny slice upscaled. For crisp results, use a 720p or 1080p version of the same video.`
+            );
+          } else {
+            setSourceWarning("");
+          }
 
           if (generatedClips.length > 0) {
             setClips(generatedClips);
@@ -1526,6 +1539,13 @@ function DashboardContent() {
                           <div className="mt-3 p-2 bg-white border border-black text-[10px] text-black font-mono flex items-center gap-1.5">
                             <Sparkles className="w-3.5 h-3.5 text-black flex-shrink-0" />
                             <span className="truncate">{lastTrackingSummary}</span>
+                          </div>
+                        )}
+
+                        {sourceWarning && (
+                          <div className="mt-3 p-2.5 bg-[#FEF3C7] border-2 border-black text-[11px] leading-snug text-black font-bold flex items-start gap-1.5">
+                            <Sparkles className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+                            <span>{sourceWarning}</span>
                           </div>
                         )}
                       </div>

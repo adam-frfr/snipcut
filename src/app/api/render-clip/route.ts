@@ -5,6 +5,7 @@ import {
   generatePosterImage,
   applyPostEffects,
   pickPunchZooms,
+  dropCuesOverlappingSplits,
 } from "@/lib/videoService";
 import { buildSentences, planBroll, fetchBrollAssets } from "@/lib/brollService";
 import path from "path";
@@ -150,6 +151,7 @@ async function performRender(
             }
           }
         }
+        cues = dropCuesOverlappingSplits(cues, (base as any)?.tracking?.layoutSegments);
         await applyPostEffects({
           basePath,
           outputPath,
