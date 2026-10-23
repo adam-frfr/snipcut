@@ -21,6 +21,7 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
   const [claudeKey, setClaudeKey] = useState("");
   const [groqKey, setGroqKey] = useState("");
   const [pexelsKey, setPexelsKey] = useState("");
+  const [pixabayKey, setPixabayKey] = useState("");
   const [preferredModel, setPreferredModel] = useState<"claude-3-5-haiku" | "gpt-4o-mini" | "claude-3-5-sonnet">("claude-3-5-haiku");
   const [youtubeCookies, setYoutubeCookies] = useState("");
   const [youtubeProxy, setYoutubeProxy] = useState("");
@@ -51,6 +52,7 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
         storedClaude = localStorage.getItem("opus_claude_key") || "";
         storedGroq = localStorage.getItem("opus_groq_key") || "";
         setPexelsKey(localStorage.getItem("opus_pexels_key") || "");
+        setPixabayKey(localStorage.getItem("opus_pixabay_key") || "");
         storedModel = (localStorage.getItem("opus_preferred_model") as any) || "claude-3-5-haiku";
         storedCookies = localStorage.getItem("opus_youtube_cookies") || "";
         storedProxy = localStorage.getItem("opus_youtube_proxy") || "";
@@ -124,6 +126,7 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
       localStorage.setItem("opus_claude_key", claudeKey.trim());
       localStorage.setItem("opus_groq_key", groqKey.trim());
       localStorage.setItem("opus_pexels_key", pexelsKey.trim());
+      localStorage.setItem("opus_pixabay_key", pixabayKey.trim());
       localStorage.setItem("opus_preferred_model", preferredModel);
       localStorage.setItem("opus_youtube_cookies", youtubeCookies.trim());
       localStorage.setItem("opus_youtube_proxy", youtubeProxy.trim());
@@ -284,7 +287,23 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
               className="w-full neo-input py-2.5 px-3 text-base sm:text-sm font-mono"
             />
             <p className="text-[10px] font-bold text-[#555555] mt-1">
-              Enables stock VIDEO cutaways for AI B-Roll. Without it, B-Roll still works with free photos via Openverse.
+              Pexels paused NEW API keys in Sept 2026, so this only helps if you already have one. New users: use the Pixabay key below instead.
+            </p>
+          </div>
+
+          <div>
+            <label className="block text-xs font-black uppercase text-black mb-1">
+              Pixabay API Key (Stock B-Roll — Optional)
+            </label>
+            <input
+              type="password"
+              value={pixabayKey}
+              onChange={(e) => setPixabayKey(e.target.value)}
+              placeholder="Free key shown at pixabay.com/api/docs"
+              className="w-full neo-input py-2.5 px-3 text-base sm:text-sm font-mono"
+            />
+            <p className="text-[10px] font-bold text-[#555555] mt-1">
+              Enables stock VIDEO cutaways for AI B-Roll (free Pixabay account, key is on their API docs page). B-Roll picks are relevance-checked either way — off-topic stock never reaches your clips.
             </p>
           </div>
 

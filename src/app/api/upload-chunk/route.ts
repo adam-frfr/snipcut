@@ -151,6 +151,7 @@ export async function POST(req: NextRequest) {
       broll: body.broll === true,
       musicBed: body.musicBed === true,
       pexelsKey: (body.pexelsKey || "").trim?.() || undefined,
+      pixabayKey: (body.pixabayKey || "").trim?.() || undefined,
     };
 
     const jobId = `job_${crypto.randomUUID()}`;

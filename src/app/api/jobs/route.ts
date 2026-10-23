@@ -67,6 +67,7 @@ export async function POST(req: NextRequest) {
         broll: (formData.get("broll") as string) === "true",
         musicBed: (formData.get("musicBed") as string) === "true",
         pexelsKey: ((formData.get("pexelsKey") as string) || "").trim() || undefined,
+        pixabayKey: ((formData.get("pixabayKey") as string) || "").trim() || undefined,
       };
 
       const uploadsDir = path.join(process.cwd(), "public", "uploads");
@@ -155,6 +156,7 @@ export async function POST(req: NextRequest) {
         broll,
         musicBed,
         pexelsKey,
+        pixabayKey,
       } = body;
 
       if (youtubeUrl !== undefined && youtubeUrl !== null && typeof youtubeUrl !== "string") {
@@ -177,6 +179,7 @@ export async function POST(req: NextRequest) {
         broll: broll === true,
         musicBed: musicBed === true,
         pexelsKey: (pexelsKey || "").trim?.() || undefined,
+        pixabayKey: (pixabayKey || "").trim?.() || undefined,
       };
 
       if (youtubeUrl) {

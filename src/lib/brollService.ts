@@ -283,10 +283,11 @@ export function brollTitleMatches(query: string, title: string): boolean {
 
 export async function fetchBrollAssets(
   plan: BrollPlanItem[],
-  opts: { pexelsKey?: string; destDir: string; tag: string }
+  opts: { pexelsKey?: string; pixabayKey?: string; destDir: string; tag: string }
 ): Promise<BrollAsset[]> {
   fs.mkdirSync(opts.destDir, { recursive: true });
   const pexelsKey = (opts.pexelsKey || process.env.PEXELS_API_KEY || "").trim();
+  const pixabayKey = (opts.pixabayKey || process.env.PIXABAY_API_KEY || "").trim();
   const assets: BrollAsset[] = [];
 
   for (let i = 0; i < plan.length; i++) {
@@ -339,6 +340,59 @@ export async function fetchBrollAssets(
               done = true;
               break;
             }
+          }
+        }
+      } catch {}
+    }
+
+    // Pixabay (free key) — Pexels paused new API key issuance in Sept
+    // 2026, so this is the keyed source new users can actually get.
+    // Videos first, then photos; candidates are relevance-gated on
+    // Pixabay's own tags so off-topic hits never reach the clip.
+    if (!done && pixabayKey && item.kind === "video") {
+      try {
+        const res = await fetch(
+          `https://pixabay.com/api/videos/?key=${encodeURIComponent(pixabayKey)}&q=${q}&per_page=4`,
+          { signal: AbortSignal.timeout(10000) }
+        );
+        if (res.ok) {
+          const data: any = await res.json();
+          for (const hit of (data.hits || []).slice(0, 4)) {
+            if (!brollTitleMatches(item.query, hit?.tags || "")) continue;
+            const files = [hit?.videos?.large, hit?.videos?.medium, hit?.videos?.small]
+              .filter((f: any) => f?.url && (f.width || 0) >= 540)
+              .sort((a: any, c: any) => Math.abs(a.width - 1080) - Math.abs(c.width - 1080));
+            if (!files[0]) continue;
+            const dest = path.join(opts.destDir, `${opts.tag}-${i}.mp4`);
+            if (await downloadToFile(files[0].url, dest)) {
+              assets.push({ ...item, kind: "video", assetPath: dest });
+              done = true;
+              break;
+            }
+          }
+        }
+      } catch {}
+    }
+
+    if (!done && pixabayKey) {
+      try {
+        const res = await fetch(
+          `https://pixabay.com/api/?key=${encodeURIComponent(pixabayKey)}&q=${q}&image_type=photo&per_page=4`,
+          { signal: AbortSignal.timeout(10000) }
+        );
+        if (res.ok) {
+          const data: any = await res.json();
+          for (const hit of (data.hits || []).slice(0, 4)) {
+            if (!brollTitleMatches(item.query, hit?.tags || "")) continue;
+            const src = hit?.largeImageURL || hit?.webformatURL;
+            if (!src) continue;
+            const dest = path.join(opts.destDir, `${opts.tag}-${i}.jpg`);
+            if ((await downloadToFile(src, dest)) && looksLikeImage(dest)) {
+              assets.push({ ...item, kind: "image", assetPath: dest });
+              done = true;
+              break;
+            }
+            try { fs.unlinkSync(dest); } catch {}
           }
         }
       } catch {}

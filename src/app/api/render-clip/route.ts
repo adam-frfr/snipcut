@@ -34,6 +34,7 @@ async function performRender(
       broll,
       music,
       pexelsKey,
+      pixabayKey,
       groqKey,
       openaiKey,
       claudeKey,
@@ -144,6 +145,7 @@ async function performRender(
             if (plan.length) {
               const assets = await fetchBrollAssets(plan, {
                 pexelsKey: pexelsKey || process.env.PEXELS_API_KEY,
+                pixabayKey: pixabayKey || process.env.PIXABAY_API_KEY,
                 destDir: path.join(process.cwd(), "data", "broll"),
                 tag: `broll-dl-${Date.now().toString(36)}`,
               });

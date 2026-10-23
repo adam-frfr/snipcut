@@ -595,6 +595,7 @@ function DashboardContent() {
         claudeKey: (typeof window !== "undefined" && localStorage.getItem("opus_claude_key")) || "",
         preferredModel: (typeof window !== "undefined" && localStorage.getItem("opus_preferred_model")) || "",
         pexelsKey: (typeof window !== "undefined" && localStorage.getItem("opus_pexels_key")) || "",
+        pixabayKey: (typeof window !== "undefined" && localStorage.getItem("opus_pixabay_key")) || "",
       };
 
       if (uploadFile) {
@@ -808,6 +809,7 @@ function DashboardContent() {
           broll: brollEnabled,
           music: musicBedEnabled,
           pexelsKey: localStorage.getItem("opus_pexels_key") || undefined,
+          pixabayKey: localStorage.getItem("opus_pixabay_key") || undefined,
       });
 
       if (data.tracking?.summary) {

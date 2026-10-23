@@ -138,6 +138,7 @@ export interface JobOptions {
   broll?: boolean;
   musicBed?: boolean;
   pexelsKey?: string;
+  pixabayKey?: string;
 }
 
 export interface JobRecord {
@@ -684,6 +685,7 @@ class JobQueueManager {
                 if (plan.length > 0) {
                   const assets = await fetchBrollAssets(plan, {
                     pexelsKey: job.options.pexelsKey,
+                    pixabayKey: job.options.pixabayKey,
                     destDir: path.join(process.cwd(), "data", "broll"),
                     tag: `broll-${job.id.slice(5, 13)}-${i + 1}`,
                   });

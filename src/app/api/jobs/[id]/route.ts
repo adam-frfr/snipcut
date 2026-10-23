@@ -20,8 +20,8 @@ export async function GET(
   }
 
   // Never echo the user's API keys back in API responses
-  const { groqKey, openaiKey, claudeKey, pexelsKey, ...safeOptions } = job.options || {};
-  void groqKey; void openaiKey; void claudeKey; void pexelsKey;
+  const { groqKey, openaiKey, claudeKey, pexelsKey, pixabayKey, ...safeOptions } = job.options || {};
+  void groqKey; void openaiKey; void claudeKey; void pexelsKey; void pixabayKey;
 
   return NextResponse.json({
     success: true,
