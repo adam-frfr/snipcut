@@ -718,6 +718,11 @@ function DashboardContent() {
           })),
           headline: clip.hookHeadline || clip.title,
           captionStyle: clip.captionStyle || "hormozi",
+          // Downloads get the same reference FX as job renders, driven
+          // by the same toggles (editor re-renders don't send these).
+          broll: brollEnabled,
+          music: musicBedEnabled,
+          pexelsKey: localStorage.getItem("opus_pexels_key") || undefined,
         }),
       });
       clearTimeout(renderTimeout);

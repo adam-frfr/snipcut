@@ -428,6 +428,109 @@ def run_tracking(video_path, start_time, duration, mode="auto-tracker", ai_shots
                 best, best_score = tr, score
         segment_primary[(t0, t1)] = best
 
+    # --- per-shot layout decision (v3) ------------------------------------
+    # Opus-style adaptive layout: instead of one crop for the whole clip,
+    # each stretch of footage gets the composition that fits ITS content.
+    # Decided on a 2s window grid (scene cuts alone miss slow zooms and
+    # same-room angle changes), then merged into segments.
+    #   split — two present speakers too far apart for one 9:16 frame
+    #   fit   — no usable face, or the subject is tiny in a wide shot
+    #           (letterbox the whole frame over a blurred backdrop
+    #           instead of upscaling a sliver of it 8x)
+    #   crop  — normal single-subject dynamic crop (the v2 camera path)
+    def _win_info(tr, t0, t1):
+        ss = [s for s in tr.samples if t0 - 0.01 <= s[0] <= t1 + 0.01]
+        if not ss:
+            return None
+        wlen = max(0.01, t1 - t0)
+        return {
+            "track": tr.id,
+            "presence": len(ss) * SAMPLE_DT / wlen,
+            "speaking": sum(SAMPLE_DT for s in ss if s[5] > 0.12),
+            "cx": float(np.median([s[1] for s in ss])),
+            "cy": float(np.median([s[2] for s in ss])),
+            "fw": float(np.median([s[3] for s in ss])),
+            "fh": float(np.median([s[4] for s in ss])),
+        }
+
+    WIN = 2.0
+    win_layouts = []
+    wt = 0.0
+    while wt < duration - 0.01:
+        w1 = min(duration, wt + WIN)
+        infos = [i for i in (_win_info(tr, wt, w1) for tr in tracks) if i]
+        present = [i for i in infos if i["presence"] >= 0.35]
+        layout = "crop"
+        panels = None
+        ptrack = None
+        if infos:
+            prim = max(infos, key=lambda i: i["speaking"] * 2.0 + i["presence"] + math.sqrt(max(1.0, i["fw"] * i["fh"])) / 40.0)
+            ptrack = prim["track"]
+        else:
+            prim = None
+        if len(present) >= 2:
+            top2 = sorted(present, key=lambda i: -i["speaking"])[:2]
+            # Portraits on slides/graphics also detect as "faces", but they
+            # never talk — require real mouth-motion evidence from at least
+            # one of the pair before calling it a two-speaker split.
+            if top2[0]["speaking"] + top2[1]["speaking"] >= 0.4 and abs(top2[0]["cx"] - top2[1]["cx"]) > crop_w * 0.55:
+                layout = "split"
+                top, bot = (top2[0], top2[1]) if top2[0]["speaking"] >= top2[1]["speaking"] else (top2[1], top2[0])
+                panels = [
+                    {"track": q["track"], "cx": round(q["cx"], 1), "cy": round(q["cy"], 1), "face_w": round(q["fw"], 1), "face_h": round(q["fh"], 1)}
+                    for q in (top, bot)
+                ]
+                ptrack = top["track"]
+        if layout == "crop" and (prim is None or (prim["fh"] / max(1, height)) < 0.10):
+            layout = "fit"
+        win_layouts.append({"start": round(wt, 2), "end": round(w1, 2), "layout": layout, "track": ptrack, "panels": panels})
+        wt = w1
+
+    # Merge adjacent windows with the same layout, then fold sub-1s runs
+    # into their longer neighbour. Split windows merge when their panel
+    # centres are visually close (identity bookkeeping churns across cuts;
+    # what matters is that the crop doesn't jump) — the merged panel
+    # geometry is the median across all merged windows, so it's stable.
+    def _panels_close(a, b):
+        if not a or not b or len(a) != len(b):
+            return False
+        return all(abs(x["cx"] - y["cx"]) <= width * 0.18 and abs(x["cy"] - y["cy"]) <= height * 0.18 for x, y in zip(a, b))
+
+    layout_segments = []
+    for seg in win_layouts:
+        if layout_segments:
+            prev = layout_segments[-1]
+            same = prev["layout"] == seg["layout"] and (
+                seg["layout"] != "split" or _panels_close(prev["panels"], seg["panels"])
+            )
+            if same:
+                prev["end"] = seg["end"]
+                if seg["layout"] == "split" and seg["panels"]:
+                    prev.setdefault("_ps", [[dict(q)] for q in prev["panels"]])
+                    for i, q in enumerate(seg["panels"]):
+                        prev["_ps"][i].append(dict(q))
+                    for i, samples in enumerate(prev["_ps"]):
+                        for k in ("cx", "cy", "face_w", "face_h"):
+                            prev["panels"][i][k] = round(float(np.median([s[k] for s in samples])), 1)
+                continue
+        layout_segments.append(dict(seg))
+    for seg in layout_segments:
+        seg.pop("_ps", None)
+    changed = True
+    while changed and len(layout_segments) > 1:
+        changed = False
+        for i, seg in enumerate(layout_segments):
+            if seg["end"] - seg["start"] < 1.0:
+                if i == 0:
+                    layout_segments[1]["start"] = seg["start"]
+                    layout_segments[1]["track"] = layout_segments[1]["track"]
+                    del layout_segments[0]
+                else:
+                    layout_segments[i - 1]["end"] = seg["end"]
+                    del layout_segments[i]
+                changed = True
+                break
+
     def primary_for(t):
         for (t0, t1), tr in segment_primary.items():
             if t0 - 0.01 <= t <= t1 + 0.01:
@@ -586,7 +689,7 @@ def run_tracking(video_path, start_time, duration, mode="auto-tracker", ai_shots
     return {
         "status": "success",
         "mode": "auto-tracker",
-        "version": 2,
+        "version": 3,
         "isDynamic": len(keys_x) > 1,
         "shots": shots,
         "speakers": len(tracks),
@@ -595,7 +698,12 @@ def run_tracking(video_path, start_time, duration, mode="auto-tracker", ai_shots
         "crop_h": crop_h,
         "filter_type": "vf",
         "filter_value": vf_value,
-        "summary": summary,
+        "layoutSegments": layout_segments,
+        "video_w": width,
+        "video_h": height,
+        "summary": summary + "; layouts: " + ", ".join(
+            f"{s['layout']} {s['start']:.0f}-{s['end']:.0f}s" for s in layout_segments
+        ),
     }
 
 

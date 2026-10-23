@@ -347,6 +347,16 @@ export interface TrackingResult {
   version?: number;
   speakers?: number;
   layoutSuggestion?: string | null;
+  layoutSegments?: LayoutSegment[];
+  video_w?: number;
+  video_h?: number;
+}
+
+export interface LayoutSegment {
+  start: number;
+  end: number;
+  layout: "crop" | "fit" | "split";
+  panels?: { cx: number; cy: number; face_w: number; face_h: number }[];
 }
 
 function formatSrtTime(seconds: number): string {
@@ -687,7 +697,8 @@ export async function renderVideoClip({
         // than as constant camera pans between them.
         if (
           effectiveMode === "auto-tracker" &&
-          trackingResult.layoutSuggestion === "split-screen"
+          trackingResult.layoutSuggestion === "split-screen" &&
+          !trackingResult.layoutSegments?.length
         ) {
           const split = await detectSubjectAndReframe(
             resolvedInput,
@@ -823,6 +834,7 @@ export async function renderVideoClip({
       subtitleFilterStr = `subtitles='${assEscaped}'`;
     }
 
+    const runMainRender = () => {
     // Apply filters based on aspect ratio and tracking
     if (aspectRatio === "9:16") {
       if (trackingResult.filter_type === "filter_complex") {
@@ -893,6 +905,49 @@ export async function renderVideoClip({
         reject(err);
       })
       .run();
+    };
+
+    // Tracker v3 per-shot layouts: when the clip mixes compositions
+    // (crop / fit / split), render segment-by-segment and join; any
+    // failure falls back to the single-pass render above.
+    const layoutSegs = trackingResult.layoutSegments;
+    const useSegmented =
+      aspectRatio === "9:16" &&
+      effectiveMode === "auto-tracker" &&
+      Array.isArray(layoutSegs) &&
+      layoutSegs.length > 0 &&
+      layoutSegs.some((s) => s.layout !== "crop");
+    if (useSegmented) {
+      renderSegmentedClip({
+        input: resolvedInput,
+        output: resolvedOutput,
+        startTime,
+        segments: layoutSegs as LayoutSegment[],
+        cropFilter: trackingResult.filter_value,
+        videoW: trackingResult.video_w || 1920,
+        videoH: trackingResult.video_h || 1080,
+        subtitleFilterStr,
+      })
+        .then(() => {
+          if (tempSrtPath && fs.existsSync(tempSrtPath)) {
+            try {
+              fs.unlinkSync(tempSrtPath);
+            } catch {}
+          }
+          const elapsedMs = Date.now() - renderStartTime;
+          const sizeBytes = fs.existsSync(resolvedOutput) ? fs.statSync(resolvedOutput).size : 0;
+          console.log(
+            `[Stage: FFmpeg Render] Finished segmented render in ${elapsedMs}ms -> ${resolvedOutput} (${sizeBytes} bytes)`
+          );
+          resolve({ outputPath: resolvedOutput, tracking: trackingResult });
+        })
+        .catch((err) => {
+          console.warn("[Stage: Layouts] Segmented render failed, falling back to single-pass:", err);
+          runMainRender();
+        });
+    } else {
+      runMainRender();
+    }
   });
 }
 
@@ -1073,6 +1128,130 @@ async function ensureMusicBed(): Promise<string | null> {
   } catch (err) {
     console.warn("[PostFX] Could not generate music bed:", err);
     return null;
+  }
+}
+
+/**
+ * Punch-in zoom candidates from clip-RELATIVE words: emphasis words
+ * (long or digit-bearing), max 3, at least 2.4s apart. Shared by the
+ * job pipeline and the render-clip FX path.
+ */
+export function pickPunchZooms(
+  relWords: { text: string; start: number; end: number }[]
+): { start: number; end: number }[] {
+  const punches: { start: number; end: number }[] = [];
+  for (const w of relWords) {
+    const clean = (w.text || "").replace(/[^A-Za-z0-9]/g, "");
+    if (clean.length < 8 && !/\d/.test(clean)) continue;
+    if (punches.length > 0 && w.start - punches[punches.length - 1].start < 2.4) continue;
+    punches.push({ start: Math.max(0, w.start - 0.05), end: w.start + 0.85 });
+    if (punches.length >= 3) break;
+  }
+  return punches;
+}
+
+/**
+ * Segmented layout render (tracker v3): each layout segment of the clip
+ * is rendered with the composition that fits its content — dynamic crop
+ * (global camera path, time-offset per segment), fit (whole frame over a
+ * blurred backdrop) or split (per-speaker panel crops) — then the pieces
+ * are concatenated and captions are burned across the joined video.
+ * Throws on any failure; the caller falls back to the single-pass render.
+ */
+export async function renderSegmentedClip(opts: {
+  input: string;
+  output: string;
+  startTime: number;
+  segments: LayoutSegment[];
+  cropFilter: string;
+  videoW: number;
+  videoH: number;
+  subtitleFilterStr: string | null;
+}): Promise<void> {
+  const ff = getFfmpegBinary();
+  const tmpDir = path.join(path.dirname(opts.output), `segfx-${Date.now()}`);
+  fs.mkdirSync(tmpDir, { recursive: true });
+  const even = (n: number) => Math.max(2, Math.round(n / 2) * 2);
+  const MB = { maxBuffer: 64 * 1024 * 1024 };
+  try {
+    const segs: LayoutSegment[] = [];
+    for (const s of opts.segments) {
+      if (segs.length && s.end - s.start < 0.35) {
+        segs[segs.length - 1].end = s.end;
+        continue;
+      }
+      segs.push({ ...s });
+    }
+    if (!segs.length) throw new Error("no layout segments");
+    const segFiles: string[] = [];
+    for (let i = 0; i < segs.length; i++) {
+      const seg = segs[i];
+      const dur = Math.max(0.2, seg.end - seg.start);
+      const out = path.join(tmpDir, `seg-${i}.mp4`);
+      const base = [
+        "-hide_banner", "-loglevel", "error",
+        "-ss", String(opts.startTime + seg.start),
+        "-t", String(dur),
+        "-i", opts.input,
+      ];
+      const enc = [
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+        "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
+        "-ar", "44100", "-ac", "2", "-y", out,
+      ];
+      if (seg.layout === "fit") {
+        const fc =
+          "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,gblur=sigma=24,setsar=1[bg];" +
+          "[0:v]scale=1080:-2,setsar=1[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,fps=30[v]";
+        await execFileP(ff, [...base, "-filter_complex", fc, "-map", "[v]", "-map", "0:a?", ...enc], MB);
+      } else if (seg.layout === "split" && seg.panels && seg.panels.length >= 2) {
+        const panel = (p: { cx: number; cy: number; face_h: number }) => {
+          let pw = even(Math.min(opts.videoW, Math.max(140, p.face_h * 3.0)));
+          let ph = even(Math.min(opts.videoH, (pw * 8) / 9));
+          if (ph >= opts.videoH) {
+            ph = even(opts.videoH);
+            pw = even(Math.min(opts.videoW, (ph * 9) / 8));
+          }
+          const px = Math.round(Math.min(Math.max(0, p.cx - pw / 2), Math.max(0, opts.videoW - pw)));
+          const py = Math.round(Math.min(Math.max(0, p.cy - ph * 0.42), Math.max(0, opts.videoH - ph)));
+          return `crop=${pw}:${ph}:${px}:${py}`;
+        };
+        const fc =
+          `[0:v]${panel(seg.panels[0])},scale=1080:960:force_original_aspect_ratio=increase,crop=1080:960,setsar=1[top];` +
+          `[0:v]${panel(seg.panels[1])},scale=1080:960:force_original_aspect_ratio=increase,crop=1080:960,setsar=1[bot];` +
+          "[top][bot]vstack=inputs=2,fps=30[v]";
+        await execFileP(ff, [...base, "-filter_complex", fc, "-map", "[v]", "-map", "0:a?", ...enc], MB);
+      } else {
+        const vf =
+          opts.cropFilter.replace(/\bt\b/g, `(t+${seg.start.toFixed(2)})`) +
+          ",fps=30,setsar=1";
+        await execFileP(ff, [...base, "-vf", vf, ...enc], MB);
+      }
+      if (!fs.existsSync(out)) throw new Error(`layout segment ${i} produced no file`);
+      segFiles.push(out);
+    }
+    const listPath = path.join(tmpDir, "list.txt");
+    fs.writeFileSync(listPath, segFiles.map((f) => `file '${f.replace(/'/g, "'\\''")}'`).join("\n"));
+    const joined = path.join(tmpDir, "joined.mp4");
+    try {
+      await execFileP(ff, ["-hide_banner", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", listPath, "-c", "copy", "-y", joined], MB);
+    } catch {
+      await execFileP(ff, ["-hide_banner", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", listPath, "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "aac", "-b:a", "192k", "-y", joined], MB);
+    }
+    if (opts.subtitleFilterStr) {
+      await execFileP(
+        ff,
+        ["-hide_banner", "-loglevel", "error", "-i", joined, "-vf", opts.subtitleFilterStr, "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "copy", "-movflags", "+faststart", "-y", opts.output],
+        MB
+      );
+    } else {
+      fs.copyFileSync(joined, opts.output);
+    }
+    console.log(`[Stage: Layouts] Segmented render used ${segs.length} segment(s): ${segs.map((s) => s.layout).join("/")}`);
+  } finally {
+    try {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    } catch {}
   }
 }
 
