@@ -31,10 +31,26 @@ import {
 import ApiSettingsModal from "@/components/ApiSettingsModal";
 import confetti from "canvas-confetti";
 
+
+// Poster thumbnails: the server drops poster-<clip>.jpg next to every
+// rendered clip. Older stored clips have no posterUrl field, so derive
+// it from their preview/master URL by the same naming convention.
+export function derivePosterUrl(clip: any): string | undefined {
+  if (clip?.posterUrl) return clip.posterUrl;
+  const src: string | undefined = clip?.previewUrl || clip?.renderedVideoUrl || clip?.videoUrl;
+  if (!src) return undefined;
+  const m = src.match(/rendered_clips\/(?:preview-)?(clip-[^.?&#]+)\.mp4/);
+  if (!m) return undefined;
+  return `/api/media?file=rendered_clips/poster-${m[1]}.jpg`;
+}
+
 export interface RealClip {
   id: string;
   videoFilePath: string;
   videoUrl: string;
+  posterUrl?: string;
+  fileSize?: number;
+  previewFileSize?: number;
   title: string;
   hookHeadline: string;
   startTime: number;
@@ -46,6 +62,7 @@ export interface RealClip {
   engagementScore: number;
   trendMatch: number;
   viralityReason: string;
+  description?: string;
   transcript: {
     start: number;
     end: number;
@@ -53,7 +70,7 @@ export interface RealClip {
     emoji?: string;
   }[];
   aspectRatio: "9:16" | "1:1" | "16:9";
-  captionStyle: "hormozi" | "neon" | "beast" | "clean";
+  captionStyle: "hormozi" | "neon" | "beast" | "clean" | "kinetic";
 }
 
 function DashboardContent() {
@@ -80,10 +97,50 @@ function DashboardContent() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingStage, setProcessingStage] = useState("");
   const [isRendering, setIsRendering] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState<{ loaded: number; total?: number; speed: number } | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
   const [hasServerKey, setHasServerKey] = useState(true);
   const [tokenPromptOpen, setTokenPromptOpen] = useState(false);
   const [inputToken, setInputToken] = useState("");
+  const [tokenError, setTokenError] = useState("");
+  const [tokenChecking, setTokenChecking] = useState(false);
+  // After the user cancels the token prompt, background 401s (job polling,
+  // retries) must not keep reopening it every few seconds — that trapped
+  // anyone with a wrong/expired stored token in an endless modal loop.
+  const tokenPromptSuppressedRef = React.useRef(false);
+  const openTokenPrompt = () => {
+    if (!tokenPromptSuppressedRef.current) setTokenPromptOpen(true);
+  };
+
+  // Ask the SERVER whether a passcode is correct - the prompt used to
+  // store whatever was typed on faith, so any junk "password" appeared
+  // to log you in (the page and saved clips load without the API, and
+  // the rejection only surfaced later, invisibly, on API calls).
+  // Returns true (valid), false (server said 401), or null (unreachable:
+  // the gate fails closed, the background re-check stays silent so a
+  // network hiccup never locks anyone out).
+  const verifyTokenWithServer = async (candidate: string): Promise<boolean | null> => {
+    try {
+      const res = await fetch("/api/auth-check", {
+        headers: { Authorization: `Bearer ${candidate}` },
+      });
+      if (res.ok) return true;
+      if (res.status === 401 || res.status === 403) return false;
+      return null;
+    } catch {
+      return null;
+    }
+  };
+
+  const storeToken = (token: string) => {
+    localStorage.setItem("app_access_token", token);
+    document.cookie = `app_access_token=${encodeURIComponent(token)}; path=/; max-age=31536000; SameSite=Lax`;
+  };
+
+  const clearStoredToken = () => {
+    localStorage.removeItem("app_access_token");
+    document.cookie = "app_access_token=; path=/; max-age=0; SameSite=Lax";
+  };
 
   // Phase 4: Async Job State & Worker Polling
   const [currentJobId, setCurrentJobId] = useState<string | null>(null);
@@ -111,8 +168,54 @@ function DashboardContent() {
     return t ? { "x-app-access-token": t } : {};
   };
 
+  // /api/render-clip is async: POST starts the render (202 + renderId)
+  // and this polls GET until the result lands. A single synchronous
+  // request used to sit open for the whole 30-60s render, which the
+  // Cloudflare Worker front door cut at ~30s with a 502. Throws with
+  // the server's message on failure, like the old inline fetch did.
+  const renderClipWithPolling = async (body: any): Promise<any> => {
+    const res = await fetch("/api/render-clip", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+      body: JSON.stringify(body),
+    });
+    let data: any = {};
+    try {
+      data = await res.json();
+    } catch {
+      throw new Error("The server reply was cut off — please retry the render.");
+    }
+    if (!res.ok || data.error) throw new Error(data.error || "FFmpeg rendering failed");
+    if (data.status !== "rendering") return data;
+    const renderId = data.renderId;
+    const deadline = Date.now() + 12 * 60 * 1000;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 2500));
+      const pr = await fetch(`/api/render-clip?id=${encodeURIComponent(renderId)}`, {
+        headers: getAuthHeaders(),
+      });
+      let pd: any = {};
+      try {
+        pd = await pr.json();
+      } catch {
+        continue;
+      }
+      if (pd.status === "completed") return pd;
+      if (pd.status === "failed") throw new Error(pd.error || "FFmpeg rendering failed");
+      if (!pr.ok && pd.error) throw new Error(pd.error);
+    }
+    throw new Error(
+      "The render is taking unusually long — it may still finish on the server. Press the button again in a moment to pick up the result."
+    );
+  };
+
   const [reframeMode, setReframeMode] = useState<"auto-tracker" | "split-screen" | "blurred-fit" | "center">("auto-tracker");
+  const [removeSilences, setRemoveSilences] = useState(false);
+  const [jobCaptionStyle, setJobCaptionStyle] = useState<"hormozi" | "neon" | "beast" | "clean" | "kinetic" | "snipcut">("snipcut");
+  const [brollEnabled, setBrollEnabled] = useState(true);
+  const [musicBedEnabled, setMusicBedEnabled] = useState(true);
   const [lastTrackingSummary, setLastTrackingSummary] = useState<string>("");
+  const [sourceWarning, setSourceWarning] = useState<string>("");
   const [dynamicShots, setDynamicShots] = useState<
     {
       start: number;
@@ -123,26 +226,7 @@ function DashboardContent() {
       label: string;
       details: string;
     }[]
-  >([
-    {
-      start: 0,
-      end: 1.5,
-      position: "left",
-      crop_x: 0,
-      subject_center_x: 240,
-      label: "Speaker Reaction (Left)",
-      details: "Active focus on speaker reaction facecam",
-    },
-    {
-      start: 1.5,
-      end: 30,
-      position: "center",
-      crop_x: 553,
-      subject_center_x: 857,
-      label: "Main Action (Center)",
-      details: "Main video stage & action",
-    },
-  ]);
+  >([]);
 
   // Sync video time when selected clip changes
   useEffect(() => {
@@ -263,6 +347,15 @@ function DashboardContent() {
             setTokenPromptOpen(true);
           } else {
             document.cookie = `app_access_token=${encodeURIComponent(storedToken)}; path=/; max-age=31536000; SameSite=Lax`;
+            // A stored token the server no longer accepts (wrong, or
+            // the passcode was rotated) is cleared and the prompt
+            // reopens, instead of every API call failing mysteriously.
+            verifyTokenWithServer(storedToken).then((valid) => {
+              if (valid === false) {
+                clearStoredToken();
+                openTokenPrompt();
+              }
+            });
           }
         }
       } catch (err) {
@@ -272,7 +365,7 @@ function DashboardContent() {
     checkServerConfig();
 
     // Load saved clips
-    const saved = localStorage.getItem("opus_user_clips");
+    const saved = localStorage.getItem("snipcut_user_clips");
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
@@ -318,7 +411,7 @@ function DashboardContent() {
         });
 
         if (res.status === 401) {
-          setTokenPromptOpen(true);
+          openTokenPrompt();
           return;
         }
 
@@ -366,6 +459,14 @@ function DashboardContent() {
                     end: Math.max(0.3, Number((cw.end - c.startTime).toFixed(2))),
                     text: cw.word || cw.text,
                   }))
+                : Array.isArray(job.output?.transcription?.words)
+                ? job.output.transcription.words
+                    .filter((w: any) => w.end > c.startTime && w.start < c.endTime)
+                    .map((w: any) => ({
+                      start: Math.max(0, Number((w.start - c.startTime).toFixed(2))),
+                      end: Math.max(0.3, Number((w.end - c.startTime).toFixed(2))),
+                      text: w.word || w.text,
+                    }))
                 : [
                     { start: 0, end: 3, text: c.hookHeadline || c.title },
                     { start: 3, end: 7, text: "Key insight" },
@@ -382,6 +483,10 @@ function DashboardContent() {
               videoFilePath: job.output?.filePath || "",
               videoUrl: initialVideoUrl,
               renderedVideoUrl: rendered ? rendered.downloadUrl : undefined,
+              previewUrl: rendered?.previewDownloadUrl || undefined,
+              posterUrl: rendered?.posterUrl || undefined,
+              fileSize: rendered?.fileSize || undefined,
+              previewFileSize: rendered?.previewFileSize || undefined,
               title: c.title || `Viral Short #${index + 1}`,
               hookHeadline: c.hookHeadline || "",
               startTime: c.startTime || 0,
@@ -393,16 +498,29 @@ function DashboardContent() {
               engagementScore: c.engagementScore || 90,
               trendMatch: c.trendMatch || 92,
               viralityReason: c.viralityReason || "High-retention narrative segment",
+              description: c.description || rendered?.description || "",
               aspectRatio: job.options?.aspectRatio || "9:16",
               captionStyle: job.options?.captionStyle || "hormozi",
               transcript: clipWords,
             };
           });
 
+          // A very low-res source (e.g. a downloader's default 144p/240p)
+          // physically caps how good any clip can look — every crop is a
+          // tiny pixel patch upscaled. Say so plainly instead of letting
+          // the user blame the engine.
+          if (job.output?.sourceHeight && job.output.sourceHeight < 480) {
+            setSourceWarning(
+              `Source video is only ${job.output.sourceHeight}p — clips from it will look soft no matter what, because every crop is a tiny slice upscaled. For crisp results, use a 720p or 1080p version of the same video.`
+            );
+          } else {
+            setSourceWarning("");
+          }
+
           if (generatedClips.length > 0) {
             setClips(generatedClips);
             setSelectedClip(generatedClips[0]);
-            localStorage.setItem("opus_user_clips", JSON.stringify(generatedClips));
+            localStorage.setItem("snipcut_user_clips", JSON.stringify(generatedClips));
             setActiveTab("clips");
             try {
               confetti({
@@ -435,7 +553,7 @@ function DashboardContent() {
         headers: { "Content-Type": "application/json", ...getAuthHeaders() },
       });
       if (res.status === 401) {
-        setTokenPromptOpen(true);
+        openTokenPrompt();
         return;
       }
       const data = await res.json();
@@ -471,24 +589,82 @@ function DashboardContent() {
     try {
       let res: Response;
 
-      if (uploadFile) {
-        setProcessingStage("Uploading video file to server...");
-        const formData = new FormData();
-        formData.append("file", uploadFile);
-        if (prompt || promptInput) formData.append("customPrompt", prompt || promptInput);
-        formData.append("aspectRatio", "9:16");
-        formData.append("reframeMode", reframeMode);
-        formData.append("captionStyle", "hormozi");
+      const storedApiKeys = {
+        groqKey: (typeof window !== "undefined" && localStorage.getItem("snipcut_groq_key")) || "",
+        openaiKey: (typeof window !== "undefined" && localStorage.getItem("snipcut_openai_key")) || "",
+        claudeKey: (typeof window !== "undefined" && localStorage.getItem("snipcut_claude_key")) || "",
+        preferredModel: (typeof window !== "undefined" && localStorage.getItem("snipcut_preferred_model")) || "",
+        pexelsKey: (typeof window !== "undefined" && localStorage.getItem("snipcut_pexels_key")) || "",
+        pixabayKey: (typeof window !== "undefined" && localStorage.getItem("snipcut_pixabay_key")) || "",
+      };
 
-        res = await fetch("/api/jobs", {
+      if (uploadFile) {
+        // Chunked upload: a single all-or-nothing POST of a 10MB+ file dies
+        // whenever the connection hiccups mid-body (ECONNRESET on slower
+        // uplinks). Send 2MB pieces instead — each is quick and retried
+        // individually — then the server assembles them and creates the job.
+        const CHUNK_SIZE = 2 * 1024 * 1024;
+        const uploadId = crypto.randomUUID();
+        const totalChunks = Math.max(1, Math.ceil(uploadFile.size / CHUNK_SIZE));
+
+        for (let i = 0; i < totalChunks; i++) {
+          const blob = uploadFile.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+          let sent = false;
+          for (let attempt = 1; attempt <= 3 && !sent; attempt++) {
+            try {
+              const fd = new FormData();
+              fd.append("uploadId", uploadId);
+              fd.append("index", String(i));
+              fd.append("chunk", blob, `part-${i}`);
+              const r = await fetch("/api/upload-chunk", {
+                method: "POST",
+                headers: { ...getAuthHeaders() },
+                body: fd,
+              });
+              if (r.status === 401) {
+                openTokenPrompt();
+                throw new Error("Access token required or invalid. Please provide APP_ACCESS_TOKEN.");
+              }
+              if (!r.ok) throw new Error(`chunk ${i} rejected (HTTP ${r.status})`);
+              sent = true;
+            } catch (chunkErr: any) {
+              if (chunkErr?.message?.includes("Access token")) throw chunkErr;
+              if (attempt === 3) {
+                throw new Error(
+                  "The upload kept dropping — your connection to the server is unstable right now, so the file never fully arrived. Wait a few seconds and press Run again; nothing was lost."
+                );
+              }
+              setProcessingStage(`Upload connection dropped — retrying piece ${i + 1} of ${totalChunks} (attempt ${attempt + 1})...`);
+              await new Promise((resolve) => setTimeout(resolve, 1500 * attempt));
+            }
+          }
+          const pct = Math.round(((i + 1) / totalChunks) * 100);
+          setProcessingStage(`Uploading video file to server... ${pct}%`);
+          setJobProgress(5 + Math.round(((i + 1) / totalChunks) * 10));
+        }
+
+        res = await fetch("/api/upload-chunk", {
           method: "POST",
-          headers: { ...getAuthHeaders() },
-          body: formData,
+          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+          body: JSON.stringify({
+            action: "finalize",
+            uploadId,
+            totalChunks,
+            fileName: uploadFile.name,
+            customPrompt: prompt || promptInput,
+            aspectRatio: "9:16",
+            reframeMode,
+            captionStyle: jobCaptionStyle,
+            removeSilences,
+            broll: brollEnabled,
+            musicBed: musicBedEnabled,
+            ...storedApiKeys,
+          }),
         });
       } else if (url) {
         setProcessingStage("Enqueuing video URL for download and AI processing...");
-        const storedCookies = (typeof window !== "undefined" && localStorage.getItem("opus_youtube_cookies")) || "";
-        const storedProxy = (typeof window !== "undefined" && localStorage.getItem("opus_youtube_proxy")) || "";
+        const storedCookies = (typeof window !== "undefined" && localStorage.getItem("snipcut_youtube_cookies")) || "";
+        const storedProxy = (typeof window !== "undefined" && localStorage.getItem("snipcut_youtube_proxy")) || "";
 
         res = await fetch("/api/jobs", {
           method: "POST",
@@ -498,9 +674,13 @@ function DashboardContent() {
             customPrompt: prompt || promptInput,
             aspectRatio: "9:16",
             reframeMode,
-            captionStyle: "hormozi",
+            captionStyle: jobCaptionStyle,
+            removeSilences,
+            broll: brollEnabled,
+            musicBed: musicBedEnabled,
             cookies: storedCookies,
             proxy: storedProxy,
+            ...storedApiKeys,
           }),
         });
       } else if (filePath) {
@@ -514,7 +694,11 @@ function DashboardContent() {
             customPrompt: prompt || promptInput,
             aspectRatio: "9:16",
             reframeMode,
-            captionStyle: "hormozi",
+            captionStyle: jobCaptionStyle,
+            removeSilences,
+            broll: brollEnabled,
+            musicBed: musicBedEnabled,
+            ...storedApiKeys,
           }),
         });
       } else {
@@ -522,11 +706,18 @@ function DashboardContent() {
       }
 
       if (res.status === 401) {
-        setTokenPromptOpen(true);
+        openTokenPrompt();
         throw new Error("Access token required or invalid. Please provide APP_ACCESS_TOKEN.");
       }
 
-      const data = await res.json();
+      let data: any;
+      try {
+        data = await res.json();
+      } catch {
+        throw new Error(
+          "The server's reply was cut off — the connection dropped at the last step. Please press Run again; if it keeps happening, the hosting connection is having a bad spell."
+        );
+      }
       if (!res.ok || data.error) {
         throw new Error(data.error || "Failed to create processing job");
       }
@@ -545,29 +736,81 @@ function DashboardContent() {
     }
   };
 
+  // In-app download with REAL progress. The hosting proxy strips
+  // Content-Length (responses arrive chunked), so the browser's own
+  // download bar shows "Unknown time left" and no speed. Fetching the
+  // file ourselves lets us show exact MB, speed and ETA — the total
+  // comes from the sizes the server reports with each render.
+  const downloadWithProgress = async (url: string, filename: string, total?: number) => {
+    try {
+      const res = await fetch(url, { headers: { ...getAuthHeaders() } });
+      if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+      const reader = res.body.getReader();
+      const chunks: BlobPart[] = [];
+      let loaded = 0;
+      const started = Date.now();
+      setDownloadProgress({ loaded: 0, total, speed: 0 });
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value) {
+          chunks.push(value as BlobPart);
+          loaded += value.byteLength;
+          const secs = Math.max(0.2, (Date.now() - started) / 1000);
+          setDownloadProgress({ loaded, total, speed: loaded / secs });
+        }
+      }
+      const blob = new Blob(chunks, { type: "video/mp4" });
+      const objUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = objUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(objUrl), 5000);
+    } catch (e) {
+      // Fallback: hand the URL to the browser's own downloader.
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } finally {
+      setDownloadProgress(null);
+    }
+  };
+
   // Real FFmpeg Render & Download
   const handleRenderAndDownload = async (clip: RealClip) => {
     setIsRendering(true);
+    let pendingDownload: { url: string; filename: string; size?: number } | null = null;
     try {
-      const res = await fetch("/api/render-clip", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-        body: JSON.stringify({
+      const data = await renderClipWithPolling({
           inputPath: clip.videoFilePath,
           startTime: clip.startTime,
           duration: clip.duration,
           aspectRatio: clip.aspectRatio || "9:16",
           reframeMode: reframeMode,
           splitScreen: reframeMode === "split-screen",
-          transcript: clip.transcript,
+          // clip.transcript is stored clip-relative (for the editor's
+          // display); /api/render-clip expects source-absolute word times,
+          // so rebase on send — the same pattern the editor uses.
+          transcript: (clip.transcript || []).map((w) => ({
+            ...w,
+            start: w.start + clip.startTime,
+            end: w.end + clip.startTime,
+          })),
           headline: clip.hookHeadline || clip.title,
           captionStyle: clip.captionStyle || "hormozi",
-        }),
+          // Downloads get the same reference FX as job renders, driven
+          // by the same toggles (editor re-renders don't send these).
+          broll: brollEnabled,
+          music: musicBedEnabled,
+          pexelsKey: localStorage.getItem("snipcut_pexels_key") || undefined,
+          pixabayKey: localStorage.getItem("snipcut_pixabay_key") || undefined,
       });
-      const data = await res.json();
-      if (!res.ok || data.error) {
-        throw new Error(data.error || "FFmpeg rendering failed");
-      }
 
       if (data.tracking?.summary) {
         setLastTrackingSummary(data.tracking.summary);
@@ -579,7 +822,15 @@ function DashboardContent() {
       // Update clip so preview is permanently the cut MP4
       const updatedClips = clips.map((c) =>
         c.id === clip.id
-          ? { ...c, videoUrl: data.downloadUrl, renderedVideoUrl: data.downloadUrl }
+          ? {
+              ...c,
+              videoUrl: data.downloadUrl,
+              renderedVideoUrl: data.downloadUrl,
+              previewUrl: data.previewDownloadUrl || (c as any).previewUrl,
+              posterUrl: data.posterUrl || (c as any).posterUrl,
+              fileSize: data.fileSize || (c as any).fileSize,
+              previewFileSize: data.previewFileSize || (c as any).previewFileSize,
+            }
           : c
       );
       setClips(updatedClips);
@@ -588,17 +839,20 @@ function DashboardContent() {
           ...selectedClip,
           videoUrl: data.downloadUrl,
           renderedVideoUrl: data.downloadUrl,
+          previewUrl: data.previewDownloadUrl || (selectedClip as any).previewUrl,
+          posterUrl: data.posterUrl || (selectedClip as any).posterUrl,
+          fileSize: data.fileSize || (selectedClip as any).fileSize,
+          previewFileSize: data.previewFileSize || (selectedClip as any).previewFileSize,
         } as any);
       }
-      localStorage.setItem("opus_user_clips", JSON.stringify(updatedClips));
+      localStorage.setItem("snipcut_user_clips", JSON.stringify(updatedClips));
 
-      // Trigger actual download of the rendered MP4
-      const a = document.createElement("a");
-      a.href = data.downloadUrl;
-      a.download = data.filename || `${clip.title}.mp4`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
+      // Download happens after the render state clears, with progress.
+      pendingDownload = {
+        url: data.downloadUrl,
+        filename: data.filename || `${clip.title}.mp4`,
+        size: data.fileSize,
+      };
 
       try {
         confetti({ particleCount: 60, spread: 60 });
@@ -608,18 +862,21 @@ function DashboardContent() {
     } finally {
       setIsRendering(false);
     }
+    if (pendingDownload) {
+      await downloadWithProgress(pendingDownload.url, pendingDownload.filename, pendingDownload.size);
+    }
   };  return (
     <div className="min-h-screen bg-[#F8F7F4] text-black font-sans selection:bg-[#FFC700] selection:text-black">
       {/* Neo-Brutalist Top Header */}
-      <header className="sticky top-0 z-40 bg-white border-b-2 border-black px-4 sm:px-6 lg:px-8 py-3.5 shadow-sm">
+      <header className="sticky top-0 z-40 bg-white border-b-2 border-black px-3 sm:px-6 lg:px-8 py-3.5 shadow-sm">
         <div className="flex items-center justify-between max-w-7xl mx-auto">
-          <div className="flex items-center gap-4 sm:gap-6">
+          <div className="flex items-center gap-2 sm:gap-6">
             <Link href="/" className="flex items-center gap-2 group">
               <div className="w-8 h-8 bg-[#FFC700] border-2 border-black text-black flex items-center justify-center font-black shadow-[2px_2px_0px_#000000] group-hover:translate-x-0.5 group-hover:translate-y-0.5 group-hover:shadow-none transition-all">
                 <Scissors className="w-4 h-4 stroke-[2.5]" />
               </div>
-              <span className="font-black text-lg tracking-tight uppercase">
-                OPUS<span className="bg-[#FFC700] px-1 ml-0.5 border border-black">STUDIO</span>
+              <span className="font-black text-sm min-[420px]:text-base sm:text-lg tracking-tight uppercase">
+                SNIP<span className="bg-[#FFC700] px-1 ml-0.5 border border-black">CUT</span>
               </span>
             </Link>
 
@@ -629,10 +886,10 @@ function DashboardContent() {
             </div>
           </div>
 
-          <div className="flex items-center gap-2 sm:gap-3">
+          <div className="flex items-center gap-1.5 sm:gap-3">
             <Link
               href="/editor"
-              className="px-3 py-1.5 text-xs font-black uppercase tracking-wider bg-white hover:bg-[#FFC700] border-2 border-black shadow-[2px_2px_0px_#000000] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all flex items-center gap-1.5"
+              className="px-2 sm:px-3 py-1.5 text-xs font-black uppercase tracking-wider bg-white hover:bg-[#FFC700] border-2 border-black shadow-[2px_2px_0px_#000000] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all flex items-center gap-1.5"
             >
               <Sliders className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">Studio Editor</span>
@@ -640,7 +897,7 @@ function DashboardContent() {
 
             <Link
               href="/schedule"
-              className="px-3 py-1.5 text-xs font-black uppercase tracking-wider bg-white hover:bg-[#FFC700] border-2 border-black shadow-[2px_2px_0px_#000000] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all flex items-center gap-1.5"
+              className="px-2 sm:px-3 py-1.5 text-xs font-black uppercase tracking-wider bg-white hover:bg-[#FFC700] border-2 border-black shadow-[2px_2px_0px_#000000] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all flex items-center gap-1.5"
             >
               <Calendar className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">Scheduler</span>
@@ -648,7 +905,7 @@ function DashboardContent() {
 
             <button
               onClick={() => setSettingsOpen(true)}
-              className="px-3 py-1.5 text-xs font-black uppercase tracking-wider bg-white hover:bg-[#FFC700] border-2 border-black shadow-[2px_2px_0px_#000000] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all flex items-center gap-1.5 cursor-pointer"
+              className="px-2 sm:px-3 py-1.5 text-xs font-black uppercase tracking-wider bg-white hover:bg-[#FFC700] border-2 border-black shadow-[2px_2px_0px_#000000] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all flex items-center gap-1.5 cursor-pointer"
             >
               <Key className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">API Keys</span>
@@ -656,10 +913,10 @@ function DashboardContent() {
 
             <button
               onClick={() => setActiveTab("upload")}
-              className="px-3.5 py-1.5 text-xs font-black uppercase tracking-wider text-black bg-[#FFC700] hover:bg-[#FF5500] hover:text-white border-2 border-black shadow-[2px_2px_0px_#000000] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all flex items-center gap-1.5 cursor-pointer"
+              className="px-2.5 sm:px-3.5 py-1.5 text-xs font-black uppercase tracking-wider text-black bg-[#FFC700] hover:bg-[#FF5500] hover:text-white border-2 border-black shadow-[2px_2px_0px_#000000] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all flex items-center gap-1.5 cursor-pointer"
             >
               <Plus className="w-3.5 h-3.5 stroke-[3]" />
-              <span>New Clip</span>
+              <span className="hidden sm:inline">New Clip</span>
             </button>
           </div>
         </div>
@@ -893,9 +1150,10 @@ function DashboardContent() {
                         {/* Video Preview Block */}
                         <div className="relative w-full sm:w-36 h-28 sm:h-24 border-2 border-black overflow-hidden flex-shrink-0 bg-black flex items-center justify-center">
                           <video
-                            src={`${clip.videoUrl}#t=${clip.startTime || 0.1}`}
+                            src={(clip as any).previewUrl ? `${(clip as any).previewUrl}#t=0.1` : `${clip.videoUrl}#t=${clip.startTime || 0.1}`}
+                            poster={derivePosterUrl(clip)}
                             className="w-full h-full object-cover pointer-events-none"
-                            preload="metadata"
+                            preload="none"
                             playsInline
                             muted
                           />
@@ -966,7 +1224,7 @@ function DashboardContent() {
                   <div className="lg:col-span-5 space-y-5">
                     <div className="bg-white p-6 border-2 border-black shadow-[6px_6px_0px_#000000] flex flex-col items-center">
                       {/* Vertical Video Viewport */}
-                      <div className="relative w-[260px] sm:w-[280px] h-[480px] bg-black border-2 border-black overflow-hidden shadow-[4px_4px_0px_#000000] flex flex-col">
+                      <div className="relative w-[260px] max-w-full sm:w-[280px] h-[480px] bg-black border-2 border-black overflow-hidden shadow-[4px_4px_0px_#000000] flex flex-col">
                         <div className="relative flex-1 bg-black flex flex-col justify-center items-center overflow-hidden">
                           {/* Reframe Mode Floating Tag */}
                           <div className="absolute top-3 left-3 z-30 flex items-center gap-1.5 px-2.5 py-1 bg-black text-[10px] font-black uppercase text-[#FFC700] border-2 border-[#FFC700] pointer-events-none">
@@ -990,10 +1248,11 @@ function DashboardContent() {
                                 <video
                                   ref={videoTopRef}
                                   key={`top-${selectedClip.id}-${(selectedClip as any).renderedVideoUrl || ""}`}
-                                  src={(selectedClip as any).renderedVideoUrl || selectedClip.videoUrl}
+                                  src={(selectedClip as any).previewUrl || (selectedClip as any).renderedVideoUrl || selectedClip.videoUrl}
+                                  poster={derivePosterUrl(selectedClip)}
                                   className="w-full h-full object-cover"
                                   style={{ objectPosition: "75% center" }}
-                                  preload="auto"
+                                  preload="metadata"
                                   muted
                                   playsInline
                                 />
@@ -1007,11 +1266,12 @@ function DashboardContent() {
                                 <video
                                   ref={videoRef}
                                   key={`bot-${selectedClip.id}-${(selectedClip as any).renderedVideoUrl || ""}`}
-                                  src={(selectedClip as any).renderedVideoUrl || selectedClip.videoUrl}
+                                  src={(selectedClip as any).previewUrl || (selectedClip as any).renderedVideoUrl || selectedClip.videoUrl}
+                                  poster={derivePosterUrl(selectedClip)}
                                   className="w-full h-full object-cover"
                                   style={{ objectPosition: "15% center" }}
                                   controls={false}
-                                  preload="auto"
+                                  preload="metadata"
                                   muted={isMuted}
                                   playsInline
                                   onLoadedMetadata={handleLoadedMetadata}
@@ -1035,9 +1295,10 @@ function DashboardContent() {
                               {/* Dynamic Blurred Backdrop */}
                               <video
                                 key={`blur-${selectedClip.id}-${(selectedClip as any).renderedVideoUrl || ""}`}
-                                src={(selectedClip as any).renderedVideoUrl || selectedClip.videoUrl}
+                                src={(selectedClip as any).previewUrl || (selectedClip as any).renderedVideoUrl || selectedClip.videoUrl}
+                                poster={derivePosterUrl(selectedClip)}
                                 className="absolute inset-0 w-full h-full object-cover blur-2xl scale-125 opacity-70"
-                                preload="auto"
+                                preload="metadata"
                                 muted
                                 playsInline
                               />
@@ -1045,10 +1306,11 @@ function DashboardContent() {
                               <video
                                 ref={videoRef}
                                 key={`fit-${selectedClip.id}-${(selectedClip as any).renderedVideoUrl || ""}`}
-                                src={(selectedClip as any).renderedVideoUrl || selectedClip.videoUrl}
+                                src={(selectedClip as any).previewUrl || (selectedClip as any).renderedVideoUrl || selectedClip.videoUrl}
+                                poster={derivePosterUrl(selectedClip)}
                                 className="relative z-10 w-full aspect-video object-contain shadow-2xl"
                                 controls={false}
-                                preload="auto"
+                                preload="metadata"
                                 muted={isMuted}
                                 playsInline
                                 onLoadedMetadata={handleLoadedMetadata}
@@ -1069,7 +1331,8 @@ function DashboardContent() {
                               <video
                                 ref={videoRef}
                                 key={`track-${selectedClip.id}-${(selectedClip as any).renderedVideoUrl || ""}`}
-                                src={(selectedClip as any).renderedVideoUrl || selectedClip.videoUrl}
+                                src={(selectedClip as any).previewUrl || (selectedClip as any).renderedVideoUrl || selectedClip.videoUrl}
+                                poster={derivePosterUrl(selectedClip)}
                                 className="w-full h-full object-cover transition-all duration-700 ease-in-out"
                                 style={{
                                   objectPosition: getDynamicObjectPosition(
@@ -1079,7 +1342,7 @@ function DashboardContent() {
                                   ),
                                 }}
                                 controls={false}
-                                preload="auto"
+                                preload="metadata"
                                 muted={isMuted}
                                 playsInline
                                 onLoadedMetadata={handleLoadedMetadata}
@@ -1152,7 +1415,7 @@ function DashboardContent() {
                         </div>
                       </div>
 
-                      {/* OpusClip ReframeControls */}
+                      {/* Snipcut reframe controls */}
                       <div className="w-full mt-5 p-4 bg-[#F8F7F4] border-2 border-black shadow-[3px_3px_0px_#000000]">
                         <div className="flex items-center justify-between mb-3">
                           <span className="text-xs font-black uppercase tracking-wider text-black flex items-center gap-1.5">
@@ -1280,16 +1543,36 @@ function DashboardContent() {
                             <span className="truncate">{lastTrackingSummary}</span>
                           </div>
                         )}
+
+                        {sourceWarning && (
+                          <div className="mt-3 p-2.5 bg-[#FEF3C7] border-2 border-black text-[11px] leading-snug text-black font-bold flex items-start gap-1.5">
+                            <Sparkles className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+                            <span>{sourceWarning}</span>
+                          </div>
+                        )}
                       </div>
 
                       {/* Export Button */}
                       <div className="w-full mt-4">
                         <button
                           onClick={() => handleRenderAndDownload(selectedClip)}
-                          disabled={isRendering}
+                          disabled={isRendering || !!downloadProgress}
                           className="w-full bg-[#FFC700] hover:bg-[#FF5500] hover:text-white py-3.5 border-2 border-black font-black text-xs sm:text-sm text-black uppercase tracking-wider flex items-center justify-center gap-2 cursor-pointer shadow-[4px_4px_0px_#000000] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all disabled:opacity-50"
                         >
-                          {isRendering ? (
+                          {downloadProgress ? (
+                            <>
+                              <div className="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin" />
+                              <span>
+                                {downloadProgress.total
+                                  ? `Downloading ${Math.floor((downloadProgress.loaded / downloadProgress.total) * 100)}% · ${(downloadProgress.loaded / 1048576).toFixed(1)} / ${(downloadProgress.total / 1048576).toFixed(1)} MB · ${(downloadProgress.speed / 1048576).toFixed(2)} MB/s${
+                                      downloadProgress.speed > 0 && downloadProgress.total > downloadProgress.loaded
+                                        ? ` · ~${(() => { const s = Math.ceil((downloadProgress.total - downloadProgress.loaded) / downloadProgress.speed); return s >= 120 ? `${Math.round(s / 60)} min` : `${s}s`; })()} left`
+                                        : ""
+                                    }`
+                                  : `Downloading ${(downloadProgress.loaded / 1048576).toFixed(1)} MB · ${(downloadProgress.speed / 1048576).toFixed(2)} MB/s`}
+                              </span>
+                            </>
+                          ) : isRendering ? (
                             <>
                               <div className="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin" />
                               <span>Rendering 9:16 MP4 with FFmpeg...</span>
@@ -1312,6 +1595,29 @@ function DashboardContent() {
                           )}
                         </button>
                       </div>
+                      {(selectedClip as any).previewUrl && (
+                        <div className="w-full mt-2">
+                          <button
+                            onClick={() =>
+                              downloadWithProgress(
+                                (selectedClip as any).previewUrl,
+                                `${(selectedClip.title || "clip").replace(/[^\w\- ]+/g, "").trim().replace(/\s+/g, "_") || "clip"}-fast.mp4`,
+                                (selectedClip as any).previewFileSize
+                              )
+                            }
+                            disabled={isRendering || !!downloadProgress}
+                            className="w-full bg-white hover:bg-neutral-100 py-2.5 border-2 border-black font-black text-[11px] text-black uppercase tracking-wider flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                          >
+                            <Download className="w-3.5 h-3.5 stroke-[2.5]" />
+                            <span>
+                              Fast download · smaller file
+                              {(selectedClip as any).previewFileSize
+                                ? ` (${((selectedClip as any).previewFileSize / 1048576).toFixed(1)} MB)`
+                                : ""}
+                            </span>
+                          </button>
+                        </div>
+                      )}
                     </div>
 
                     {/* Virality Card */}
@@ -1328,6 +1634,26 @@ function DashboardContent() {
                       <p className="text-xs text-neutral-800 leading-relaxed font-medium">
                         {selectedClip.viralityReason}
                       </p>
+                      <div className="flex gap-3 mt-3 text-[11px] font-black uppercase tracking-wide">
+                        <span className="px-2 py-1 border border-black bg-white">Hook {selectedClip.hookStrength}</span>
+                        <span className="px-2 py-1 border border-black bg-white">Retention {selectedClip.engagementScore}</span>
+                        <span className="px-2 py-1 border border-black bg-white">Trend {selectedClip.trendMatch}</span>
+                      </div>
+                      {selectedClip.description && (
+                        <div className="mt-3 pt-3 border-t border-dashed border-neutral-300">
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-[10px] font-black uppercase tracking-wider text-neutral-500">Post caption</span>
+                            <button
+                              type="button"
+                              onClick={() => navigator.clipboard?.writeText(selectedClip.description || "")}
+                              className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 border border-black bg-[#FFC700] hover:bg-[#ffd83d]"
+                            >
+                              Copy
+                            </button>
+                          </div>
+                          <p className="text-xs text-neutral-800 leading-relaxed font-medium">{selectedClip.description}</p>
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
@@ -1363,7 +1689,7 @@ function DashboardContent() {
                   value={urlInput}
                   onChange={(e) => setUrlInput(e.target.value)}
                   placeholder="https://www.youtube.com/watch?v=..."
-                  className="w-full bg-[#F8F7F4] text-black text-sm px-4 py-3 border-2 border-black placeholder:text-neutral-500 focus:outline-none focus:bg-white focus:shadow-[3px_3px_0px_#000000] transition-all font-mono"
+                  className="w-full bg-[#F8F7F4] text-black text-base sm:text-sm px-4 py-3 border-2 border-black placeholder:text-neutral-500 focus:outline-none focus:bg-white focus:shadow-[3px_3px_0px_#000000] transition-all font-mono"
                 />
 
                 {/* 1-Click Samples (Clean badges without emojis) */}
@@ -1418,6 +1744,73 @@ function DashboardContent() {
               </div>
 
               <div>
+                <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={removeSilences}
+                    onChange={(e) => setRemoveSilences(e.target.checked)}
+                    className="w-4 h-4 accent-black cursor-pointer"
+                  />
+                  <span className="text-xs font-black uppercase tracking-wider text-black">
+                    Remove silences, pauses &amp; fillers
+                  </span>
+                  <span className="text-[10px] font-medium text-neutral-500 normal-case tracking-normal">
+                    Tightens each clip by cutting pauses over half a second and um/uh fillers
+                  </span>
+                </label>
+              </div>
+
+              <div>
+                <label className="block text-xs font-black uppercase tracking-wider text-black mb-1.5">
+                  Caption Style
+                </label>
+                <div className="flex flex-wrap gap-1.5">
+                  {(["snipcut", "kinetic", "hormozi", "neon", "beast", "clean"] as const).map((st) => (
+                    <button
+                      key={st}
+                      type="button"
+                      onClick={() => setJobCaptionStyle(st)}
+                      className={`px-2.5 py-1.5 border-2 border-black text-[10px] font-black uppercase cursor-pointer ${
+                        jobCaptionStyle === st ? "bg-black text-white shadow-[2px_2px_0px_#FFC700]" : "bg-[#F8F7F4] hover:bg-white text-black"
+                      }`}
+                    >
+                      {st === "kinetic" ? "⚡ Kinetic" : st === "snipcut" ? "★ Snipcut" : st}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[10px] font-medium text-neutral-500 mt-1">
+                  Kinetic = huge center-screen words that pop per phrase, like high-retention edits.
+                </p>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={brollEnabled}
+                    onChange={(e) => setBrollEnabled(e.target.checked)}
+                    className="w-4 h-4 accent-black cursor-pointer"
+                  />
+                  <span className="text-xs font-black uppercase tracking-wider text-black">AI B-Roll cutaways</span>
+                  <span className="text-[10px] font-medium text-neutral-500 normal-case tracking-normal">
+                    AI picks stock photos/videos that match each sentence and cuts away to them
+                  </span>
+                </label>
+                <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={musicBedEnabled}
+                    onChange={(e) => setMusicBedEnabled(e.target.checked)}
+                    className="w-4 h-4 accent-black cursor-pointer"
+                  />
+                  <span className="text-xs font-black uppercase tracking-wider text-black">Music bed + punch-in zooms</span>
+                  <span className="text-[10px] font-medium text-neutral-500 normal-case tracking-normal">
+                    Quiet background pad that ducks under speech, plus zoom punches on big words
+                  </span>
+                </label>
+              </div>
+
+              <div>
                 <label className="block text-xs font-black uppercase tracking-wider text-black mb-1.5">
                   Clip Prompt (Optional)
                 </label>
@@ -1426,7 +1819,7 @@ function DashboardContent() {
                   value={promptInput}
                   onChange={(e) => setPromptInput(e.target.value)}
                   placeholder="e.g. Focus on AI discussion, extract the funny story..."
-                  className="w-full bg-[#F8F7F4] text-black text-sm px-4 py-2.5 border-2 border-black placeholder:text-neutral-500 focus:outline-none focus:bg-white focus:shadow-[3px_3px_0px_#000000] transition-all"
+                  className="w-full bg-[#F8F7F4] text-black text-base sm:text-sm px-4 py-2.5 border-2 border-black placeholder:text-neutral-500 focus:outline-none focus:bg-white focus:shadow-[3px_3px_0px_#000000] transition-all"
                 />
               </div>
 
@@ -1455,30 +1848,51 @@ function DashboardContent() {
               <input
                 type="password"
                 value={inputToken}
-                onChange={(e) => setInputToken(e.target.value)}
+                onChange={(e) => { setInputToken(e.target.value); setTokenError(""); }}
                 placeholder="Enter access token..."
-                className="w-full bg-white border-2 border-black px-4 py-2 text-sm text-black mb-4 focus:outline-none focus:shadow-[3px_3px_0px_#000000]"
+                className="w-full bg-white border-2 border-black px-4 py-2.5 text-base sm:text-sm text-black mb-2 focus:outline-none focus:shadow-[3px_3px_0px_#000000]"
               />
+              {tokenError ? (
+                <p className="text-xs font-bold text-red-600 mb-3">{tokenError}</p>
+              ) : (
+                <div className="mb-2" />
+              )}
               <div className="flex justify-end gap-2">
                 <button
                   type="button"
-                  onClick={() => setTokenPromptOpen(false)}
+                  onClick={() => {
+                    tokenPromptSuppressedRef.current = true;
+                    setTokenPromptOpen(false);
+                  }}
                   className="px-4 py-2 border-2 border-black text-xs font-black uppercase hover:bg-neutral-200"
                 >
                   Cancel
                 </button>
                 <button
                   type="button"
-                  onClick={() => {
-                    if (inputToken.trim()) {
-                      localStorage.setItem("app_access_token", inputToken.trim());
-                      document.cookie = `app_access_token=${encodeURIComponent(inputToken.trim())}; path=/; max-age=31536000; SameSite=Lax`;
+                  disabled={tokenChecking}
+                  onClick={async () => {
+                    const candidate = inputToken.trim();
+                    if (!candidate) {
+                      setTokenError("Enter the passcode first.");
+                      return;
+                    }
+                    setTokenChecking(true);
+                    const valid = await verifyTokenWithServer(candidate);
+                    setTokenChecking(false);
+                    if (valid === true) {
+                      storeToken(candidate);
+                      setTokenError("");
                       setTokenPromptOpen(false);
+                    } else if (valid === false) {
+                      setTokenError("That passcode isn't right - the server rejected it. Check it and try again.");
+                    } else {
+                      setTokenError("Couldn't reach the server to check the passcode - try again in a moment.");
                     }
                   }}
-                  className="px-4 py-2 bg-[#FFC700] hover:bg-[#FF5500] hover:text-white border-2 border-black text-xs font-black uppercase shadow-[3px_3px_0px_#000000] active:translate-x-0.5 active:translate-y-0.5"
+                  className="px-4 py-2 bg-[#FFC700] hover:bg-[#FF5500] hover:text-white border-2 border-black text-xs font-black uppercase shadow-[3px_3px_0px_#000000] active:translate-x-0.5 active:translate-y-0.5 disabled:opacity-50"
                 >
-                  Save Token
+                  {tokenChecking ? "Checking..." : "Save Token"}
                 </button>
               </div>
             </div>
@@ -1491,7 +1905,7 @@ function DashboardContent() {
 
 export default function Dashboard() {
   return (
-    <Suspense fallback={<div className="min-h-screen bg-[#F8F7F4] text-black p-8 flex items-center justify-center font-black uppercase">Loading Opus Studio...</div>}>
+    <Suspense fallback={<div className="min-h-screen bg-[#F8F7F4] text-black p-8 flex items-center justify-center font-black uppercase">Loading Snipcut Studio...</div>}>
       <DashboardContent />
     </Suspense>
   );

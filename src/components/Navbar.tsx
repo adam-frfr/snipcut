@@ -41,7 +41,7 @@ export default function Navbar() {
             </div>
             <div className="flex items-center gap-1.5">
               <span className="font-black text-xl tracking-tighter text-black uppercase">
-                OPUS<span className="bg-[#FFC700] px-1 py-0.2 border border-black ml-0.5">CLIP</span>
+                SNIP<span className="bg-[#FFC700] px-1 py-0.2 border border-black ml-0.5">CUT</span>
               </span>
             </div>
           </Link>

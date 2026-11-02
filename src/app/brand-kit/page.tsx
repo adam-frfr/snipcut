@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import {
   Palette,
@@ -20,7 +20,30 @@ export default function BrandKitPage() {
   const [watermarkOpacity, setWatermarkOpacity] = useState(80);
   const [savedSuccess, setSavedSuccess] = useState(false);
 
+  // Persisted on this device (localStorage snipcut_brand_kit) and restored on
+  // mount — previously "Save" was cosmetic and every choice was lost.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("snipcut_brand_kit");
+      if (!raw) return;
+      const saved = JSON.parse(raw);
+      if (typeof saved.brandName === "string") setBrandName(saved.brandName);
+      if (typeof saved.selectedFont === "string") setSelectedFont(saved.selectedFont);
+      if (typeof saved.primaryColor === "string") setPrimaryColor(saved.primaryColor);
+      if (typeof saved.secondaryColor === "string") setSecondaryColor(saved.secondaryColor);
+      if (["top-right", "top-left", "bottom-right", "bottom-left"].includes(saved.watermarkPos))
+        setWatermarkPos(saved.watermarkPos);
+      if (typeof saved.watermarkOpacity === "number") setWatermarkOpacity(saved.watermarkOpacity);
+    } catch {}
+  }, []);
+
   const handleSave = () => {
+    try {
+      localStorage.setItem(
+        "snipcut_brand_kit",
+        JSON.stringify({ brandName, selectedFont, primaryColor, secondaryColor, watermarkPos, watermarkOpacity })
+      );
+    } catch {}
     setSavedSuccess(true);
     setTimeout(() => setSavedSuccess(false), 2000);
   };
@@ -103,14 +126,14 @@ export default function BrandKitPage() {
                     <button
                       key={font}
                       onClick={() => setSelectedFont(font)}
-                      className={`p-3 border-2 border-black rounded-xl text-left text-xs font-black uppercase transition-all flex items-center justify-between cursor-pointer ${
+                      className={`p-3 border-2 border-black rounded-xl text-left text-xs font-black uppercase transition-all flex items-center justify-between gap-2 cursor-pointer ${
                         isSelected
                           ? "bg-black text-white shadow-[2px_2px_0px_#FFC700]"
                           : "bg-[#F8F7F4] text-black hover:bg-white"
                       }`}
                     >
-                      <span className="truncate">{font}</span>
-                      {isSelected && <Check className="w-3.5 h-3.5 text-[#FFC700]" />}
+                      <span className="min-w-0 leading-snug">{font}</span>
+                      {isSelected && <Check className="w-3.5 h-3.5 text-[#FFC700] shrink-0" />}
                     </button>
                   );
                 })}

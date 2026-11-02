@@ -11,10 +11,18 @@ export async function POST(req: NextRequest) {
 
   const analysisStartTime = Date.now();
   try {
-    const body = await req.json();
-    const { transcriptText, words, duration, customPrompt, model, openaiKey, claudeKey } = body;
+    let body: any;
+    try {
+      body = await req.json();
+    } catch {
+      return NextResponse.json(
+        { error: "Request body was cut off or invalid — please retry." },
+        { status: 400 }
+      );
+    }
+    const { transcriptText, words, segments, duration, customPrompt, model, openaiKey, claudeKey, groqKey } = body;
 
-    if (!transcriptText) {
+    if (!transcriptText || typeof transcriptText !== "string") {
       return NextResponse.json(
         { error: "Transcript text is required for AI clip analysis" },
         { status: 400 }
@@ -30,10 +38,12 @@ export async function POST(req: NextRequest) {
     const rawClips = await analyzeTranscriptForViralClips({
       transcriptText,
       words,
+      segments,
       customPrompt,
       model,
       openaiKey,
       claudeKey,
+      groqKey,
     });
     const llmElapsed = Date.now() - llmStartTime;
     console.log(

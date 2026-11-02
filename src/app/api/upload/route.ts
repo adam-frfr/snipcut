@@ -14,6 +14,15 @@ export async function POST(req: NextRequest) {
 
   const uploadStartTime = Date.now();
   try {
+    // Upload size guard (2 GB, matching the landing page's promise):
+      // reject before the pipeline spends RAM/CPU on an unbounded file.
+      const declaredLen = Number(req.headers.get("content-length") || 0);
+      if (declaredLen > 2_300_000_000) {
+        return NextResponse.json(
+          { error: "That file is over the 2 GB upload limit. Trim it or compress it and try again." },
+          { status: 413 }
+        );
+      }
     const formData = await req.formData();
     const file = formData.get("file") as File;
 
