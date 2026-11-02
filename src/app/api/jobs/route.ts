@@ -6,7 +6,8 @@ import { execFile } from "child_process";
 import util from "util";
 import { verifyAuthAndRateLimit } from "@/lib/authRateLimit";
 import { jobQueue, saveJobRecord, JobRecord, JobOptions } from "@/lib/jobQueue";
-import { getFfmpegBinary, probeVideoFormat, checkZscaleSupported } from "@/lib/videoService";
+import { getFfmpegBinary, getYtDlpBinary, probeVideoFormat, checkZscaleSupported } from "@/lib/videoService";
+import { resolveCookieArg, friendlyDownloadError } from "@/lib/youtubeCookies";
 
 const execFilePromise = util.promisify(execFile);
 
@@ -29,6 +30,15 @@ export async function POST(req: NextRequest) {
 
     if (contentType.includes("multipart/form-data")) {
       // 1. Multipart Form Data (File Upload)
+      // Upload size guard (2 GB, matching the landing page's promise):
+      // reject before the pipeline spends RAM/CPU on an unbounded file.
+      const declaredLen = Number(req.headers.get("content-length") || 0);
+      if (declaredLen > 2_300_000_000) {
+        return NextResponse.json(
+          { error: "That file is over the 2 GB upload limit. Trim it or compress it and try again." },
+          { status: 413 }
+        );
+      }
       const formData = await req.formData();
       const file = formData.get("file") as File;
 
@@ -48,7 +58,16 @@ export async function POST(req: NextRequest) {
         aspectRatio,
         reframeMode,
         captionStyle,
+        removeSilences: (formData.get("removeSilences") as string) === "true",
         maxClipsToRender: 2,
+        groqKey: ((formData.get("groqKey") as string) || "").trim() || undefined,
+        openaiKey: ((formData.get("openaiKey") as string) || "").trim() || undefined,
+        claudeKey: ((formData.get("claudeKey") as string) || "").trim() || undefined,
+        preferredModel: ((formData.get("preferredModel") as string) || "").trim() || undefined,
+        broll: (formData.get("broll") as string) === "true",
+        musicBed: (formData.get("musicBed") as string) === "true",
+        pexelsKey: ((formData.get("pexelsKey") as string) || "").trim() || undefined,
+        pixabayKey: ((formData.get("pixabayKey") as string) || "").trim() || undefined,
       };
 
       const uploadsDir = path.join(process.cwd(), "public", "uploads");
@@ -110,7 +129,15 @@ export async function POST(req: NextRequest) {
       }
     } else {
       // 2. JSON Payload (Existing fileId or YouTube download)
-      const body = await req.json();
+      let body: any;
+      try {
+        body = await req.json();
+      } catch {
+        return NextResponse.json(
+          { error: "Request body was cut off or invalid — please retry." },
+          { status: 400 }
+        );
+      }
       const {
         fileId: inputId,
         filePath: inputPath,
@@ -119,9 +146,22 @@ export async function POST(req: NextRequest) {
         aspectRatio,
         reframeMode,
         captionStyle,
+        removeSilences,
         cookies,
         proxy,
+        groqKey,
+        openaiKey,
+        claudeKey,
+        preferredModel,
+        broll,
+        musicBed,
+        pexelsKey,
+        pixabayKey,
       } = body;
+
+      if (youtubeUrl !== undefined && youtubeUrl !== null && typeof youtubeUrl !== "string") {
+        return NextResponse.json({ error: "youtubeUrl must be a string" }, { status: 400 });
+      }
 
       options = {
         sourceType: youtubeUrl ? "youtube" : "upload",
@@ -130,7 +170,16 @@ export async function POST(req: NextRequest) {
         aspectRatio: aspectRatio || "9:16",
         reframeMode: reframeMode || "auto-tracker",
         captionStyle: captionStyle || "hormozi",
+        removeSilences: removeSilences === true,
         maxClipsToRender: 2,
+        groqKey: (groqKey || "").trim?.() || undefined,
+        openaiKey: (openaiKey || "").trim?.() || undefined,
+        claudeKey: (claudeKey || "").trim?.() || undefined,
+        preferredModel: (preferredModel || "").trim?.() || undefined,
+        broll: broll === true,
+        musicBed: musicBed === true,
+        pexelsKey: (pexelsKey || "").trim?.() || undefined,
+        pixabayKey: (pixabayKey || "").trim?.() || undefined,
       };
 
       if (youtubeUrl) {
@@ -145,40 +194,49 @@ export async function POST(req: NextRequest) {
         } else {
           const filePrefix = `yt-${Date.now()}`;
           const outTemplate = path.join(downloadDir, `${filePrefix}.%(ext)s`);
-          const binDir = path.join(process.cwd(), "bin");
-          const ytDlp = path.join(binDir, process.platform === "win32" ? "yt-dlp.exe" : "yt-dlp");
+          const ytDlp = getYtDlpBinary();
+          const ffmpegBin = getFfmpegBinary();
 
-          // Cookie handling for YouTube bot-check bypass
-          let cookieArg = "";
-          let tempCookiePath: string | null = null;
-          const rawCookies = cookies || process.env.YOUTUBE_COOKIES || "";
-          const localCookieFile = path.join(process.cwd(), "cookies.txt");
-
-          if (rawCookies && rawCookies.trim().length > 10) {
-            const os = require("os");
-            tempCookiePath = path.join(os.tmpdir(), `yt-cookies-${Date.now()}.txt`);
-            fs.writeFileSync(tempCookiePath, rawCookies.trim(), "utf-8");
-            cookieArg = `--cookies "${tempCookiePath}"`;
-          } else if (fs.existsSync(localCookieFile)) {
-            cookieArg = `--cookies "${localCookieFile}"`;
-          }
+          // Cookie handling for YouTube bot-check bypass: request cookies
+          // (auto-normalized to Netscape format), else the persistent
+          // server-side jar saved via /api/cookies, else env/legacy file.
+          const { arg: cookieArg, tempFile: tempCookiePath } = resolveCookieArg(cookies);
 
           // Proxy handling
-          let proxyArg = "";
           const activeProxy = proxy || process.env.YOUTUBE_PROXY || process.env.HTTP_PROXY || "";
-          if (activeProxy && activeProxy.trim().length > 5) {
-            proxyArg = `--proxy "${activeProxy.trim()}"`;
-          }
+          const proxyArgs: string[] =
+            activeProxy && activeProxy.trim().length > 5 ? ["--proxy", activeProxy.trim()] : [];
+          const cookiePath = cookieArg.match(/"([^"]+)"/)?.[1];
+          const cookieArgs: string[] = cookiePath ? ["--cookies", cookiePath] : [];
 
+        // Resolution before codec: an avc1-only preference grabs 360p on older
+        // uploads even when 1080p VP9 exists (verified on a real MIT lecture).
+        // The render pipeline re-encodes to H.264 anyway, so source codec is secondary.
         const preferredFormat =
-          "bestvideo[vcodec^=avc1][height<=1080]+bestaudio[ext=m4a]/bestvideo[vcodec^=avc1][height<=1080]+bestaudio/best[vcodec^=avc1][height<=1080]/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best";
+          "bestvideo[vcodec^=avc1][height<=1080]+bestaudio[ext=m4a]/bestvideo[height>=720][height<=1080]+bestaudio/bestvideo[vcodec^=avc1][height<=1080]+bestaudio/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best";
 
-        const cmd = `"${ytDlp}" --js-runtimes node --ffmpeg-location "${binDir}" ${cookieArg} ${proxyArg} --extractor-args "youtube:player_client=android,ios,web" -f "${preferredFormat}" --no-warnings --ignore-errors --merge-output-format mp4 -o "${outTemplate}" "${youtubeUrl}"`;
+        // Args array (no shell): a URL or proxy value containing quotes can
+        // no longer break the command line.
+        const dlArgs = [
+          "--js-runtimes", "node",
+          "--ffmpeg-location", ffmpegBin,
+          ...cookieArgs,
+          ...proxyArgs,
+          "--extractor-args", "youtube:player_client=android,ios,web",
+          "-f", preferredFormat,
+          "--no-warnings", "--ignore-errors",
+          "--merge-output-format", "mp4",
+          "-o", outTemplate,
+          youtubeUrl,
+        ];
 
         try {
-          const { exec } = require("child_process");
-          const execP = util.promisify(exec);
-          await execP(cmd, { timeout: 180000 });
+          // Long videos at 1080p can take several minutes to download + merge;
+          // 180s was killing healthy downloads mid-flight (verified: 196MB .part at kill time)
+          await execFilePromise(ytDlp, dlArgs, { timeout: 900000, maxBuffer: 64 * 1024 * 1024 });
+        } catch (dlErr: any) {
+          const raw = `${dlErr?.stderr || ""} ${dlErr?.message || ""}`;
+          throw new Error(friendlyDownloadError(raw));
         } finally {
           if (tempCookiePath && fs.existsSync(tempCookiePath)) {
             try { fs.unlinkSync(tempCookiePath); } catch {}

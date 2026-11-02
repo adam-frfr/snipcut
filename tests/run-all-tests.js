@@ -2,7 +2,7 @@ const { spawnSync } = require("child_process");
 const path = require("path");
 
 console.log("==================================================");
-console.log("       OPUSCLIP CLONE TEST SUITE RUNNER           ");
+console.log("              SNIPCUT TEST SUITE RUNNER             ");
 console.log("==================================================\n");
 
 const tests = [

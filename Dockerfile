@@ -1,4 +1,4 @@
-# Production Dockerfile for OpusClip Clone on Render / Cloud
+# Production Dockerfile for Snipcut on Render / Cloud
 FROM node:20-bookworm-slim
 
 # Install system dependencies: FFmpeg with libass, Python 3, OpenCV, numpy, and curl

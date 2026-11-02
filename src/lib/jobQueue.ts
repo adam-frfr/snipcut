@@ -4,7 +4,70 @@ import crypto from "crypto";
 import { transcribeAudioFile } from "./transcriptionService";
 import { analyzeTranscriptForViralClips, CuratedClipResult } from "./aiService";
 import { snapAndValidateClips, SnappedClipResult } from "./wordSnapping";
-import { renderVideoClip, resolveSafeFilePath, extractAudioForWhisper } from "./videoService";
+import { buildSentences, planBroll, fetchBrollAssets } from "./brollService";
+import { applyPostEffects, dropCuesOverlappingSplits, probeVideoFormat } from "./videoService";
+import { renderVideoClip, resolveSafeFilePath, extractAudioForWhisper, getFfmpegBinary, generatePreviewClip, generatePosterImage } from "./videoService";
+import { execFile } from "child_process";
+import { promisify } from "util";
+
+const execFileAsync = promisify(execFile);
+
+const FILLER_WORDS = new Set([
+  "um", "umm", "uh", "uhh", "er", "erm", "hmm", "mm", "mhm", "uhm", "eh",
+]);
+
+export function isFillerWord(text: string): boolean {
+  const clean = String(text || "").toLowerCase().replace(/[^a-z]/g, "");
+  return FILLER_WORDS.has(clean);
+}
+
+/**
+ * Keep-ranges for silence/filler removal: span from just before the first
+ * real word to just after the last one, splitting wherever the gap between
+ * consecutive words exceeds 0.55s (keeping a small breath of padding around
+ * each cut) and cutting standalone filler words (um, uh, er...) entirely.
+ * Returns the ranges plus how many fillers were cut.
+ */
+export function computeKeepRanges(
+  words: { start: number; end: number; word?: string; text?: string }[],
+  clipStart: number,
+  clipEnd: number
+): { ranges: { start: number; end: number }[]; fillersRemoved: number } {
+  const ws = (words || [])
+    .filter((w) => w.end > clipStart && w.start < clipEnd)
+    .sort((a, b) => a.start - b.start);
+  if (ws.length === 0) return { ranges: [], fillersRemoved: 0 };
+  const ranges: { start: number; end: number }[] = [];
+  let fillersRemoved = 0;
+  let rangeStart: number | null = null;
+  let prevEnd = 0;
+  const closeRange = (end: number) => {
+    if (rangeStart !== null) {
+      ranges.push({ start: rangeStart, end: Math.min(clipEnd, end) });
+      rangeStart = null;
+    }
+  };
+  for (const w of ws) {
+    if (isFillerWord(w.word || w.text || "")) {
+      fillersRemoved++;
+      closeRange(prevEnd + 0.08);
+      prevEnd = w.end;
+      continue;
+    }
+    if (rangeStart === null) {
+      rangeStart = Math.max(clipStart, w.start - (ranges.length === 0 && fillersRemoved === 0 ? 0.1 : 0.12));
+    } else if (w.start - prevEnd > 0.55) {
+      closeRange(prevEnd + 0.15);
+      rangeStart = Math.max(clipStart, w.start - 0.12);
+    }
+    prevEnd = Math.max(prevEnd, w.end);
+  }
+  closeRange(prevEnd + 0.18);
+  // 0.25s floor: anything shorter is encoder noise, but a lone real word
+  // (e.g. "So" before an "um") legitimately forms a ~0.35s segment and
+  // must never be dropped.
+  return { ranges: ranges.filter((r) => r.end - r.start >= 0.25), fillersRemoved };
+}
 
 export type JobStatus =
   | "uploaded"
@@ -22,16 +85,26 @@ export interface RenderedClipItem {
   endTime: number;
   duration: number;
   downloadUrl: string;
+  previewDownloadUrl?: string;
+  posterUrl?: string;
+  fileSize?: number;
+  previewFileSize?: number;
   filename: string;
   viralityScore: number;
   hookHeadline: string;
   trackingSummary?: string;
+  hookStrength?: number;
+  engagementScore?: number;
+  trendMatch?: number;
+  description?: string;
 }
 
 export interface JobOutput {
   fileId?: string;
   filePath?: string;
   sourceSha256?: string;
+  sourceWidth?: number;
+  sourceHeight?: number;
   transcription?: {
     text: string;
     words: any[];
@@ -50,9 +123,22 @@ export interface JobOptions {
   customPrompt?: string;
   aspectRatio?: "9:16" | "1:1" | "16:9";
   reframeMode?: "auto-tracker" | "split-screen" | "blurred-fit" | "center";
-  captionStyle?: "hormozi" | "neon" | "beast" | "clean";
+  captionStyle?: "hormozi" | "neon" | "beast" | "clean" | "kinetic" | "snipcut";
+  removeSilences?: boolean; // tighten clips by cutting internal pauses > 0.55s
   maxClipsToRender?: number; // default 2
   retentionHours?: number; // default 24h
+  // Per-job API keys from the user's own Settings (stored only in the on-disk
+  // job record under data/, which is gitignored and never served; stripped
+  // from API responses in /api/jobs/[id])
+  groqKey?: string;
+  openaiKey?: string;
+  claudeKey?: string;
+  preferredModel?: string;
+  // Reference-style post effects (B-roll cutaways / punch zooms / music bed)
+  broll?: boolean;
+  musicBed?: boolean;
+  pexelsKey?: string;
+  pixabayKey?: string;
 }
 
 export interface JobRecord {
@@ -106,7 +192,8 @@ export function saveJobRecord(job: JobRecord): void {
  * Load job state from data/jobs/<id>.json
  */
 export function getJobRecord(id: string): JobRecord | null {
-  const filePath = path.join(JOBS_DIR, `${id}.json`);
+  // basename(): a crafted id with ../ segments must not escape JOBS_DIR.
+  const filePath = path.join(JOBS_DIR, `${path.basename(id)}.json`);
   if (!fs.existsSync(filePath)) return null;
   try {
     const data = fs.readFileSync(filePath, "utf-8");
@@ -146,6 +233,23 @@ export function cleanupExpiredFiles(retentionHours = 24): { deletedFiles: number
           if (stat.isFile() && now - stat.mtimeMs > maxAgeMs) {
             freedBytes += stat.size;
             fs.unlinkSync(fullPath);
+            deletedFiles++;
+          }
+        } catch {}
+      }
+    } catch {}
+  }
+
+  // Abandoned chunked-upload dirs (per-upload subdirectories of .part files)
+  const chunkRoot = path.join(process.cwd(), "data", "chunk-uploads");
+  if (fs.existsSync(chunkRoot)) {
+    try {
+      for (const entry of fs.readdirSync(chunkRoot)) {
+        const fullPath = path.join(chunkRoot, entry);
+        try {
+          const stat = fs.statSync(fullPath);
+          if (stat.isDirectory() && now - stat.mtimeMs > maxAgeMs) {
+            fs.rmSync(fullPath, { recursive: true, force: true });
             deletedFiles++;
           }
         } catch {}
@@ -270,6 +374,14 @@ class JobQueueManager {
         throw new Error(`Video file not found at ${resolvedVideoPath}`);
       }
 
+      if (!job.output.sourceHeight) {
+        try {
+          const info = await probeVideoFormat(resolvedVideoPath);
+          if (info.width) job.output.sourceWidth = info.width;
+          if (info.height) job.output.sourceHeight = info.height;
+        } catch {}
+      }
+
       if (!job.output.sourceSha256) {
         console.log(`[JobQueue] Computing SHA-256 for: ${path.basename(resolvedVideoPath)}...`);
         job.output.sourceSha256 = await computeFileSha256(resolvedVideoPath);
@@ -311,7 +423,10 @@ class JobQueueManager {
           }
 
           const targetAudio = fs.existsSync(audioPath) ? audioPath : resolvedVideoPath;
-          const transcriptResult = await transcribeAudioFile(targetAudio);
+          const transcriptResult = await transcribeAudioFile(targetAudio, {
+            groqKey: job.options.groqKey,
+            openaiKey: job.options.openaiKey,
+          });
 
           job.output.transcription = transcriptResult;
           // Write to cache
@@ -333,7 +448,9 @@ class JobQueueManager {
       // -------------------------------------------------------------
       const promptText = job.options.customPrompt || "default";
       const promptHash = crypto.createHash("md5").update(promptText).digest("hex").slice(0, 8);
-      const clipsCachePath = path.join(CLIPS_CACHE_DIR, `${sourceHash}-${promptHash}.json`);
+      // v2: snappedWords are source-absolute (v1 cached entries stored them
+      // clip-relative, which stripped captions from most clips on reuse).
+      const clipsCachePath = path.join(CLIPS_CACHE_DIR, `${sourceHash}-${promptHash}-v2.json`);
 
       if (!job.output.curatedClips || job.output.curatedClips.length === 0) {
         job.status = "analyzing";
@@ -355,7 +472,12 @@ class JobQueueManager {
           const rawClips = await analyzeTranscriptForViralClips({
             transcriptText: transcription.text,
             words: transcription.words,
+            segments: transcription.segments,
             customPrompt: job.options.customPrompt,
+            model: job.options.preferredModel,
+            openaiKey: job.options.openaiKey,
+            claudeKey: job.options.claudeKey,
+            groqKey: job.options.groqKey,
           });
 
           // Precision word boundary snapping & overlap resolution
@@ -364,6 +486,12 @@ class JobQueueManager {
             minDuration: 5.0,
             maxDuration: 90.0,
           });
+
+          if (snapped.length === 0) {
+            throw new Error(
+              "AI curation produced no usable clips from this transcript. Try again, or use a more specific prompt."
+            );
+          }
 
           job.output.curatedClips = snapped;
           // Write to cache
@@ -410,7 +538,7 @@ class JobQueueManager {
         const captionStyle = job.options.captionStyle || "hormozi";
 
         // Render cache key: sha256(sourceHash:start:end:mode:captionStyle:aspectRatio)
-        const renderKeyRaw = `${sourceHash}:${clip.startTime}:${clip.endTime}:${reframeMode}:${captionStyle}:${aspectRatio}`;
+        const renderKeyRaw = `${sourceHash}:${clip.startTime}:${clip.endTime}:${reframeMode}:${captionStyle}:${aspectRatio}:${job.options.removeSilences ? "tight2" : "full"}:fx${job.options.broll ? "b" : ""}${job.options.musicBed ? "m" : ""}`;
         const renderKey = crypto.createHash("sha256").update(renderKeyRaw).digest("hex");
         const renderCachePath = path.join(RENDERS_CACHE_DIR, `${renderKey}.json`);
 
@@ -434,35 +562,218 @@ class JobQueueManager {
         const outputPath = path.join(outputDir, outputFilename);
 
         const exactDuration = Number((clip.endTime - clip.startTime).toFixed(2));
-        const transcriptWords = (clip.snappedWords || []).map((w: any) => ({
+        let transcriptWords = (clip.snappedWords || []).map((w: any) => ({
           start: w.start,
           end: w.end,
           text: w.word,
         }));
 
-        const renderRes = await renderVideoClip({
-          inputPath: resolvedVideoPath,
-          outputPath,
-          startTime: clip.startTime,
-          duration: exactDuration,
-          aspectRatio,
-          reframeMode,
-          transcript: transcriptWords,
-          headline: clip.hookHeadline || clip.title,
-          captionStyle,
-        });
+        // Snapping can return a clip with no words (e.g. boundaries landed
+        // in a pause). Rendering with an empty transcript produces a clip
+        // with NO captions at all — fall back to the full transcription's
+        // words inside the clip window so captions always burn.
+        if (transcriptWords.length < 3 && job.output.transcription?.words?.length) {
+          const fallbackWords = job.output.transcription.words
+            .filter((w: any) => w.end > clip.startTime && w.start < clip.endTime)
+            .map((w: any) => ({
+              start: w.start,
+              end: w.end,
+              text: w.word || w.text,
+            }));
+          if (fallbackWords.length > transcriptWords.length) {
+            console.log(
+              `[Stage: Render] Clip "${clip.title}": snappedWords had ${transcriptWords.length} word(s); using ${fallbackWords.length} transcription words for captions`
+            );
+            transcriptWords = fallbackWords;
+          }
+        }
+
+        // Silence removal: render only the keep-ranges (speech with small
+        // breaths) and concatenate them into one tightened clip.
+        let renderRes: Awaited<ReturnType<typeof renderVideoClip>> | null = null;
+        let fxSummary: string | undefined;
+        let finalDuration = exactDuration;
+        const keep = job.options.removeSilences
+          ? computeKeepRanges(clip.snappedWords || [], clip.startTime, clip.endTime)
+          : { ranges: [] as { start: number; end: number }[], fillersRemoved: 0 };
+        const keepRanges = keep.ranges;
+        const keptDuration = keepRanges.reduce((s, r) => s + (r.end - r.start), 0);
+        const tightening =
+          keepRanges.length > 0 &&
+          (keepRanges.length > 1 || keptDuration < exactDuration * 0.92 || keep.fillersRemoved > 0);
+
+        if (tightening) {
+          const partPaths: string[] = [];
+          try {
+            for (let pi = 0; pi < keepRanges.length; pi++) {
+              const range = keepRanges[pi];
+              const partPath = path.join(outputDir, `part-${Date.now()}-${i + 1}-${pi}.mp4`);
+              const partRes = await renderVideoClip({
+                inputPath: resolvedVideoPath,
+                outputPath: partPath,
+                startTime: range.start,
+                duration: Number((range.end - range.start).toFixed(2)),
+                aspectRatio,
+                reframeMode,
+                transcript: transcriptWords,
+                headline: clip.hookHeadline || clip.title,
+                captionStyle,
+              });
+              if (!renderRes) renderRes = partRes;
+              partPaths.push(partPath);
+            }
+            const listPath = path.join(outputDir, `concat-${Date.now()}-${i + 1}.txt`);
+            fs.writeFileSync(
+              listPath,
+              partPaths.map((p) => `file '${p.replace(/'/g, "'\\''")}'`).join("\n"),
+              "utf-8"
+            );
+            await execFileAsync(getFfmpegBinary(), [
+              "-y", "-f", "concat", "-safe", "0", "-i", listPath,
+              "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+              "-c:a", "aac", "-movflags", "+faststart", outputPath,
+            ], { maxBuffer: 64 * 1024 * 1024 });
+            try { fs.unlinkSync(listPath); } catch {}
+            finalDuration = Number(keptDuration.toFixed(2));
+            console.log(
+              `[Stage: Silence Removal] Clip "${clip.title}": ${exactDuration}s -> ${finalDuration}s across ${keepRanges.length} keep-range(s)`
+            );
+          } finally {
+            for (const p of partPaths) {
+              try { fs.unlinkSync(p); } catch {}
+            }
+          }
+        }
+
+        if (!renderRes) {
+          // Post effects (B-roll / music / punch zooms) need a caption-less
+          // base: captions are burned in the composite pass so they sit on
+          // top of the cutaways. Silence-tightened clips skip FX (their
+          // timeline is re-cut, so cue timings would drift).
+          const fxOn = Boolean(job.options.broll || job.options.musicBed);
+          let fxApplied = false;
+          if (fxOn) {
+            const basePath = path.join(outputDir, `base-${outputFilename}`);
+            try {
+              renderRes = await renderVideoClip({
+                inputPath: resolvedVideoPath,
+                outputPath: basePath,
+                startTime: clip.startTime,
+                duration: exactDuration,
+                aspectRatio,
+                reframeMode,
+                transcript: transcriptWords,
+                headline: clip.hookHeadline || clip.title,
+                captionStyle,
+                skipCaptions: true,
+              });
+
+              const relWords = transcriptWords.map((w) => ({
+                start: Math.max(0, Number((w.start - clip.startTime).toFixed(2))),
+                end: Math.max(0.05, Number((w.end - clip.startTime).toFixed(2))),
+                text: w.text,
+              }));
+
+              let cues: { start: number; end: number; assetPath: string; kind: "image" | "video" }[] = [];
+              if (job.options.broll && job.output.transcription?.segments?.length) {
+                const sentences = buildSentences(job.output.transcription.segments, clip.startTime, clip.endTime);
+                const plan = await planBroll(sentences, {
+                  groqKey: job.options.groqKey,
+                  openaiKey: job.options.openaiKey,
+                  claudeKey: job.options.claudeKey,
+                });
+                if (plan.length > 0) {
+                  const assets = await fetchBrollAssets(plan, {
+                    pexelsKey: job.options.pexelsKey,
+                    pixabayKey: job.options.pixabayKey,
+                    destDir: path.join(process.cwd(), "data", "broll"),
+                    tag: `broll-${job.id.slice(5, 13)}-${i + 1}`,
+                  });
+                  cues = assets.map((a) => ({ start: a.start, end: a.end, assetPath: a.assetPath, kind: a.kind }));
+                }
+              }
+
+              // Punch-in zooms on emphasis words (long / digit-bearing),
+              // max 3, spaced out.
+              const punches: { start: number; end: number }[] = [];
+              for (const w of relWords) {
+                const clean = w.text.replace(/[^A-Za-z0-9]/g, "");
+                if (clean.length < 8 && !/\d/.test(clean)) continue;
+                if (punches.length > 0 && w.start - punches[punches.length - 1].start < 2.4) continue;
+                punches.push({ start: Math.max(0, w.start - 0.05), end: w.start + 0.85 });
+                if (punches.length >= 3) break;
+              }
+
+              cues = dropCuesOverlappingSplits(cues, (renderRes as any)?.tracking?.layoutSegments);
+
+              await applyPostEffects({
+                basePath,
+                outputPath,
+                duration: exactDuration,
+                aspectRatio,
+                words: relWords,
+                captionStyle,
+                broll: cues,
+                punches,
+                musicBed: Boolean(job.options.musicBed),
+              });
+              fxApplied = true;
+              fxSummary = `🎬 Reference FX: ${cues.length} B-roll cutaway${cues.length === 1 ? "" : "s"}, ${punches.length} punch zoom${punches.length === 1 ? "" : "s"}${job.options.musicBed ? ", music bed" : ""}`;
+            } catch (fxErr) {
+              console.warn(`[PostFX] Failed for clip "${clip.title}"; falling back to a standard captioned render:`, fxErr);
+            } finally {
+              try { fs.unlinkSync(basePath); } catch {}
+            }
+          }
+          if (!fxApplied) {
+            renderRes = await renderVideoClip({
+              inputPath: resolvedVideoPath,
+              outputPath,
+              startTime: clip.startTime,
+              duration: exactDuration,
+              aspectRatio,
+              reframeMode,
+              transcript: transcriptWords,
+              headline: clip.hookHeadline || clip.title,
+              captionStyle,
+            });
+          }
+        }
+
+        // Lightweight preview rendition for smooth in-browser playback;
+        // the master above stays the download quality. Never fatal.
+        const previewName = await generatePreviewClip(outputPath).catch(() => null);
+        const posterName = await generatePosterImage(outputPath).catch(() => null);
 
         const renderedItem: RenderedClipItem = {
           clipId: `clip_${Date.now()}_${i + 1}`,
           title: clip.title,
           startTime: clip.startTime,
           endTime: clip.endTime,
-          duration: exactDuration,
+          duration: finalDuration,
           downloadUrl: `/api/media?file=rendered_clips/${outputFilename}`,
+          previewDownloadUrl: previewName
+            ? `/api/media?file=rendered_clips/${previewName}`
+            : undefined,
+          posterUrl: posterName
+            ? `/api/media?file=rendered_clips/${posterName}`
+            : undefined,
+          fileSize: (() => { try { return fs.statSync(outputPath).size; } catch { return undefined; } })(),
+          previewFileSize: (() => {
+            try {
+              return previewName ? fs.statSync(path.join(path.dirname(outputPath), previewName)).size : undefined;
+            } catch { return undefined; }
+          })(),
           filename: outputFilename,
           viralityScore: clip.viralityScore || 90,
           hookHeadline: clip.hookHeadline || clip.title,
-          trackingSummary: renderRes.tracking?.summary,
+          trackingSummary: tightening
+            ? `${renderRes?.tracking?.summary || ""} · ✂ Tightened: ${exactDuration}s → ${finalDuration}s${keep.fillersRemoved > 0 ? ` (${keep.fillersRemoved} filler${keep.fillersRemoved === 1 ? "" : "s"} cut)` : ""}`
+            : [renderRes?.tracking?.summary, fxSummary].filter(Boolean).join(" · ") || undefined,
+          hookStrength: clip.hookStrength,
+          engagementScore: clip.engagementScore,
+          trendMatch: clip.trendMatch,
+          description: clip.description,
         };
 
         job.output.renderedClips.push(renderedItem);

@@ -16,7 +16,7 @@ export default function Footer() {
                 <Scissors className="w-3.5 h-3.5 stroke-[3]" />
               </div>
               <span className="font-black text-lg tracking-tighter uppercase">
-                OPUS<span className="bg-[#FFC700] px-1 py-0.2 border border-black ml-0.5">CLIP</span>
+                SNIP<span className="bg-[#FFC700] px-1 py-0.2 border border-black ml-0.5">CUT</span>
               </span>
             </Link>
             <p className="text-[#555555] max-w-sm text-xs font-bold leading-relaxed mb-4">
@@ -53,7 +53,7 @@ export default function Footer() {
         {/* Bottom credits */}
         <div className="pt-6 border-t-2 border-black/10 flex flex-col sm:flex-row items-center justify-between gap-3 text-[11px] font-bold text-[#666666]">
           <div>
-            &copy; 2026 OPUSCLIP. MINIMAL VIDEO REPURPOSING.
+            &copy; 2026 SNIPCUT. MINIMAL VIDEO REPURPOSING.
           </div>
           <div className="flex items-center gap-4">
             <span className="hover:text-black cursor-pointer">PRIVACY</span>

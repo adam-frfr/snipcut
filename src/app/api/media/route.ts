@@ -47,6 +47,9 @@ export async function GET(req: NextRequest) {
     else if (ext === ".m4v") contentType = "video/x-m4v";
     else if (ext === ".ogg") contentType = "video/ogg";
     else if (ext === ".mp3") contentType = "audio/mpeg";
+    else if (ext === ".jpg" || ext === ".jpeg") contentType = "image/jpeg";
+    else if (ext === ".png") contentType = "image/png";
+    else if (ext === ".webp") contentType = "image/webp";
 
     if (rangeHeader && rangeHeader.startsWith("bytes=")) {
       const rawRange = rangeHeader.replace("bytes=", "").trim();
@@ -102,6 +105,9 @@ export async function GET(req: NextRequest) {
           fileStream.on("end", () => controller.close());
           fileStream.on("error", (err) => controller.error(err));
         },
+        cancel() {
+          fileStream.destroy();
+        },
       });
 
       return new NextResponse(stream, {
@@ -122,6 +128,9 @@ export async function GET(req: NextRequest) {
           fileStream.on("data", (chunk) => controller.enqueue(chunk));
           fileStream.on("end", () => controller.close());
           fileStream.on("error", (err) => controller.error(err));
+        },
+        cancel() {
+          fileStream.destroy();
         },
       });
 

@@ -2,7 +2,11 @@ import ffmpeg from "fluent-ffmpeg";
 import ffmpegStatic from "ffmpeg-static";
 import path from "path";
 import fs from "fs";
-import { spawn } from "child_process";
+import os from "os";
+import { spawn, execFile } from "child_process";
+import util from "util";
+
+const execFileP = util.promisify(execFile);
 
 // Set fluent-ffmpeg binary path to local bin or system/static ffmpeg
 function checkBinaryRunnable(binPath: string): boolean {
@@ -85,6 +89,25 @@ try {
   ffmpeg.setFfprobePath(getFfprobeBinary());
 } catch (e: any) {
   console.warn("ffprobe path init notice:", e?.message || e);
+}
+
+// Resolution order: 1. Env override -> 2. ./bin -> 3. system PATH (Docker installs yt-dlp to /usr/local/bin)
+export function getYtDlpBinary(): string {
+  if (process.env.YTDLP_PATH && fs.existsSync(process.env.YTDLP_PATH)) {
+    return process.env.YTDLP_PATH;
+  }
+  const isWin = process.platform === "win32";
+  const binName = isWin ? "yt-dlp.exe" : "yt-dlp";
+  const localBin = path.join(process.cwd(), "bin", binName);
+  if (fs.existsSync(localBin)) {
+    return localBin;
+  }
+  if (checkBinaryRunnable("yt-dlp")) {
+    return "yt-dlp";
+  }
+  throw new Error(
+    `yt-dlp binary not found. Checked YTDLP_PATH env, ./bin/${binName}, and system PATH.`
+  );
 }
 
 export interface VideoStreamInfo {
@@ -293,7 +316,10 @@ export interface RenderOptions {
   captionPositionY?: number;
   transcript?: { start: number; end: number; text: string }[];
   headline?: string;
-  captionStyle?: "hormozi" | "neon" | "beast" | "clean";
+  captionStyle?: "hormozi" | "neon" | "beast" | "clean" | "kinetic" | "snipcut";
+  // Render picture only; captions are burned later by applyPostEffects so
+  // they can sit ON TOP of B-roll cutaways instead of underneath them.
+  skipCaptions?: boolean;
 }
 
 export interface FocusShot {
@@ -318,6 +344,19 @@ export interface TrackingResult {
   crop_w?: number;
   crop_h?: number;
   summary?: string;
+  version?: number;
+  speakers?: number;
+  layoutSuggestion?: string | null;
+  layoutSegments?: LayoutSegment[];
+  video_w?: number;
+  video_h?: number;
+}
+
+export interface LayoutSegment {
+  start: number;
+  end: number;
+  layout: "crop" | "fit" | "split";
+  panels?: { cx: number; cy: number; face_w: number; face_h: number }[];
 }
 
 function formatSrtTime(seconds: number): string {
@@ -328,15 +367,214 @@ function formatSrtTime(seconds: number): string {
   return `${h < 10 ? "0" : ""}${h}:${m < 10 ? "0" : ""}${m}:${s < 10 ? "0" : ""}${s},${ms < 100 ? (ms < 10 ? "00" : "0") : ""}${ms}`;
 }
 
+function formatAssTime(seconds: number): string {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  return `${h}:${m < 10 ? "0" : ""}${m}:${s < 10 ? "0" : ""}${s.toFixed(2)}`;
+}
+
+interface KaraokeWord {
+  start: number;
+  end: number;
+  text: string;
+}
+
 /**
- * Runs deep-learning AI Subject Tracking (OpusClip ReframeAnything)
+ * Karaoke-style captions: a short phrase stays
+ * on screen while the currently-spoken word is highlighted in the accent
+ * colour. Emitted as ASS with one Dialogue event per word; each event
+ * re-renders the whole phrase with a different word highlighted, so there
+ * is never a flicker or a lonely single word on screen.
+ */
+export function buildKaraokeAss(
+  words: KaraokeWord[],
+  captionStyle: "hormozi" | "neon" | "beast" | "clean" | "kinetic" | "snipcut",
+  marginV: number,
+  playRes: { x: number; y: number } = { x: 1080, y: 1920 }
+): string {
+  // ASS colours are &HAABBGGRR.
+  const palettes = {
+    hormozi: { base: "&H00FFFFFF", accent: "&H0000FFFF", size: 56, outline: 6 },
+    neon: { base: "&H00FFFFFF", accent: "&H0000FF00", size: 56, outline: 6 },
+    beast: { base: "&H00FFFFFF", accent: "&H0000FFFF", size: 62, outline: 8 },
+    clean: { base: "&H00FFFFFF", accent: "&H00FFFFFF", size: 46, outline: 3 },
+    kinetic: { base: "&H00FFFFFF", accent: "&H0000FFFF", size: 98, outline: 9 },
+    snipcut: { base: "&H00FFFFFF", accent: "&H0000FFFF", size: 74, outline: 10 },
+  } as const;
+  const pal = palettes[captionStyle] || palettes.hormozi;
+  // Font size is authored against a 1920px-tall canvas; scale it to the
+  // actual PlayRes so 16:9 / 1:1 renders don't get oversized captions.
+  const fontSize = Math.max(20, Math.round(pal.size * (playRes.y / 1920)));
+
+  const header = `[Script Info]
+Title: Snipcut Karaoke Captions
+ScriptType: v4.00+
+PlayResX: ${playRes.x}
+PlayResY: ${playRes.y}
+WrapStyle: 2
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Karaoke,Arial,${fontSize},${pal.base},${pal.base},&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,${pal.outline},2,2,60,60,${marginV},1
+Style: Kinetic,Arial,${fontSize},${pal.base},${pal.base},&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,${pal.outline},3,5,40,40,0,1
+Style: Opus,Arial,${Math.max(20, Math.round(74 * (playRes.y / 1920)))},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,10,2,2,50,50,${Math.round(playRes.y * 0.16)},1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+`;
+
+  const escapeAssText = (t: string) => t.replace(/\\/g, "\\\\").replace(/\{/g, "\\{").replace(/\}/g, "\\}");
+
+  if (captionStyle === "snipcut") {
+    // Snipcut's caption look uses phrases of up to 5
+    // words sit low-centre; the whole phrase stays on screen while the
+    // spoken word turns accent-yellow with a slight pop. Auto-fit keeps
+    // long phrases inside the frame (theirs occasionally overflow).
+    const snipcutFont = Math.max(20, Math.round(74 * (playRes.y / 1920)));
+    const phrases: KaraokeWord[][] = [];
+    let cur: KaraokeWord[] = [];
+    for (const w of words) {
+      if (cur.length > 0) {
+        const prev = cur[cur.length - 1];
+        if (cur.length >= 5 || w.start - prev.end > 0.5 || /[.!?]$/.test(prev.text)) {
+          phrases.push(cur);
+          cur = [];
+        }
+      }
+      cur.push(w);
+    }
+    if (cur.length > 0) phrases.push(cur);
+    const evts: string[] = [];
+    for (const phrase of phrases) {
+      // Auto-fit per phrase at its widest (active word is 1.16x).
+      const avail = playRes.x - 100;
+      const est = phrase.reduce(
+        (sum, w, i) => sum + w.text.length * 0.66 * snipcutFont * 1.16 + (i > 0 ? 0.32 * snipcutFont : 0),
+        0
+      );
+      const fit = est > avail ? Math.max(0.6, avail / est) : 1;
+      for (let i = 0; i < phrase.length; i++) {
+        const w = phrase[i];
+        const nextStart = i + 1 < phrase.length ? phrase[i + 1].start : w.end;
+        const evEnd = Math.max(w.end, Math.min(nextStart, w.start + 0.12));
+        const parts = phrase.map((pw, j) => {
+          const txt = escapeAssText(pw.text.toUpperCase());
+          if (j === i) {
+            return `{\\c${pal.accent}\\fs${Math.round(snipcutFont * fit * 1.16)}\\fscx116\\fscy116\\t(0,90,1,\\fscx100\\fscy100)}${txt}{\\r}`;
+          }
+          return fit < 1 ? `{\\fs${Math.round(snipcutFont * fit)}}${txt}{\\r}` : txt;
+        });
+        evts.push(
+          `Dialogue: 0,${formatAssTime(w.start)},${formatAssTime(evEnd)},Snipcut,,0,0,0,,${parts.join(" ")}`
+        );
+      }
+    }
+    return header + evts.join("\n") + "\n";
+  }
+
+  if (captionStyle === "kinetic") {
+    // KINETIC: 1-3 word chunks, center-screen, each chunk pops in with a
+    // quick scale settle; the strongest word in the chunk gets the accent
+    // colour and a size bump. This mirrors the reference-style edits where
+    // captions ARE the visual.
+    const chunks: KaraokeWord[][] = [];
+    let cur: KaraokeWord[] = [];
+    for (const w of words) {
+      if (cur.length > 0) {
+        const prev = cur[cur.length - 1];
+        if (cur.length >= 3 || w.start - prev.end > 0.35 || /[.!?]$/.test(prev.text)) {
+          chunks.push(cur);
+          cur = [];
+        }
+      }
+      cur.push(w);
+    }
+    if (cur.length > 0) chunks.push(cur);
+
+    const evts: string[] = [];
+    chunks.forEach((chunk, ci) => {
+      const start = chunk[0].start;
+      const lastEnd = chunk[chunk.length - 1].end;
+      const nextStart = ci + 1 < chunks.length ? chunks[ci + 1][0].start : lastEnd + 0.3;
+      const end = Math.max(lastEnd, Math.min(nextStart, start + 0.28));
+      // Emphasis: longest word (ties -> the later one), or any word with digits.
+      let emph = 0;
+      chunk.forEach((w, i) => {
+        if (/\d/.test(w.text) || w.text.replace(/[^A-Za-z]/g, "").length >= chunk[emph].text.replace(/[^A-Za-z]/g, "").length) emph = i;
+      });
+      // Auto-fit: Arial Bold uppercase averages ~0.68em per glyph; if the
+      // chunk would overflow the canvas, shrink the whole event uniformly.
+      const avail = playRes.x - 96;
+      const estWidth = chunk.reduce((sum, w, i) => {
+        const fs = i === emph && chunk.length > 1 ? fontSize * 1.14 : fontSize;
+        return sum + w.text.length * 0.68 * fs + (i > 0 ? 0.35 * fontSize : 0);
+      }, 0);
+      const fitScale = estWidth > avail ? Math.max(0.55, avail / estWidth) : 1;
+      const parts = chunk.map((w, i) => {
+        const txt = escapeAssText(w.text.toUpperCase());
+        return i === emph && chunk.length > 1
+          ? `{\\c${pal.accent}\\fs${Math.round(fontSize * fitScale * 1.14)}}${txt}{\\r}`
+          : txt;
+      });
+      const anim = `{\\fad(45,60)${fitScale < 1 ? `\\fs${Math.round(fontSize * fitScale)}` : ""}\\fscx115\\fscy115\\t(0,110,1,\\fscx100\\fscy100)}`;
+      evts.push(`Dialogue: 0,${formatAssTime(start)},${formatAssTime(end)},Kinetic,,0,0,0,,${anim}${parts.join(" ")}`);
+    });
+    return header + evts.join("\n") + "\n";
+  }
+
+  // Group words into phrases: max 4 words, break on sentence punctuation
+  // or a pause longer than 0.45s.
+  const phrases: KaraokeWord[][] = [];
+  let current: KaraokeWord[] = [];
+  for (const w of words) {
+    if (current.length > 0) {
+      const prev = current[current.length - 1];
+      const gap = w.start - prev.end;
+      if (current.length >= 4 || gap > 0.45 || /[.!?]$/.test(prev.text)) {
+        phrases.push(current);
+        current = [];
+      }
+    }
+    current.push(w);
+  }
+  if (current.length > 0) phrases.push(current);
+
+  const escapeAss = (t: string) => t.replace(/\\/g, "\\\\").replace(/\{/g, "\\{").replace(/\}/g, "\\}");
+  const events: string[] = [];
+  for (const phrase of phrases) {
+    for (let i = 0; i < phrase.length; i++) {
+      const w = phrase[i];
+      const nextStart = i + 1 < phrase.length ? phrase[i + 1].start : w.end;
+      const evStart = w.start;
+      const evEnd = Math.max(w.end, Math.min(nextStart, w.start + 0.12));
+      const parts = phrase.map((pw, j) => {
+        const txt = escapeAss(pw.text.toUpperCase());
+        if (captionStyle === "clean") {
+          return j === i ? `{\\b1}${txt}{\\b0}` : txt;
+        }
+        if (j === i) return `{\\c${pal.accent}\\fs${Math.round(pal.size * 1.12)}}${txt}{\\r}`;
+        return txt;
+      });
+      events.push(
+        `Dialogue: 0,${formatAssTime(evStart)},${formatAssTime(evEnd)},Karaoke,,0,0,0,,${parts.join(" ")}`
+      );
+    }
+  }
+  return header + events.join("\n") + "\n";
+}
+
+/**
+ * Runs deep-learning AI subject tracking for automatic reframing
  * Computes optimal 9:16 crop box keeping speaker centered or multi-mode layout
  */
 export async function detectSubjectAndReframe(
   videoPath: string,
   startTime: number,
   duration: number,
-  mode: ReframeMode = "auto-tracker"
+  mode: ReframeMode = "auto-tracker",
+  speechSpans?: { start: number; end: number }[]
 ): Promise<TrackingResult> {
   return new Promise((resolve) => {
     const scriptPath = path.join(process.cwd(), "scripts", "track_reframe.py");
@@ -353,7 +591,10 @@ export async function detectSubjectAndReframe(
     const pythonBin =
       process.env.PYTHON_BIN || (process.platform === "win32" ? "python" : "python3");
 
-    const py = spawn(/*turbopackIgnore: true*/ pythonBin, [
+    // Speech intervals (absolute source time) let the tracker gate its
+    // mouth-motion speaker detection to moments when someone is talking.
+    let wordsPath: string | null = null;
+    const args = [
       scriptPath,
       "--video",
       videoPath,
@@ -363,7 +604,18 @@ export async function detectSubjectAndReframe(
       String(duration),
       "--mode",
       mode,
-    ]);
+    ];
+    if (speechSpans && speechSpans.length > 0) {
+      try {
+        wordsPath = path.join(os.tmpdir(), `snipcut-speech-${process.pid}-${Date.now()}.json`);
+        fs.writeFileSync(wordsPath, JSON.stringify(speechSpans.map((s) => ({ start: s.start, end: s.end }))), "utf-8");
+        args.push("--words", wordsPath);
+      } catch {
+        wordsPath = null;
+      }
+    }
+
+    const py = spawn(/*turbopackIgnore: true*/ pythonBin, args);
 
     let stdout = "";
     let stderr = "";
@@ -377,6 +629,9 @@ export async function detectSubjectAndReframe(
     });
 
     py.on("close", (code) => {
+      if (wordsPath) {
+        try { fs.unlinkSync(wordsPath); } catch {}
+      }
       if (code === 0 && stdout.trim()) {
         try {
           const lines = stdout.trim().split("\n");
@@ -431,6 +686,7 @@ export async function renderVideoClip({
   transcript,
   headline,
   captionStyle = "hormozi",
+  skipCaptions = false,
 }: RenderOptions): Promise<{ outputPath: string; tracking: TrackingResult }> {
   // Resolve input and output paths safely strictly within allowed directories
   const resolvedInput = resolveSafeFilePath(inputPath);
@@ -482,8 +738,30 @@ export async function renderVideoClip({
           resolvedInput,
           startTime,
           duration,
-          effectiveMode
+          effectiveMode,
+          transcript
         );
+        // Premium layout call: two genuine speakers trading lines from
+        // opposite sides of the frame read far better as a split screen
+        // than as constant camera pans between them.
+        if (
+          effectiveMode === "auto-tracker" &&
+          trackingResult.layoutSuggestion === "split-screen" &&
+          !trackingResult.layoutSegments?.length
+        ) {
+          const split = await detectSubjectAndReframe(
+            resolvedInput,
+            startTime,
+            duration,
+            "split-screen"
+          );
+          if (split && split.filter_value) {
+            trackingResult = {
+              ...split,
+              summary: `Auto layout: split-screen (two active speakers detected). ${split.summary || ""}`,
+            };
+          }
+        }
       } catch (e) {
         console.warn("AI Tracking warning:", e);
       }
@@ -509,10 +787,19 @@ export async function renderVideoClip({
       .setDuration(duration);
 
     // Prepare subtitles
+    // Emoji have no glyphs in the caption fonts (Arial/Liberation) and burn
+    // as blank boxes — strip them from the headline fallback text only
+    // (titles elsewhere keep their emoji).
+    const burnHeadline = headline
+      ? headline
+          .replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{2B00}-\u{2BFF}]/gu, "")
+          .replace(/\s+/g, " ")
+          .trim()
+      : headline;
     let tempSrtPath: string | null = null;
     let srtEntries: { start: number; end: number; text: string }[] = [];
 
-    if (transcript && transcript.length > 0) {
+    if (!skipCaptions && transcript && transcript.length > 0) {
       // Subtitle time base: Always assume absolute time base from source video.
       // Filter strictly to words within [startTime, startTime + duration] and shift by startTime.
       const clipEndTime = startTime + duration;
@@ -534,62 +821,69 @@ export async function renderVideoClip({
           text: wordText.toUpperCase(),
         };
       });
-    } else if (headline) {
+    } else if (!skipCaptions && burnHeadline) {
       srtEntries = [
         {
           start: 0,
           end: duration,
-          text: headline.toUpperCase(),
+          text: burnHeadline.toUpperCase(),
+        },
+      ];
+    }
+
+    // Words were supplied but none landed inside this render window
+    // (misaligned timings) — never ship a silently caption-less clip when
+    // a headline exists to fall back on.
+    if (!skipCaptions && srtEntries.length === 0 && burnHeadline) {
+      srtEntries = [
+        {
+          start: 0,
+          end: duration,
+          text: burnHeadline.toUpperCase(),
         },
       ];
     }
 
     let subtitleFilterStr: string | null = null;
     if (srtEntries.length > 0) {
-      const srtLines: string[] = [];
-      srtEntries.forEach((entry, idx) => {
-        srtLines.push(`${idx + 1}`);
-        srtLines.push(`${formatSrtTime(entry.start)} --> ${formatSrtTime(entry.end)}`);
-        srtLines.push(entry.text);
-        srtLines.push("");
-      });
+      // Karaoke ASS: the whole phrase stays on screen, the spoken word is
+      // highlighted. (Previously one SRT entry per word in a single colour.)
+      const playRes =
+        aspectRatio === "16:9"
+          ? { x: 1920, y: 1080 }
+          : aspectRatio === "1:1"
+            ? { x: 1080, y: 1080 }
+            : { x: 1080, y: 1920 };
+      let marginV = Math.round(playRes.y * 0.27);
+      if (captionPositionY !== undefined) {
+        marginV = Math.max(60, Math.min(playRes.y - 120, Math.round(playRes.y * (1 - captionPositionY / 100))));
+      }
+      const assContent = buildKaraokeAss(
+        srtEntries.map((e) => ({ start: e.start, end: e.end, text: e.text })),
+        captionStyle,
+        marginV,
+        playRes
+      );
 
-      tempSrtPath = path.join(dir, `sub-${Date.now()}-${Math.floor(Math.random() * 1000)}.srt`);
-      fs.writeFileSync(tempSrtPath, srtLines.join("\n"), "utf-8");
+      tempSrtPath = path.join(dir, `sub-${Date.now()}-${Math.floor(Math.random() * 1000)}.ass`);
+      fs.writeFileSync(tempSrtPath, assContent, "utf-8");
 
       // Save a debug copy to data/debug for validation/testing
       try {
         const debugDir = path.join(process.cwd(), "data", "debug");
         if (!fs.existsSync(debugDir)) fs.mkdirSync(debugDir, { recursive: true });
-        fs.writeFileSync(path.join(debugDir, "last_subtitles.srt"), srtLines.join("\n"), "utf-8");
+        fs.writeFileSync(path.join(debugDir, "last_subtitles.ass"), assContent, "utf-8");
       } catch {}
 
       console.log(
-        `[Stage: Subtitle Alignment] Burning ${srtEntries.length} words into clip: first="${srtEntries[0]?.text}" at relative ${srtEntries[0]?.start.toFixed(2)}s, last="${srtEntries[srtEntries.length - 1]?.text}" at relative ${srtEntries[srtEntries.length - 1]?.end.toFixed(2)}s`
+        `[Stage: Subtitle Alignment] Burning karaoke captions for ${srtEntries.length} words into clip: first="${srtEntries[0]?.text}" at relative ${srtEntries[0]?.start.toFixed(2)}s, last="${srtEntries[srtEntries.length - 1]?.text}" at relative ${srtEntries[srtEntries.length - 1]?.end.toFixed(2)}s`
       );
 
-      let marginV = 130;
-      if (captionPositionY !== undefined) {
-        marginV = Math.max(40, Math.min(1800, Math.round(1920 * (1 - captionPositionY / 100))));
-      }
-
-      let forceStyle =
-        `Fontname=Arial,Fontsize=24,PrimaryColour=&H0000FFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=3,Alignment=2,MarginV=${marginV}`;
-      if (captionStyle === "neon") {
-        forceStyle =
-          `Fontname=Arial,Fontsize=24,PrimaryColour=&H0000FF00,OutlineColour=&H00000000,BorderStyle=1,Outline=3,Alignment=2,MarginV=${marginV}`;
-      } else if (captionStyle === "beast") {
-        forceStyle =
-          `Fontname=Arial,Fontsize=26,PrimaryColour=&H0000FFFF,OutlineColour=&H000000FF,BorderStyle=1,Outline=4,Alignment=2,MarginV=${marginV}`;
-      } else if (captionStyle === "clean") {
-        forceStyle =
-          `Fontname=Arial,Fontsize=22,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Alignment=2,MarginV=${marginV}`;
-      }
-
-      const srtEscaped = tempSrtPath.replace(/\\/g, "/").replace(/:/g, "\\:");
-      subtitleFilterStr = `subtitles='${srtEscaped}':force_style='${forceStyle}'`;
+      const assEscaped = tempSrtPath.replace(/\\/g, "/").replace(/:/g, "\\:");
+      subtitleFilterStr = `subtitles='${assEscaped}'`;
     }
 
+    const runMainRender = () => {
     // Apply filters based on aspect ratio and tracking
     if (aspectRatio === "9:16") {
       if (trackingResult.filter_type === "filter_complex") {
@@ -660,7 +954,126 @@ export async function renderVideoClip({
         reject(err);
       })
       .run();
+    };
+
+    // Tracker v3 per-shot layouts: when the clip mixes compositions
+    // (crop / fit / split), render segment-by-segment and join; any
+    // failure falls back to the single-pass render above.
+    const layoutSegs = trackingResult.layoutSegments;
+    const useSegmented =
+      aspectRatio === "9:16" &&
+      effectiveMode === "auto-tracker" &&
+      Array.isArray(layoutSegs) &&
+      layoutSegs.length > 0 &&
+      layoutSegs.some((s) => s.layout !== "crop");
+    if (useSegmented) {
+      renderSegmentedClip({
+        input: resolvedInput,
+        output: resolvedOutput,
+        startTime,
+        segments: layoutSegs as LayoutSegment[],
+        cropFilter: trackingResult.filter_value,
+        videoW: trackingResult.video_w || 1920,
+        videoH: trackingResult.video_h || 1080,
+        subtitleFilterStr,
+      })
+        .then(() => {
+          if (tempSrtPath && fs.existsSync(tempSrtPath)) {
+            try {
+              fs.unlinkSync(tempSrtPath);
+            } catch {}
+          }
+          const elapsedMs = Date.now() - renderStartTime;
+          const sizeBytes = fs.existsSync(resolvedOutput) ? fs.statSync(resolvedOutput).size : 0;
+          console.log(
+            `[Stage: FFmpeg Render] Finished segmented render in ${elapsedMs}ms -> ${resolvedOutput} (${sizeBytes} bytes)`
+          );
+          resolve({ outputPath: resolvedOutput, tracking: trackingResult });
+        })
+        .catch((err) => {
+          console.warn("[Stage: Layouts] Segmented render failed, falling back to single-pass:", err);
+          runMainRender();
+        });
+    } else {
+      runMainRender();
+    }
   });
+}
+
+/**
+ * Generates a lightweight preview rendition of a rendered clip so in-browser
+ * playback stays smooth on slow connections (max 720px wide, CRF 28, 96k
+ * audio, faststart — typically 40-60% smaller than the master). The master
+ * file remains the download/posting quality. Returns the preview file NAME
+ * (same directory as the master) or null on failure — a preview problem
+ * must never fail the render itself.
+ */
+
+/**
+ * Extract a small JPEG poster (frame at ~1s) for a rendered clip. The
+ * dashboard shows posters instead of auto-preloading every video —
+ * on slow links a wall of <video preload="auto"> elements starves the
+ * browser's per-host connection pool (6), which left players black
+ * and even blocked API POSTs behind queued media fetches.
+ */
+export async function generatePosterImage(masterPath: string): Promise<string | null> {
+  try {
+    const resolved = resolveSafeFilePath(masterPath);
+    if (!fs.existsSync(/*turbopackIgnore: true*/ resolved)) return null;
+    const dir = path.dirname(resolved);
+    const posterName = `poster-${path.basename(resolved).replace(/\.mp4$/i, "")}.jpg`;
+    const posterPath = path.join(dir, posterName);
+    if (fs.existsSync(/*turbopackIgnore: true*/ posterPath)) return posterName;
+    const { execFile } = await import("child_process");
+    await new Promise<void>((resolve, reject) => {
+      execFile(
+        /*turbopackIgnore: true*/ getFfmpegBinary(),
+        ["-y", "-ss", "1", "-i", resolved, "-frames:v", "1", "-vf", "scale=360:-2", "-q:v", "4", posterPath],
+        { timeout: 60000 },
+        (err) => (err ? reject(err) : resolve())
+      );
+    });
+    return fs.existsSync(/*turbopackIgnore: true*/ posterPath) ? posterName : null;
+  } catch (err) {
+    console.error("[Stage: Poster] Generation failed (non-fatal):", err);
+    return null;
+  }
+}
+
+export async function generatePreviewClip(masterPath: string): Promise<string | null> {
+  try {
+    const resolved = resolveSafeFilePath(masterPath);
+    if (!fs.existsSync(/*turbopackIgnore: true*/ resolved)) return null;
+    const dir = path.dirname(resolved);
+    const previewName = `preview-${path.basename(resolved)}`;
+    const previewPath = path.join(dir, previewName);
+    if (fs.existsSync(/*turbopackIgnore: true*/ previewPath)) return previewName;
+
+    const { execFile } = await import("child_process");
+    await new Promise<void>((resolve, reject) => {
+      execFile(
+        /*turbopackIgnore: true*/ getFfmpegBinary(),
+        [
+          "-y",
+          "-i", resolved,
+          "-vf", "scale='min(720,iw)':-2",
+          "-c:v", "libx264",
+          "-preset", "veryfast",
+          "-crf", "28",
+          "-c:a", "aac",
+          "-b:a", "96k",
+          "-movflags", "+faststart",
+          previewPath,
+        ],
+        { timeout: 180000 },
+        (err) => (err ? reject(err) : resolve())
+      );
+    });
+    return fs.existsSync(/*turbopackIgnore: true*/ previewPath) ? previewName : null;
+  } catch (err) {
+    console.error("[Stage: Preview] Generation failed (non-fatal):", err);
+    return null;
+  }
 }
 
 /**
@@ -699,4 +1112,358 @@ export async function extractAudioForWhisper(
       })
       .run();
   });
+}
+
+/* ------------------------------------------------------------------ */
+/* Post effects: B-roll cutaways + punch-in zooms + ducked music bed   */
+/* + captions burned ON TOP (reference-style edit assembly).           */
+/* ------------------------------------------------------------------ */
+
+export interface BrollCue {
+  start: number; // clip-relative seconds
+  end: number;
+  assetPath: string;
+  kind: "image" | "video";
+}
+
+export interface PostFxOptions {
+  basePath: string;
+  outputPath: string;
+  duration: number;
+  aspectRatio: "9:16" | "1:1" | "16:9";
+  words: { start: number; end: number; text: string }[]; // clip-relative
+  captionStyle: "hormozi" | "neon" | "beast" | "clean" | "kinetic" | "snipcut";
+  broll: BrollCue[];
+  punches: { start: number; end: number }[]; // clip-relative
+  musicBed: boolean;
+}
+
+function punchZoomExpr(punches: { start: number; end: number }[], fps = 30): string {
+  let expr = "1";
+  for (const p of punches) {
+    const f1 = Math.max(0, Math.round(p.start * fps));
+    const f2 = Math.max(f1 + 10, Math.round(p.end * fps));
+    expr += `+0.13*max(0,min(1,min((in-${f1})/5,(${f2}-in)/5)))`;
+  }
+  return `min(1.16,${expr})`;
+}
+
+async function ensureMusicBed(): Promise<string | null> {
+  const musicDir = path.join(process.cwd(), "data", "music");
+  const custom = path.join(musicDir, "bed.mp3");
+  if (fs.existsSync(custom)) return custom;
+  const synth = path.join(musicDir, "bed-synth.mp3");
+  if (fs.existsSync(synth)) return synth;
+  try {
+    fs.mkdirSync(musicDir, { recursive: true });
+    // Warm low pad (A minor-ish stack) through a lowpass with a slow swell.
+    // Deliberately quiet: sidechain ducking + the mix keep it under speech.
+    await execFileP(
+      getFfmpegBinary(),
+      [
+        "-y",
+        "-f", "lavfi", "-i", "sine=frequency=110:duration=200",
+        "-f", "lavfi", "-i", "sine=frequency=164.81:duration=200",
+        "-f", "lavfi", "-i", "sine=frequency=220:duration=200",
+        "-f", "lavfi", "-i", "sine=frequency=261.63:duration=200",
+        "-filter_complex",
+        "[0][1][2][3]amix=inputs=4:normalize=0,lowpass=f=650,volume=0.35+0.3*sin(2*PI*t/24):eval=frame,volume=0.5,afade=t=in:st=0:d=3",
+        "-c:a", "libmp3lame", "-b:a", "96k",
+        synth,
+      ],
+      { maxBuffer: 16 * 1024 * 1024 }
+    );
+    return fs.existsSync(synth) ? synth : null;
+  } catch (err) {
+    console.warn("[PostFX] Could not generate music bed:", err);
+    return null;
+  }
+}
+
+/**
+ * Punch-in zoom candidates from clip-RELATIVE words: emphasis words
+ * (long or digit-bearing), max 3, at least 2.4s apart. Shared by the
+ * job pipeline and the render-clip FX path.
+ */
+export function pickPunchZooms(
+  relWords: { text: string; start: number; end: number }[]
+): { start: number; end: number }[] {
+  const punches: { start: number; end: number }[] = [];
+  for (const w of relWords) {
+    const clean = (w.text || "").replace(/[^A-Za-z0-9]/g, "");
+    if (clean.length < 8 && !/\d/.test(clean)) continue;
+    if (punches.length > 0 && w.start - punches[punches.length - 1].start < 2.4) continue;
+    punches.push({ start: Math.max(0, w.start - 0.05), end: w.start + 0.85 });
+    if (punches.length >= 3) break;
+  }
+  return punches;
+}
+
+/**
+ * Segmented layout render (tracker v3): each layout segment of the clip
+ * is rendered with the composition that fits its content — dynamic crop
+ * (global camera path, time-offset per segment), fit (whole frame over a
+ * blurred backdrop) or split (per-speaker panel crops) — then the pieces
+ * are concatenated and captions are burned across the joined video.
+ * Throws on any failure; the caller falls back to the single-pass render.
+ */
+export async function renderSegmentedClip(opts: {
+  input: string;
+  output: string;
+  startTime: number;
+  segments: LayoutSegment[];
+  cropFilter: string;
+  videoW: number;
+  videoH: number;
+  subtitleFilterStr: string | null;
+}): Promise<void> {
+  const ff = getFfmpegBinary();
+  const tmpDir = path.join(path.dirname(opts.output), `segfx-${Date.now()}`);
+  fs.mkdirSync(tmpDir, { recursive: true });
+  const even = (n: number) => Math.max(2, Math.round(n / 2) * 2);
+  const MB = { maxBuffer: 64 * 1024 * 1024 };
+  try {
+    const segs: LayoutSegment[] = [];
+    for (const s of opts.segments) {
+      if (segs.length && s.end - s.start < 0.35) {
+        segs[segs.length - 1].end = s.end;
+        continue;
+      }
+      segs.push({ ...s });
+    }
+    if (!segs.length) throw new Error("no layout segments");
+    const segFiles: string[] = [];
+    for (let i = 0; i < segs.length; i++) {
+      const seg = segs[i];
+      const dur = Math.max(0.2, seg.end - seg.start);
+      const out = path.join(tmpDir, `seg-${i}.mp4`);
+      const base = [
+        "-hide_banner", "-loglevel", "error",
+        "-ss", String(opts.startTime + seg.start),
+        "-t", String(dur),
+        "-i", opts.input,
+      ];
+      const enc = [
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+        "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
+        "-ar", "44100", "-ac", "2", "-y", out,
+      ];
+      if (seg.layout === "fit") {
+        const fc =
+          "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,gblur=sigma=24,setsar=1[bg];" +
+          "[0:v]scale=1080:-2,setsar=1[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,fps=30[v]";
+        await execFileP(ff, [...base, "-filter_complex", fc, "-map", "[v]", "-map", "0:a?", ...enc], MB);
+      } else if (seg.layout === "split" && seg.panels && seg.panels.length >= 2) {
+        const panel = (p: { cx: number; cy: number; face_h: number }) => {
+          let pw = even(Math.min(opts.videoW, Math.max(140, p.face_h * 3.0)));
+          let ph = even(Math.min(opts.videoH, (pw * 8) / 9));
+          if (ph >= opts.videoH) {
+            ph = even(opts.videoH);
+            pw = even(Math.min(opts.videoW, (ph * 9) / 8));
+          }
+          const px = Math.round(Math.min(Math.max(0, p.cx - pw / 2), Math.max(0, opts.videoW - pw)));
+          const py = Math.round(Math.min(Math.max(0, p.cy - ph * 0.42), Math.max(0, opts.videoH - ph)));
+          return `crop=${pw}:${ph}:${px}:${py}`;
+        };
+        const fc =
+          `[0:v]${panel(seg.panels[0])},scale=1080:960:force_original_aspect_ratio=increase,crop=1080:960,setsar=1[top];` +
+          `[0:v]${panel(seg.panels[1])},scale=1080:960:force_original_aspect_ratio=increase,crop=1080:960,setsar=1[bot];` +
+          "[top][bot]vstack=inputs=2,fps=30[v]";
+        await execFileP(ff, [...base, "-filter_complex", fc, "-map", "[v]", "-map", "0:a?", ...enc], MB);
+      } else {
+        const vf =
+          opts.cropFilter.replace(/\bt\b/g, `(t+${seg.start.toFixed(2)})`) +
+          ",fps=30,setsar=1";
+        await execFileP(ff, [...base, "-vf", vf, ...enc], MB);
+      }
+      if (!fs.existsSync(out)) throw new Error(`layout segment ${i} produced no file`);
+      segFiles.push(out);
+    }
+    const listPath = path.join(tmpDir, "list.txt");
+    fs.writeFileSync(listPath, segFiles.map((f) => `file '${f.replace(/'/g, "'\\''")}'`).join("\n"));
+    const joined = path.join(tmpDir, "joined.mp4");
+    try {
+      await execFileP(ff, ["-hide_banner", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", listPath, "-c", "copy", "-y", joined], MB);
+    } catch {
+      await execFileP(ff, ["-hide_banner", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", listPath, "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "aac", "-b:a", "192k", "-y", joined], MB);
+    }
+    if (opts.subtitleFilterStr) {
+      await execFileP(
+        ff,
+        ["-hide_banner", "-loglevel", "error", "-i", joined, "-vf", opts.subtitleFilterStr, "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-c:a", "copy", "-movflags", "+faststart", "-y", opts.output],
+        MB
+      );
+    } else {
+      fs.copyFileSync(joined, opts.output);
+    }
+    console.log(`[Stage: Layouts] Segmented render used ${segs.length} segment(s): ${segs.map((s) => s.layout).join("/")}`);
+  } finally {
+    try {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    } catch {}
+  }
+}
+
+/**
+ * B-roll cue discipline. Cues used to inherit full sentence lengths
+ * (up to ~8s each), could sit back-to-back, and together cover most of
+ * a clip — burying the actual footage and any split-screen work under
+ * stock imagery. Now: max 2.5s per cue, at least 1.5s of real footage
+ * between cues, and total coverage capped at ~20% of the clip.
+ */
+export function shapeBrollCues<T extends { start: number; end: number }>(cues: T[], duration: number): T[] {
+  const MAX_CUE = 2.5;
+  const MIN_GAP = 1.5;
+  const budget = Math.max(0, duration * 0.2);
+  const sorted = [...cues].sort((a, b) => a.start - b.start);
+  const out: T[] = [];
+  let used = 0;
+  let lastEnd = -Infinity;
+  for (const cue of sorted) {
+    const start = Math.max(cue.start, lastEnd + MIN_GAP);
+    if (start >= duration - 0.4) continue;
+    let len = Math.min(MAX_CUE, cue.end - cue.start, duration - start);
+    if (len < 0.6) continue;
+    if (used + len > budget) {
+      if (out.length === 0) len = Math.max(0.6, Math.min(len, budget));
+      else continue;
+    }
+    const shaped = { ...cue, start: Number(start.toFixed(2)), end: Number((start + len).toFixed(2)) };
+    out.push(shaped);
+    used += len;
+    lastEnd = shaped.end;
+  }
+  if (out.length !== cues.length) {
+    console.log(`[PostFX] B-roll discipline: ${cues.length} cue(s) -> ${out.length} (coverage ${used.toFixed(1)}s of ${duration.toFixed(1)}s)`);
+  }
+  return out;
+}
+
+/**
+ * Never bury a split-screen under B-roll: the split IS the visual.
+ * Drops cues overlapping a split layout segment by more than 0.4s.
+ * All times are clip-relative.
+ */
+export function dropCuesOverlappingSplits<T extends { start: number; end: number }>(
+  cues: T[],
+  layoutSegments?: { layout: string; start: number; end: number }[] | null
+): T[] {
+  if (!layoutSegments?.length) return cues;
+  const splits = layoutSegments.filter((s) => s.layout === "split");
+  if (!splits.length) return cues;
+  const kept = cues.filter(
+    (cue) => !splits.some((s) => Math.min(cue.end, s.end) - Math.max(cue.start, s.start) > 0.4)
+  );
+  if (kept.length !== cues.length) {
+    console.log(`[PostFX] Dropped ${cues.length - kept.length} B-roll cue(s) overlapping split-screen segments`);
+  }
+  return kept;
+}
+
+export async function applyPostEffects(opts: PostFxOptions): Promise<void> {
+  const W = opts.aspectRatio === "16:9" ? 1920 : 1080;
+  const H = opts.aspectRatio === "16:9" ? 1080 : opts.aspectRatio === "1:1" ? 1080 : 1920;
+
+  const broll = shapeBrollCues(opts.broll, opts.duration);
+
+  const args: string[] = ["-y", "-i", opts.basePath];
+  for (const cue of broll) {
+    const win = Math.max(0.6, cue.end - cue.start);
+    if (cue.kind === "image") {
+      args.push("-loop", "1", "-framerate", "30", "-t", win.toFixed(2), "-i", cue.assetPath);
+    } else {
+      args.push("-stream_loop", "-1", "-t", (win + 0.25).toFixed(2), "-i", cue.assetPath);
+    }
+  }
+  let musicIdx = -1;
+  if (opts.musicBed) {
+    const bed = await ensureMusicBed();
+    if (bed) {
+      musicIdx = 1 + broll.length;
+      args.push("-stream_loop", "-1", "-i", bed);
+    }
+  }
+
+  const filters: string[] = [];
+  if (opts.punches.length > 0) {
+    filters.push(
+      `[0:v]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},zoompan=z='${punchZoomExpr(opts.punches)}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${W}x${H}:fps=30[base]`
+    );
+  } else {
+    filters.push(`[0:v]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},fps=30[base]`);
+  }
+
+  let last = "base";
+  broll.forEach((cue, i) => {
+    const idx = i + 1;
+    const win = Math.max(0.6, cue.end - cue.start);
+    const frames = Math.max(10, Math.round(win * 30));
+    if (cue.kind === "image") {
+      const sw = Math.round(W * 1.25);
+      const sh = Math.round(H * 1.25);
+      // Ken Burns drift: pre-scaled still, crop window pans slowly across it.
+      filters.push(
+        `[${idx}:v]scale=${sw}:${sh}:force_original_aspect_ratio=increase,crop=${sw}:${sh},crop=${W}:${H}:x='(in_w-out_w)*(n/${frames})':y='(in_h-out_h)/2',setpts=PTS+${cue.start.toFixed(2)}/TB[b${i}]`
+      );
+    } else {
+      const sw = Math.round(W * 1.08);
+      const sh = Math.round(H * 1.08);
+      filters.push(
+        `[${idx}:v]scale=${sw}:${sh}:force_original_aspect_ratio=increase,crop=${W}:${H},setpts=PTS+${cue.start.toFixed(2)}/TB[b${i}]`
+      );
+    }
+    filters.push(
+      `[${last}][b${i}]overlay=0:0:enable='between(t,${cue.start.toFixed(2)},${cue.end.toFixed(2)})'[v${i}]`
+    );
+    last = `v${i}`;
+  });
+
+  // Captions last so they sit on top of base AND B-roll.
+  let finalV = last;
+  let assPath: string | null = null;
+  if (opts.words.length > 0) {
+    const playRes =
+      opts.aspectRatio === "16:9" ? { x: 1920, y: 1080 } : opts.aspectRatio === "1:1" ? { x: 1080, y: 1080 } : { x: 1080, y: 1920 };
+    const assContent = buildKaraokeAss(
+      opts.words.map((w) => ({ start: w.start, end: w.end, text: w.text })),
+      opts.captionStyle,
+      Math.round(playRes.y * 0.27),
+      playRes
+    );
+    const fxDir = path.join(process.cwd(), "data", "postfx");
+    fs.mkdirSync(fxDir, { recursive: true });
+    assPath = path.join(fxDir, `fx-${Date.now()}-${Math.floor(Math.random() * 10000)}.ass`);
+    fs.writeFileSync(assPath, assContent, "utf-8");
+    const assEscaped = assPath.replace(/\\/g, "/").replace(/:/g, "\\:");
+    filters.push(`[${last}]subtitles='${assEscaped}'[vfinal]`);
+    finalV = "vfinal";
+  }
+
+  const hasMusic = musicIdx >= 0;
+  if (hasMusic) {
+    filters.push(`[0:a]asplit=2[vo][side]`);
+    filters.push(`[${musicIdx}:a]atrim=0:${opts.duration.toFixed(2)},asetpts=PTS-STARTPTS,volume=0.55[mus]`);
+    filters.push(`[mus][side]sidechaincompress=threshold=0.02:ratio=9:attack=30:release=400[ducked]`);
+    filters.push(`[vo][ducked]amix=inputs=2:duration=first:normalize=0[aout]`);
+  }
+
+  args.push("-filter_complex", filters.join(";"), "-map", `[${finalV}]`);
+  if (hasMusic) args.push("-map", "[aout]");
+  else args.push("-map", "0:a");
+  args.push(
+    "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+    "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart",
+    opts.outputPath
+  );
+
+  try {
+    await execFileP(getFfmpegBinary(), args, { maxBuffer: 64 * 1024 * 1024 });
+    console.log(
+      `[PostFX] Applied ${broll.length} B-roll cue(s), ${opts.punches.length} punch zoom(s), music=${hasMusic}, captions=${opts.words.length > 0}`
+    );
+  } finally {
+    if (assPath) {
+      try { fs.unlinkSync(assPath); } catch {}
+    }
+  }
 }

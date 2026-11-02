@@ -70,11 +70,11 @@ async function runTest() {
   console.log("Rendered clip path:", result.outputPath);
   assert.ok(fs.existsSync(result.outputPath), "Rendered video clip must exist on disk");
 
-  // Read saved srt from data/debug/last_subtitles.srt
-  const debugSrt = path.join(process.cwd(), "data", "debug", "last_subtitles.srt");
-  assert.ok(fs.existsSync(debugSrt), "Debug SRT must have been written");
+  // Read saved karaoke ASS from data/debug/last_subtitles.ass
+  const debugSrt = path.join(process.cwd(), "data", "debug", "last_subtitles.ass");
+  assert.ok(fs.existsSync(debugSrt), "Debug ASS must have been written");
   const srtContent = fs.readFileSync(debugSrt, "utf8");
-  console.log("\nGenerated SRT subtitles for clip [35.0s - 45.0s]:");
+  console.log("\nGenerated karaoke ASS subtitles for clip [35.0s - 45.0s]:");
   console.log("--------------------------------------------------");
   console.log(srtContent.trim());
   console.log("--------------------------------------------------");
@@ -97,12 +97,17 @@ async function runTest() {
   console.log("-> PASS: Confirmed target words (CLIPTARGET, FOCUSED, ACTIVE) appear in subtitles");
 
   // 4. Confirm start timing of first word is relative to 0:
-  // ClipTarget started at 36.0s in absolute time, clip started at 35.0s -> relative start is 1.00s (00:00:01,000)
+  // ClipTarget started at 36.0s in absolute time, clip started at 35.0s -> relative start is 1.00s (ASS format 0:00:01.00)
   assert.ok(
-    srtContent.includes("00:00:01,000"),
-    `CLIPTARGET should start at relative 1.000s, found: ${srtContent}`
+    srtContent.includes("0:00:01.00"),
+    `CLIPTARGET should start at relative 1.00s, found: ${srtContent}`
   );
-  console.log("-> PASS: Confirmed first word start time shifted by 35s to relative 00:00:01,000 (t >= 0)");
+  console.log("-> PASS: Confirmed first word start time shifted by 35s to relative 0:00:01.00 (t >= 0)");
+
+  // 5. Karaoke structure: phrase events highlight the spoken word with the accent colour
+  assert.ok(srtContent.includes("Dialogue:"), "ASS must contain Dialogue events");
+  assert.ok(srtContent.includes("\\c&H0000FFFF"), "Hormozi accent highlight must be present in karaoke events");
+  console.log("-> PASS: Karaoke phrase events with per-word accent highlight present");
 
   console.log("\nALL SUBTITLE TIME BASE TESTS PASSED!\n");
 }

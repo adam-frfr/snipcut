@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: opusclip-clone
+    name: snipcut
     runtime: docker
     plan: free
     region: oregon

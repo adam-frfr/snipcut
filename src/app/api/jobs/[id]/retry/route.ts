@@ -19,6 +19,29 @@ export async function POST(
     return NextResponse.json({ error: `Job not found: ${id}` }, { status: 404 });
   }
 
+  // Retrying a job that is still running would enqueue it twice: two
+  // workers interleaving record saves, duplicate renders, double API spend.
+  const ACTIVE = ["uploaded", "transcribing", "analyzing", "rendering"];
+  if (ACTIVE.includes(job.status)) {
+    return NextResponse.json(
+      { error: `Job is still ${job.status} — wait for it to finish or fail before retrying.` },
+      { status: 409 }
+    );
+  }
+
+  // The 24h cleanup may have removed the source video; fail clearly here
+  // instead of deep inside the pipeline.
+  const srcPath = (job.options as any)?.filePath as string | undefined;
+  if (srcPath) {
+    const fs = await import("fs");
+    if (!fs.existsSync(srcPath)) {
+      return NextResponse.json(
+        { error: "The source video for this job has expired (files are cleaned up after 24h). Upload it again to re-run." },
+        { status: 410 }
+      );
+    }
+  }
+
   console.log(`[Stage: Jobs API] Retrying job ${id} (previous status: ${job.status}, error: ${job.error})`);
 
   // Clear previous error

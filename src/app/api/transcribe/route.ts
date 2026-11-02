@@ -81,7 +81,15 @@ export async function POST(req: NextRequest) {
 
   const transcribeStartTime = Date.now();
   try {
-    const body = await req.json();
+    let body: any;
+    try {
+      body = await req.json();
+    } catch {
+      return NextResponse.json(
+        { error: "Request body was cut off or invalid — please retry." },
+        { status: 400 }
+      );
+    }
     const { filePath, fileId, openaiKey, groqKey } = body;
 
     const rawInput = filePath || fileId;

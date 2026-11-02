@@ -4,6 +4,7 @@ import path from "path";
 import fs from "fs";
 import util from "util";
 import os from "os";
+import { resolveCookieArg } from "@/lib/youtubeCookies";
 
 const execPromise = util.promisify(exec);
 
@@ -113,7 +114,15 @@ export async function POST(req: NextRequest) {
   let tempCookiePath: string | null = null;
 
   try {
-    const body = await req.json();
+    let body: any;
+    try {
+      body = await req.json();
+    } catch {
+      return NextResponse.json(
+        { error: "Request body was cut off or invalid — please retry." },
+        { status: 400 }
+      );
+    }
     const { url, cookies, proxy } = body;
 
     if (!url) {
@@ -169,18 +178,10 @@ export async function POST(req: NextRequest) {
     const ytDlp = getYtDlpCommand();
     const binDir = path.join(process.cwd(), "bin");
 
-    // Cookie configuration (from request body, env var, or local file)
-    let cookieArg = "";
-    const rawCookies = cookies || process.env.YOUTUBE_COOKIES || "";
-    const localCookieFile = path.join(process.cwd(), "cookies.txt");
-
-    if (rawCookies && rawCookies.trim().length > 10) {
-      tempCookiePath = path.join(os.tmpdir(), `yt-cookies-${Date.now()}.txt`);
-      fs.writeFileSync(tempCookiePath, rawCookies.trim(), "utf-8");
-      cookieArg = `--cookies "${tempCookiePath}"`;
-    } else if (fs.existsSync(localCookieFile)) {
-      cookieArg = `--cookies "${localCookieFile}"`;
-    }
+    // Cookie configuration: request cookies (auto-normalized to Netscape
+    // format), else the persistent server jar, else env/legacy file.
+    const { arg: cookieArg, tempFile: resolvedTempCookie } = resolveCookieArg(cookies);
+    tempCookiePath = resolvedTempCookie;
 
     // Proxy configuration (from request body or env var)
     let proxyArg = "";
@@ -248,7 +249,7 @@ export async function POST(req: NextRequest) {
           error: isBotBlocked
             ? "YouTube has bot-checked this cloud server IP for this video. You can upload the video file directly (drag & drop below) or add YouTube cookies in API Settings."
             : "Video download failed. Please upload your video file directly or try another link.",
-          isBotBlocked: true,
+          isBotBlocked,
           suggestion: "upload_direct",
         },
         { status: 422 }
@@ -297,7 +298,7 @@ export async function POST(req: NextRequest) {
         error:
           err?.message ||
           "Failed to download YouTube video. Please upload your MP4 file directly.",
-        isBotBlocked: true,
+        isBotBlocked: false,
       },
       { status: 500 }
     );
