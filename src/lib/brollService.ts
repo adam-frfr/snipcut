@@ -222,7 +222,7 @@ ${list}`;
 async function downloadToFile(url: string, dest: string, headers: Record<string, string> = {}): Promise<boolean> {
   try {
     const res = await fetch(url, {
-      headers: { "User-Agent": "OpusStudio/1.0 (personal clip tool)", ...headers },
+      headers: { "User-Agent": "SnipcutStudio/1.0 (personal clip tool)", ...headers },
       signal: AbortSignal.timeout(12000),
     });
     if (!res.ok) return false;
@@ -408,7 +408,7 @@ export async function fetchBrollAssets(
           `&gsrsearch=${q}%20filetype:bitmap&gsrnamespace=6&gsrlimit=6` +
           `&prop=imageinfo&iiprop=url%7Csize%7Cmime&iiurlwidth=1200&format=json`;
         const res = await fetch(api, {
-          headers: { "User-Agent": "OpusStudio/1.0 (personal clip tool)" },
+          headers: { "User-Agent": "SnipcutStudio/1.0 (personal clip tool)" },
           signal: AbortSignal.timeout(10000),
         });
         if (res.ok) {
@@ -438,7 +438,7 @@ export async function fetchBrollAssets(
         const res = await fetch(
           `https://api.openverse.org/v1/images/?q=${q}&page_size=4&license_type=all&filter_dead=false`,
           {
-            headers: { "User-Agent": "OpusStudio/1.0 (personal clip tool)" },
+            headers: { "User-Agent": "SnipcutStudio/1.0 (personal clip tool)" },
             signal: AbortSignal.timeout(10000),
           }
         );

@@ -15,7 +15,7 @@ import os from "os";
  * "Sign in to confirm you're not a bot" wall killed every download.
  */
 
-const NETSCAPE_HEADER = "# Netscape HTTP Cookie File\n# Converted by OpusClip Studio\n";
+const NETSCAPE_HEADER = "# Netscape HTTP Cookie File\n# Converted by Snipcut Studio\n";
 
 function netscapeLine(domain: string, name: string, value: string, opts?: { secure?: boolean; expiry?: number; path?: string }): string {
   const d = domain.startsWith(".") ? domain : `.${domain.replace(/^\./, "")}`;

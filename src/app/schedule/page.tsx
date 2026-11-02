@@ -15,8 +15,8 @@ import confetti from "canvas-confetti";
 
 /**
  * Social Scheduler — works on the user's REAL generated clips
- * (localStorage "opus_user_clips", written by the dashboard).
- * Scheduled entries are kept locally ("opus_scheduled_posts") and shown
+ * (localStorage "snipcut_user_clips", written by the dashboard).
+ * Scheduled entries are kept locally ("snipcut_scheduled_posts") and shown
  * in the queue; there is no posting integration behind this page, so the
  * copy says "saved to your queue" rather than claiming a publish.
  */
@@ -66,7 +66,7 @@ function ScheduleContent() {
   useEffect(() => {
     let clips: any[] = [];
     try {
-      const saved = localStorage.getItem("opus_user_clips");
+      const saved = localStorage.getItem("snipcut_user_clips");
       if (saved) {
         const arr = JSON.parse(saved);
         if (Array.isArray(arr)) clips = arr;
@@ -83,7 +83,7 @@ function ScheduleContent() {
       );
     }
     try {
-      const savedPosts = localStorage.getItem("opus_scheduled_posts");
+      const savedPosts = localStorage.getItem("snipcut_scheduled_posts");
       if (savedPosts) {
         const arr = JSON.parse(savedPosts);
         if (Array.isArray(arr)) setScheduledPosts(arr);
@@ -122,7 +122,7 @@ function ScheduleContent() {
     const next = [newPost, ...scheduledPosts];
     setScheduledPosts(next);
     try {
-      localStorage.setItem("opus_scheduled_posts", JSON.stringify(next));
+      localStorage.setItem("snipcut_scheduled_posts", JSON.stringify(next));
     } catch {}
     try {
       confetti({

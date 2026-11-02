@@ -34,7 +34,7 @@ export default function FeaturesSection() {
       icon: Wand2,
       title: "ClipAnything Scene Discovery",
       description:
-        "Prompt OpusClip with plain English to isolate exact topics, emotional arguments, or specific scenes across hours of video instead of blind guessing.",
+        "Prompt Snipcut with plain English to isolate exact topics, emotional arguments, or specific scenes across hours of video instead of blind guessing.",
       points: [
         "Multimodal visual and audio narrative analysis",
         "Instant topic isolation across long-form video",

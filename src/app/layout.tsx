@@ -14,8 +14,8 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  title: "OpusClip — AI Video Repurposing & Viral Shorts",
-  description: "Turn 1 long video into 10 viral clips with AI Curation, Virality Score™, Dynamic Captions, and Active Speaker Auto-Reframe.",
+  title: "Snipcut — AI Video Repurposing Studio",
+  description: "Turn long-form video into focused vertical clips with AI-assisted discovery, dynamic captions, and active-speaker reframing.",
   icons: {
     icon: "/favicon.ico",
   },

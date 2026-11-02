@@ -1,36 +1,60 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Snipcut
 
-## Getting Started
+Snipcut is a focused AI-assisted video repurposing studio. Turn long-form recordings into concise vertical clips with searchable scene discovery, active-speaker reframing, dynamic captions, and a hands-on editor for final polish.
 
-First, run the development server:
+## What it does
+
+- **Discover clips** from transcripts using natural-language prompts and virality signals.
+- **Reframe automatically** for 9:16 while keeping active speakers in view.
+- **Style captions** with karaoke highlighting, readable safe zones, and multiple visual presets.
+- **Edit precisely** with timeline trimming, playback controls, color adjustments, rotation, mirroring, and positioning.
+- **Organize a workflow** with local clip history, brand settings, and scheduled publishing drafts.
+
+## Quick start
+
+### Requirements
+
+- Node.js 20+
+- FFmpeg
+- Python 3 with OpenCV and NumPy for subject tracking
+- API keys for the transcription and analysis providers you choose
+
+### Install and run
 
 ```bash
+npm install
+cp .env.example .env.local
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+API keys can be supplied through `.env.local` or entered from the **Keys** control in the app header. Never commit `.env.local` or real credentials.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Production
 
-## Learn More
+The included `Dockerfile` installs the media-processing dependencies, builds the Next.js app, and starts the production server on port `3000`.
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+docker build -t snipcut .
+docker run --env-file .env.local -p 3000:3000 snipcut
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Checks
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+npm run lint
+npm test
+```
 
-## Deploy on Vercel
+## Project layout
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```text
+src/app/          Pages and application routes
+src/components/   Shared UI components
+src/lib/          Video, captions, AI, and queue services
+tests/            Integration and media-processing checks
+scripts/          Subject-tracking assets and utilities
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Snipcut is designed as a local-first workspace: generated clip metadata, saved settings, and scheduling drafts stay in the browser unless you explicitly send content to a configured service.
