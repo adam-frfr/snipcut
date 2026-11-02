@@ -211,7 +211,7 @@ function DashboardContent() {
 
   const [reframeMode, setReframeMode] = useState<"auto-tracker" | "split-screen" | "blurred-fit" | "center">("auto-tracker");
   const [removeSilences, setRemoveSilences] = useState(false);
-  const [jobCaptionStyle, setJobCaptionStyle] = useState<"hormozi" | "neon" | "beast" | "clean" | "kinetic" | "opus">("opus");
+  const [jobCaptionStyle, setJobCaptionStyle] = useState<"hormozi" | "neon" | "beast" | "clean" | "kinetic" | "snipcut">("snipcut");
   const [brollEnabled, setBrollEnabled] = useState(true);
   const [musicBedEnabled, setMusicBedEnabled] = useState(true);
   const [lastTrackingSummary, setLastTrackingSummary] = useState<string>("");
@@ -365,7 +365,7 @@ function DashboardContent() {
     checkServerConfig();
 
     // Load saved clips
-    const saved = localStorage.getItem("opus_user_clips");
+    const saved = localStorage.getItem("snipcut_user_clips");
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
@@ -520,7 +520,7 @@ function DashboardContent() {
           if (generatedClips.length > 0) {
             setClips(generatedClips);
             setSelectedClip(generatedClips[0]);
-            localStorage.setItem("opus_user_clips", JSON.stringify(generatedClips));
+            localStorage.setItem("snipcut_user_clips", JSON.stringify(generatedClips));
             setActiveTab("clips");
             try {
               confetti({
@@ -590,12 +590,12 @@ function DashboardContent() {
       let res: Response;
 
       const storedApiKeys = {
-        groqKey: (typeof window !== "undefined" && localStorage.getItem("opus_groq_key")) || "",
-        openaiKey: (typeof window !== "undefined" && localStorage.getItem("opus_openai_key")) || "",
-        claudeKey: (typeof window !== "undefined" && localStorage.getItem("opus_claude_key")) || "",
-        preferredModel: (typeof window !== "undefined" && localStorage.getItem("opus_preferred_model")) || "",
-        pexelsKey: (typeof window !== "undefined" && localStorage.getItem("opus_pexels_key")) || "",
-        pixabayKey: (typeof window !== "undefined" && localStorage.getItem("opus_pixabay_key")) || "",
+        groqKey: (typeof window !== "undefined" && localStorage.getItem("snipcut_groq_key")) || "",
+        openaiKey: (typeof window !== "undefined" && localStorage.getItem("snipcut_openai_key")) || "",
+        claudeKey: (typeof window !== "undefined" && localStorage.getItem("snipcut_claude_key")) || "",
+        preferredModel: (typeof window !== "undefined" && localStorage.getItem("snipcut_preferred_model")) || "",
+        pexelsKey: (typeof window !== "undefined" && localStorage.getItem("snipcut_pexels_key")) || "",
+        pixabayKey: (typeof window !== "undefined" && localStorage.getItem("snipcut_pixabay_key")) || "",
       };
 
       if (uploadFile) {
@@ -663,8 +663,8 @@ function DashboardContent() {
         });
       } else if (url) {
         setProcessingStage("Enqueuing video URL for download and AI processing...");
-        const storedCookies = (typeof window !== "undefined" && localStorage.getItem("opus_youtube_cookies")) || "";
-        const storedProxy = (typeof window !== "undefined" && localStorage.getItem("opus_youtube_proxy")) || "";
+        const storedCookies = (typeof window !== "undefined" && localStorage.getItem("snipcut_youtube_cookies")) || "";
+        const storedProxy = (typeof window !== "undefined" && localStorage.getItem("snipcut_youtube_proxy")) || "";
 
         res = await fetch("/api/jobs", {
           method: "POST",
@@ -808,8 +808,8 @@ function DashboardContent() {
           // by the same toggles (editor re-renders don't send these).
           broll: brollEnabled,
           music: musicBedEnabled,
-          pexelsKey: localStorage.getItem("opus_pexels_key") || undefined,
-          pixabayKey: localStorage.getItem("opus_pixabay_key") || undefined,
+          pexelsKey: localStorage.getItem("snipcut_pexels_key") || undefined,
+          pixabayKey: localStorage.getItem("snipcut_pixabay_key") || undefined,
       });
 
       if (data.tracking?.summary) {
@@ -845,7 +845,7 @@ function DashboardContent() {
           previewFileSize: data.previewFileSize || (selectedClip as any).previewFileSize,
         } as any);
       }
-      localStorage.setItem("opus_user_clips", JSON.stringify(updatedClips));
+      localStorage.setItem("snipcut_user_clips", JSON.stringify(updatedClips));
 
       // Download happens after the render state clears, with progress.
       pendingDownload = {
@@ -876,7 +876,7 @@ function DashboardContent() {
                 <Scissors className="w-4 h-4 stroke-[2.5]" />
               </div>
               <span className="font-black text-sm min-[420px]:text-base sm:text-lg tracking-tight uppercase">
-                OPUS<span className="bg-[#FFC700] px-1 ml-0.5 border border-black">STUDIO</span>
+                SNIP<span className="bg-[#FFC700] px-1 ml-0.5 border border-black">CUT</span>
               </span>
             </Link>
 
@@ -1415,7 +1415,7 @@ function DashboardContent() {
                         </div>
                       </div>
 
-                      {/* OpusClip ReframeControls */}
+                      {/* Snipcut reframe controls */}
                       <div className="w-full mt-5 p-4 bg-[#F8F7F4] border-2 border-black shadow-[3px_3px_0px_#000000]">
                         <div className="flex items-center justify-between mb-3">
                           <span className="text-xs font-black uppercase tracking-wider text-black flex items-center gap-1.5">
@@ -1765,7 +1765,7 @@ function DashboardContent() {
                   Caption Style
                 </label>
                 <div className="flex flex-wrap gap-1.5">
-                  {(["opus", "kinetic", "hormozi", "neon", "beast", "clean"] as const).map((st) => (
+                  {(["snipcut", "kinetic", "hormozi", "neon", "beast", "clean"] as const).map((st) => (
                     <button
                       key={st}
                       type="button"
@@ -1774,7 +1774,7 @@ function DashboardContent() {
                         jobCaptionStyle === st ? "bg-black text-white shadow-[2px_2px_0px_#FFC700]" : "bg-[#F8F7F4] hover:bg-white text-black"
                       }`}
                     >
-                      {st === "kinetic" ? "⚡ Kinetic" : st === "opus" ? "★ Opus" : st}
+                      {st === "kinetic" ? "⚡ Kinetic" : st === "snipcut" ? "★ Snipcut" : st}
                     </button>
                   ))}
                 </div>
@@ -1905,7 +1905,7 @@ function DashboardContent() {
 
 export default function Dashboard() {
   return (
-    <Suspense fallback={<div className="min-h-screen bg-[#F8F7F4] text-black p-8 flex items-center justify-center font-black uppercase">Loading Opus Studio...</div>}>
+    <Suspense fallback={<div className="min-h-screen bg-[#F8F7F4] text-black p-8 flex items-center justify-center font-black uppercase">Loading Snipcut Studio...</div>}>
       <DashboardContent />
     </Suspense>
   );

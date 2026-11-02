@@ -112,7 +112,7 @@ export async function analyzeTranscriptForViralClips({
     .find((k) => isHackClubKey(k));
   const activeKey = hackclubKey || activeOpenaiKey;
 
-  const systemPrompt = `You are OpusClip AI, the world's #1 video curation intelligence algorithm for TikTok, YouTube Shorts, and Instagram Reels.
+  const systemPrompt = `You are Snipcut AI, an expert video curation assistant for TikTok, YouTube Shorts, and Instagram Reels.
 Your task is to analyze video transcripts and extract 1 to 6 standalone viral short clips (ALWAYS return at least 1 clip, even if the transcript is short or concise).
 
 Guidelines for Virality Score (0-100):

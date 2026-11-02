@@ -20,11 +20,11 @@ export default function BrandKitPage() {
   const [watermarkOpacity, setWatermarkOpacity] = useState(80);
   const [savedSuccess, setSavedSuccess] = useState(false);
 
-  // Persisted on this device (localStorage opus_brand_kit) and restored on
+  // Persisted on this device (localStorage snipcut_brand_kit) and restored on
   // mount — previously "Save" was cosmetic and every choice was lost.
   useEffect(() => {
     try {
-      const raw = localStorage.getItem("opus_brand_kit");
+      const raw = localStorage.getItem("snipcut_brand_kit");
       if (!raw) return;
       const saved = JSON.parse(raw);
       if (typeof saved.brandName === "string") setBrandName(saved.brandName);
@@ -40,7 +40,7 @@ export default function BrandKitPage() {
   const handleSave = () => {
     try {
       localStorage.setItem(
-        "opus_brand_kit",
+        "snipcut_brand_kit",
         JSON.stringify({ brandName, selectedFont, primaryColor, secondaryColor, watermarkPos, watermarkOpacity })
       );
     } catch {}

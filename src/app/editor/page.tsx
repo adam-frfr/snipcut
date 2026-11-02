@@ -23,7 +23,7 @@ import confetti from "canvas-confetti";
 /**
  * Studio Editor — fully wired to the real pipeline.
  *
- * - Loads the user's generated clips from localStorage ("opus_user_clips",
+ * - Loads the user's generated clips from localStorage ("snipcut_user_clips",
  *   written by the dashboard). No mock clips, no fabricated transcripts.
  * - Preview is a real <video> element playing the rendered clip file; the
  *   playhead, seek bar and duration all come from the element itself.
@@ -37,7 +37,7 @@ import confetti from "canvas-confetti";
  */
 
 type LayoutMode = "auto-tracker" | "split-screen" | "blurred-fit" | "center";
-type CaptionStyle = "hormozi" | "neon" | "beast" | "clean" | "kinetic" | "opus";
+type CaptionStyle = "hormozi" | "neon" | "beast" | "clean" | "kinetic" | "snipcut";
 type Aspect = "9:16" | "1:1" | "16:9";
 
 interface EditorWord {
@@ -162,11 +162,11 @@ function EditorContent() {
     setRenderNote("");
   }, []);
 
-  // Load the user's clips (dashboard writes them to opus_user_clips)
+  // Load the user's clips (dashboard writes them to snipcut_user_clips)
   useEffect(() => {
     let parsed: any[] = [];
     try {
-      const saved = localStorage.getItem("opus_user_clips");
+      const saved = localStorage.getItem("snipcut_user_clips");
       if (saved) {
         const arr = JSON.parse(saved);
         if (Array.isArray(arr)) parsed = arr;
@@ -291,12 +291,12 @@ function EditorContent() {
       };
 
       try {
-        const saved = localStorage.getItem("opus_user_clips");
+        const saved = localStorage.getItem("snipcut_user_clips");
         if (saved) {
           const arr = JSON.parse(saved);
           if (Array.isArray(arr)) {
             const next = arr.map((c: any) => (c.id === clip.id ? updated : c));
-            localStorage.setItem("opus_user_clips", JSON.stringify(next));
+            localStorage.setItem("snipcut_user_clips", JSON.stringify(next));
             setAllClips(next);
           }
         }
@@ -640,7 +640,7 @@ function EditorContent() {
 
           <label className="block text-[10px] font-black uppercase mb-1.5">Caption style</label>
           <div className="grid grid-cols-3 gap-1.5 mb-4">
-            {(["opus", "kinetic", "hormozi", "neon", "beast", "clean"] as CaptionStyle[]).map((s) => (
+            {(["snipcut", "kinetic", "hormozi", "neon", "beast", "clean"] as CaptionStyle[]).map((s) => (
               <button
                 key={s}
                 type="button"

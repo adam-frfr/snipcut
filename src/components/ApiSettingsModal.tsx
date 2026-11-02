@@ -48,14 +48,14 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
       let storedToken = "";
 
       if (typeof window !== "undefined") {
-        storedOpenai = localStorage.getItem("opus_openai_key") || "";
-        storedClaude = localStorage.getItem("opus_claude_key") || "";
-        storedGroq = localStorage.getItem("opus_groq_key") || "";
-        setPexelsKey(localStorage.getItem("opus_pexels_key") || "");
-        setPixabayKey(localStorage.getItem("opus_pixabay_key") || "");
-        storedModel = (localStorage.getItem("opus_preferred_model") as any) || "claude-3-5-haiku";
-        storedCookies = localStorage.getItem("opus_youtube_cookies") || "";
-        storedProxy = localStorage.getItem("opus_youtube_proxy") || "";
+        storedOpenai = localStorage.getItem("snipcut_openai_key") || "";
+        storedClaude = localStorage.getItem("snipcut_claude_key") || "";
+        storedGroq = localStorage.getItem("snipcut_groq_key") || "";
+        setPexelsKey(localStorage.getItem("snipcut_pexels_key") || "");
+        setPixabayKey(localStorage.getItem("snipcut_pixabay_key") || "");
+        storedModel = (localStorage.getItem("snipcut_preferred_model") as any) || "claude-3-5-haiku";
+        storedCookies = localStorage.getItem("snipcut_youtube_cookies") || "";
+        storedProxy = localStorage.getItem("snipcut_youtube_proxy") || "";
         storedToken = localStorage.getItem("app_access_token") || "";
       }
 
@@ -67,8 +67,8 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
             storedOpenai = storedOpenai || data.apiKey;
             storedClaude = storedClaude || data.apiKey;
             if (typeof window !== "undefined") {
-              localStorage.setItem("opus_openai_key", storedOpenai);
-              localStorage.setItem("opus_claude_key", storedClaude);
+              localStorage.setItem("snipcut_openai_key", storedOpenai);
+              localStorage.setItem("snipcut_claude_key", storedClaude);
             }
           }
         } catch (e) {}
@@ -122,14 +122,14 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
       setTokenError("");
     }
     if (typeof window !== "undefined") {
-      localStorage.setItem("opus_openai_key", openaiKey.trim());
-      localStorage.setItem("opus_claude_key", claudeKey.trim());
-      localStorage.setItem("opus_groq_key", groqKey.trim());
-      localStorage.setItem("opus_pexels_key", pexelsKey.trim());
-      localStorage.setItem("opus_pixabay_key", pixabayKey.trim());
-      localStorage.setItem("opus_preferred_model", preferredModel);
-      localStorage.setItem("opus_youtube_cookies", youtubeCookies.trim());
-      localStorage.setItem("opus_youtube_proxy", youtubeProxy.trim());
+      localStorage.setItem("snipcut_openai_key", openaiKey.trim());
+      localStorage.setItem("snipcut_claude_key", claudeKey.trim());
+      localStorage.setItem("snipcut_groq_key", groqKey.trim());
+      localStorage.setItem("snipcut_pexels_key", pexelsKey.trim());
+      localStorage.setItem("snipcut_pixabay_key", pixabayKey.trim());
+      localStorage.setItem("snipcut_preferred_model", preferredModel);
+      localStorage.setItem("snipcut_youtube_cookies", youtubeCookies.trim());
+      localStorage.setItem("snipcut_youtube_proxy", youtubeProxy.trim());
       localStorage.setItem("app_access_token", appAccessToken.trim());
       document.cookie = `app_access_token=${encodeURIComponent(appAccessToken.trim())}; path=/; max-age=31536000; SameSite=Lax`;
     }

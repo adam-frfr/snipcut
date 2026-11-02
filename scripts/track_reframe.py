@@ -429,7 +429,7 @@ def run_tracking(video_path, start_time, duration, mode="auto-tracker", ai_shots
         segment_primary[(t0, t1)] = best
 
     # --- per-shot layout decision (v3) ------------------------------------
-    # Opus-style adaptive layout: instead of one crop for the whole clip,
+    # Adaptive layout: instead of one crop for the whole clip,
     # each stretch of footage gets the composition that fits ITS content.
     # Decided on a 2s window grid (scene cuts alone miss slow zooms and
     # same-room angle changes), then merged into segments.

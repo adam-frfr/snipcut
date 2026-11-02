@@ -316,7 +316,7 @@ export interface RenderOptions {
   captionPositionY?: number;
   transcript?: { start: number; end: number; text: string }[];
   headline?: string;
-  captionStyle?: "hormozi" | "neon" | "beast" | "clean" | "kinetic" | "opus";
+  captionStyle?: "hormozi" | "neon" | "beast" | "clean" | "kinetic" | "snipcut";
   // Render picture only; captions are burned later by applyPostEffects so
   // they can sit ON TOP of B-roll cutaways instead of underneath them.
   skipCaptions?: boolean;
@@ -381,7 +381,7 @@ interface KaraokeWord {
 }
 
 /**
- * Karaoke-style captions (the OpusClip/Hormozi look): a short phrase stays
+ * Karaoke-style captions: a short phrase stays
  * on screen while the currently-spoken word is highlighted in the accent
  * colour. Emitted as ASS with one Dialogue event per word; each event
  * re-renders the whole phrase with a different word highlighted, so there
@@ -389,7 +389,7 @@ interface KaraokeWord {
  */
 export function buildKaraokeAss(
   words: KaraokeWord[],
-  captionStyle: "hormozi" | "neon" | "beast" | "clean" | "kinetic" | "opus",
+  captionStyle: "hormozi" | "neon" | "beast" | "clean" | "kinetic" | "snipcut",
   marginV: number,
   playRes: { x: number; y: number } = { x: 1080, y: 1920 }
 ): string {
@@ -400,7 +400,7 @@ export function buildKaraokeAss(
     beast: { base: "&H00FFFFFF", accent: "&H0000FFFF", size: 62, outline: 8 },
     clean: { base: "&H00FFFFFF", accent: "&H00FFFFFF", size: 46, outline: 3 },
     kinetic: { base: "&H00FFFFFF", accent: "&H0000FFFF", size: 98, outline: 9 },
-    opus: { base: "&H00FFFFFF", accent: "&H0000FFFF", size: 74, outline: 10 },
+    snipcut: { base: "&H00FFFFFF", accent: "&H0000FFFF", size: 74, outline: 10 },
   } as const;
   const pal = palettes[captionStyle] || palettes.hormozi;
   // Font size is authored against a 1920px-tall canvas; scale it to the
@@ -408,7 +408,7 @@ export function buildKaraokeAss(
   const fontSize = Math.max(20, Math.round(pal.size * (playRes.y / 1920)));
 
   const header = `[Script Info]
-Title: OpusClip Karaoke Captions
+Title: Snipcut Karaoke Captions
 ScriptType: v4.00+
 PlayResX: ${playRes.x}
 PlayResY: ${playRes.y}
@@ -427,12 +427,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
   const escapeAssText = (t: string) => t.replace(/\\/g, "\\\\").replace(/\{/g, "\\{").replace(/\}/g, "\\}");
 
-  if (captionStyle === "opus") {
-    // OPUS: the reference app's own caption look — phrases of up to 5
+  if (captionStyle === "snipcut") {
+    // Snipcut's caption look uses phrases of up to 5
     // words sit low-centre; the whole phrase stays on screen while the
     // spoken word turns accent-yellow with a slight pop. Auto-fit keeps
     // long phrases inside the frame (theirs occasionally overflow).
-    const opusFont = Math.max(20, Math.round(74 * (playRes.y / 1920)));
+    const snipcutFont = Math.max(20, Math.round(74 * (playRes.y / 1920)));
     const phrases: KaraokeWord[][] = [];
     let cur: KaraokeWord[] = [];
     for (const w of words) {
@@ -451,7 +451,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
       // Auto-fit per phrase at its widest (active word is 1.16x).
       const avail = playRes.x - 100;
       const est = phrase.reduce(
-        (sum, w, i) => sum + w.text.length * 0.66 * opusFont * 1.16 + (i > 0 ? 0.32 * opusFont : 0),
+        (sum, w, i) => sum + w.text.length * 0.66 * snipcutFont * 1.16 + (i > 0 ? 0.32 * snipcutFont : 0),
         0
       );
       const fit = est > avail ? Math.max(0.6, avail / est) : 1;
@@ -462,12 +462,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         const parts = phrase.map((pw, j) => {
           const txt = escapeAssText(pw.text.toUpperCase());
           if (j === i) {
-            return `{\\c${pal.accent}\\fs${Math.round(opusFont * fit * 1.16)}\\fscx116\\fscy116\\t(0,90,1,\\fscx100\\fscy100)}${txt}{\\r}`;
+            return `{\\c${pal.accent}\\fs${Math.round(snipcutFont * fit * 1.16)}\\fscx116\\fscy116\\t(0,90,1,\\fscx100\\fscy100)}${txt}{\\r}`;
           }
-          return fit < 1 ? `{\\fs${Math.round(opusFont * fit)}}${txt}{\\r}` : txt;
+          return fit < 1 ? `{\\fs${Math.round(snipcutFont * fit)}}${txt}{\\r}` : txt;
         });
         evts.push(
-          `Dialogue: 0,${formatAssTime(w.start)},${formatAssTime(evEnd)},Opus,,0,0,0,,${parts.join(" ")}`
+          `Dialogue: 0,${formatAssTime(w.start)},${formatAssTime(evEnd)},Snipcut,,0,0,0,,${parts.join(" ")}`
         );
       }
     }
@@ -566,7 +566,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 }
 
 /**
- * Runs deep-learning AI Subject Tracking (OpusClip ReframeAnything)
+ * Runs deep-learning AI subject tracking for automatic reframing
  * Computes optimal 9:16 crop box keeping speaker centered or multi-mode layout
  */
 export async function detectSubjectAndReframe(
@@ -607,7 +607,7 @@ export async function detectSubjectAndReframe(
     ];
     if (speechSpans && speechSpans.length > 0) {
       try {
-        wordsPath = path.join(os.tmpdir(), `opus-speech-${process.pid}-${Date.now()}.json`);
+        wordsPath = path.join(os.tmpdir(), `snipcut-speech-${process.pid}-${Date.now()}.json`);
         fs.writeFileSync(wordsPath, JSON.stringify(speechSpans.map((s) => ({ start: s.start, end: s.end }))), "utf-8");
         args.push("--words", wordsPath);
       } catch {
@@ -1132,7 +1132,7 @@ export interface PostFxOptions {
   duration: number;
   aspectRatio: "9:16" | "1:1" | "16:9";
   words: { start: number; end: number; text: string }[]; // clip-relative
-  captionStyle: "hormozi" | "neon" | "beast" | "clean" | "kinetic" | "opus";
+  captionStyle: "hormozi" | "neon" | "beast" | "clean" | "kinetic" | "snipcut";
   broll: BrollCue[];
   punches: { start: number; end: number }[]; // clip-relative
   musicBed: boolean;
