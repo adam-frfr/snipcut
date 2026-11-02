@@ -1,0 +1,12 @@
+node_modules
+.next
+.git
+.env*
+bin/ffmpeg.exe
+bin/yt-dlp.exe
+public/downloads/*
+!public/downloads/.gitkeep
+public/rendered_clips/*
+!public/rendered_clips/.gitkeep
+public/extracted_audio/*
+!public/extracted_audio/.gitkeep
