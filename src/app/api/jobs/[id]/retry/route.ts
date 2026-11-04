@@ -21,7 +21,20 @@ export async function POST(
 
   // Retrying a job that is still running would enqueue it twice: two
   // workers interleaving record saves, duplicate renders, double API spend.
-  const ACTIVE = ["uploaded", "transcribing", "analyzing", "rendering"];
+  // An "uploaded" job that the worker isn't holding was orphaned (e.g. the
+  // server stopped before it started); put it back in line.
+  if (job.status === "uploaded" && !jobQueue.isQueuedOrActive(id)) {
+    jobQueue.enqueue(id);
+    return NextResponse.json({
+      success: true,
+      jobId: job.id,
+      status: job.status,
+      progress: job.progress,
+      stageMessage: job.stageMessage,
+    });
+  }
+
+  const ACTIVE = ["uploaded", "transcribing", "analyzing", "reframing", "rendering"];
   if (ACTIVE.includes(job.status)) {
     return NextResponse.json(
       { error: `Job is still ${job.status} — wait for it to finish or fail before retrying.` },

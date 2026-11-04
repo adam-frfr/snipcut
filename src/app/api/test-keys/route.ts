@@ -3,6 +3,7 @@ import OpenAI from "openai";
 import Anthropic from "@anthropic-ai/sdk";
 import { getOpenAIClient, isHackClubKey } from "@/lib/aiService";
 import { verifyAuthAndRateLimit } from "@/lib/authRateLimit";
+import { CLAUDE_FAST_MODEL } from "@/lib/claudeModels";
 
 export async function POST(req: NextRequest) {
   const authError = verifyAuthAndRateLimit(req);
@@ -71,7 +72,7 @@ export async function POST(req: NextRequest) {
         try {
           const anthropic = new Anthropic({ apiKey: activeClaude });
           await anthropic.messages.create({
-            model: "claude-3-5-haiku-20241022",
+            model: CLAUDE_FAST_MODEL,
             max_tokens: 1,
             messages: [{ role: "user", content: "Ping" }],
           });
