@@ -31,14 +31,28 @@ Open [http://localhost:3000](http://localhost:3000).
 
 API keys can be supplied through `.env.local` or entered from the **Keys** control in the app header. Never commit `.env.local` or real credentials.
 
-## Production
+## Deploy on a VPS
 
-The included `Dockerfile` installs the media-processing dependencies, builds the Next.js app, and starts the production server on port `3000`.
+The `Dockerfile` bundles everything the pipeline needs: FFmpeg with libass, Python + OpenCV for face tracking, caption fonts, and yt-dlp. `docker-compose.yml` runs it with persistent volumes, so jobs, clips and saved cookies survive restarts and redeploys.
 
-```bash
-docker build -t snipcut .
-docker run --env-file .env.local -p 3000:3000 snipcut
-```
+**Server size.** Rendering is CPU-bound: plan on at least 2 vCPU and 4 GB RAM, plus disk for source videos (files are cleaned up after 24 hours). With 1 vCPU, renders still work but take several minutes per clip.
+
+1. Install Docker on the VPS ([docs.docker.com/engine/install](https://docs.docker.com/engine/install/)), then clone the repo.
+2. Configure it:
+   ```bash
+   cp .env.example .env
+   nano .env   # set APP_ACCESS_TOKEN and at least GROQ_API_KEY or OPENAI_API_KEY
+   ```
+3. Start it:
+   ```bash
+   docker compose up -d --build
+   ```
+   The app listens on `127.0.0.1:3000`, which is only reachable from the server itself.
+4. Put HTTPS in front. With [Caddy](https://caddyserver.com/docs/install), copy `deploy/Caddyfile` to `/etc/caddy/Caddyfile`, set your domain, and run `sudo systemctl reload caddy`. If you use nginx instead, use `deploy/nginx.conf`. Either way, keep its upload size limit: nginx's default 1 MB limit rejects every upload chunk.
+
+**Updating:** `git pull && docker compose up -d --build`.
+**Logs:** `docker compose logs -f snipcut`.
+**YouTube downloads failing** ("confirm you're not a bot"): YouTube often blocks datacenter IPs. Save cookies from a signed-in browser under **Settings → YouTube Cookies**, and update yt-dlp with `docker compose exec snipcut yt-dlp -U` (or rebuild the image).
 
 ## Checks
 

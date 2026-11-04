@@ -12,6 +12,21 @@ const tests = [
     args: ["tsx", path.join(__dirname, "test-wordsnapping.ts")],
   },
   {
+    name: "Clip Boundaries: Sentence Lines, Max/Min Length, Overlap Trim",
+    cmd: "npx",
+    args: ["tsx", path.join(__dirname, "test-clip-boundaries.ts")],
+  },
+  {
+    name: "Caption Presets Reference Defined Styles",
+    cmd: "npx",
+    args: ["tsx", path.join(__dirname, "test-caption-styles.ts")],
+  },
+  {
+    name: "Cut Accuracy & A/V Sync Across Layout Joins",
+    cmd: "npx",
+    args: ["tsx", path.join(__dirname, "test-cut-accuracy.ts")],
+  },
+  {
     name: "Subtitle Time Base & Shifting (Item 1)",
     cmd: "npx",
     args: ["tsx", path.join(__dirname, "test-subtitles.ts")],

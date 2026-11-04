@@ -26,6 +26,9 @@ function formatDuration(seconds: number): string {
 }
 
 const SENTENCE_END_REGEX = /[.?!…]+["']?$/;
+// When a boundary has to move (min-length extension, overlap trim), go to a
+// sentence edge only if one is this close; otherwise use the nearest word.
+const SENTENCE_PREFER_SEC = 1.5;
 
 /**
  * Snaps raw LLM start/end times to precise Whisper word boundaries:
@@ -248,19 +251,38 @@ export function snapAndValidateClips(
 
     let clipDuration = snappedEnd - snappedStart;
 
-    // Enforce min duration
+    // Enforce min duration — extend to a WORD boundary (preferably a sentence
+    // end) instead of an arbitrary start+min point that can land mid-word.
     if (clipDuration < minDuration) {
-      snappedEnd = snappedStart + minDuration;
+      const target = snappedStart + minDuration;
+      const after = sortedWords.filter((w) => w.end >= target);
+      const sentenceEnd = after.find((w) => SENTENCE_END_REGEX.test(w.word.trim()) && w.end <= target + SENTENCE_PREFER_SEC);
+      const wordEnd = sentenceEnd || after[0];
+      if (wordEnd) {
+        // Pad into the following silence only — never into the next word.
+        const next = sortedWords.find((w) => w.start >= wordEnd.end);
+        const gap = next ? Math.max(0, next.start - wordEnd.end) : targetPadding * 2;
+        snappedEnd = wordEnd.end + Math.min(targetPadding, gap / 2);
+      } else {
+        snappedEnd = target;
+      }
       if (totalDuration && snappedEnd > totalDuration) {
         snappedEnd = totalDuration;
         snappedStart = Math.max(0, snappedEnd - minDuration);
       }
     }
 
-    // Enforce max duration
+    // Enforce max duration — cut after the last sentence (else last word)
+    // that fits, never at an arbitrary start+max point mid-word.
     clipDuration = snappedEnd - snappedStart;
     if (clipDuration > maxDuration) {
-      snappedEnd = snappedStart + maxDuration;
+      const limit = snappedStart + maxDuration;
+      const fitting = sortedWords.filter((w) => w.start >= snappedStart && w.end <= limit);
+      const lastSentence = [...fitting].reverse().find((w) => SENTENCE_END_REGEX.test(w.word.trim()));
+      const lastWord = fitting[fitting.length - 1];
+      const cutWord =
+        lastSentence && lastSentence.end >= snappedStart + minDuration ? lastSentence : lastWord;
+      snappedEnd = cutWord ? Math.min(limit, cutWord.end + targetPadding) : limit;
     }
 
     // Clamp end to totalDuration exactly
@@ -335,8 +357,19 @@ export function snapAndValidateClips(
     const overlapDuration = Number((prev.endTime - current.startTime).toFixed(2));
 
     if (overlapDuration > 0.5) {
-      // Overlap exceeds 0.5s -> Trim later clip's start to prev.endTime
-      const trimmedStart = Number(prev.endTime.toFixed(2));
+      // Overlap exceeds 0.5s -> start the later clip at the first sentence
+      // (else word) that begins after the earlier clip ends. Starting at
+      // prev.endTime itself opened clips mid-sentence.
+      const afterPrev = sortedWords
+        .map((w, idx) => ({ w, idx }))
+        .filter(({ w }) => w.start >= prev.endTime && w.end <= current.endTime);
+      const sentenceStart = afterPrev.find(
+        ({ w, idx }) => w.start - prev.endTime <= SENTENCE_PREFER_SEC && idx > 0 && SENTENCE_END_REGEX.test(sortedWords[idx - 1].word.trim())
+      );
+      const firstWord = sentenceStart || afterPrev[0];
+      const trimmedStart = Number(
+        (firstWord ? Math.max(prev.endTime, firstWord.w.start - Math.min(targetPadding, 0.1)) : prev.endTime).toFixed(2)
+      );
       const remainingDuration = Number((current.endTime - trimmedStart).toFixed(2));
 
       if (remainingDuration >= minDuration) {

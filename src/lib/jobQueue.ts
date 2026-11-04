@@ -7,6 +7,7 @@ import { snapAndValidateClips, SnappedClipResult } from "./wordSnapping";
 import { buildSentences, planBroll, fetchBrollAssets } from "./brollService";
 import { applyPostEffects, dropCuesOverlappingSplits, probeVideoFormat } from "./videoService";
 import { renderVideoClip, resolveSafeFilePath, extractAudioForWhisper, getFfmpegBinary, generatePreviewClip, generatePosterImage } from "./videoService";
+import { downloadYoutubeVideo, normalizeUploadedVideo } from "./mediaPrep";
 import { execFile } from "child_process";
 import { promisify } from "util";
 
@@ -102,6 +103,10 @@ export interface RenderedClipItem {
 export interface JobOutput {
   fileId?: string;
   filePath?: string;
+  // Set while the source still needs preparing in the worker:
+  // an assembled-but-unconverted upload (converted, then deleted) ...
+  rawUploadPath?: string;
+  rawBaseName?: string;
   sourceSha256?: string;
   sourceWidth?: number;
   sourceHeight?: number;
@@ -119,6 +124,10 @@ export interface JobOutput {
 export interface JobOptions {
   sourceType: "upload" | "youtube";
   youtubeUrl?: string;
+  // ... or a YouTube link still to download (with optional per-job cookie
+  // file under data/, deleted after the download, and proxy).
+  cookieFile?: string;
+  proxy?: string;
   fileName?: string;
   customPrompt?: string;
   aspectRatio?: "9:16" | "1:1" | "16:9";
@@ -376,6 +385,48 @@ class JobQueueManager {
     console.log(`[JobQueue] Starting worker execution for job ${jobId} (initial status: ${job.status})`);
 
     try {
+      // -------------------------------------------------------------
+      // Stage 0: Source preparation (download / convert) — runs here, in
+      // the worker, so no HTTP request has to stay open for minutes.
+      // -------------------------------------------------------------
+      if (!job.output.filePath && !job.output.fileId) {
+        job.stageTimestamps.preparing = { start: Date.now() };
+        if (job.output.rawUploadPath) {
+          job.progress = 8;
+          job.stageMessage = "Converting your upload to a web-ready MP4...";
+          saveJobRecord(job);
+          const raw = resolveSafeFilePath(job.output.rawUploadPath);
+          if (!fs.existsSync(raw)) {
+            throw new Error("The uploaded file is missing on the server (it may have expired). Please upload it again.");
+          }
+          const prepared = await normalizeUploadedVideo(raw, job.output.rawBaseName || path.parse(raw).name.replace(/^raw-/, ""));
+          job.output.filePath = prepared.filePath;
+          job.output.fileId = prepared.fileId;
+          delete job.output.rawUploadPath;
+          delete job.output.rawBaseName;
+        } else if (job.options.youtubeUrl) {
+          job.progress = 8;
+          job.stageMessage = "Downloading the video from YouTube...";
+          saveJobRecord(job);
+          try {
+            const dl = await downloadYoutubeVideo({
+              url: job.options.youtubeUrl,
+              cookieFile: job.options.cookieFile,
+              proxy: job.options.proxy,
+            });
+            job.output.filePath = dl.filePath;
+            job.output.fileId = dl.fileId;
+          } finally {
+            if (job.options.cookieFile) {
+              try { fs.unlinkSync(job.options.cookieFile); } catch {}
+              delete job.options.cookieFile;
+            }
+          }
+        }
+        job.stageTimestamps.preparing.end = Date.now();
+        saveJobRecord(job);
+      }
+
       // -------------------------------------------------------------
       // Stage 1: File Preparation & SHA-256 Hashing
       // -------------------------------------------------------------

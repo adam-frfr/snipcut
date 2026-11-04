@@ -2,49 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
 import path from "path";
 import fs from "fs";
-import { execFile } from "child_process";
-import util from "util";
 import { verifyAuthAndRateLimit } from "@/lib/authRateLimit";
 import { jobQueue, saveJobRecord, JobRecord, JobOptions } from "@/lib/jobQueue";
-import { getFfmpegBinary, getYtDlpBinary } from "@/lib/videoService";
-import { resolveCookieArg, friendlyDownloadError } from "@/lib/youtubeCookies";
+import { normalizeCookiesToNetscape } from "@/lib/youtubeCookies";
+import { normalizeYoutubeUrl, normalizeProxy } from "@/lib/mediaPrep";
 
-const execFilePromise = util.promisify(execFile);
-
-const YOUTUBE_HOSTS = new Set([
-  "youtube.com",
-  "www.youtube.com",
-  "m.youtube.com",
-  "music.youtube.com",
-  "youtu.be",
-]);
-
-/**
- * Only real YouTube links reach yt-dlp. A value starting with "-" would be
- * parsed as a yt-dlp option (e.g. --exec / --config-location), and any other
- * host would let the server be pointed at internal URLs.
- */
-function normalizeYoutubeUrl(raw: string): string | null {
-  try {
-    const u = new URL(raw.trim());
-    if (u.protocol !== "https:" && u.protocol !== "http:") return null;
-    if (!YOUTUBE_HOSTS.has(u.hostname.toLowerCase())) return null;
-    return u.toString();
-  } catch {
-    return null;
-  }
-}
-
-/** Accept only a plain proxy URL (http/https/socks) so it can't smuggle options. */
-function normalizeProxy(raw: unknown): string | null {
-  if (typeof raw !== "string" || raw.trim().length <= 5) return null;
-  try {
-    const u = new URL(raw.trim());
-    return /^(https?|socks5h?|socks4a?):$/.test(u.protocol) ? u.toString() : null;
-  } catch {
-    return null;
-  }
-}
 
 export async function POST(req: NextRequest) {
   const authError = verifyAuthAndRateLimit(req);
@@ -142,69 +104,23 @@ export async function POST(req: NextRequest) {
               { status: 400 }
             );
           }
-          const filePrefix = `yt-${Date.now()}`;
-          const outTemplate = path.join(downloadDir, `${filePrefix}.%(ext)s`);
-          const ytDlp = getYtDlpBinary();
-          const ffmpegBin = getFfmpegBinary();
-
-          // Cookie handling for YouTube bot-check bypass: request cookies
-          // (auto-normalized to Netscape format), else the persistent
-          // server-side jar saved via /api/cookies, else env/legacy file.
-          const { arg: cookieArg, tempFile: tempCookiePath } = resolveCookieArg(cookies);
-
-          // Proxy handling
-          const activeProxy = normalizeProxy(proxy || process.env.YOUTUBE_PROXY || process.env.HTTP_PROXY || "");
-          const proxyArgs: string[] = activeProxy ? ["--proxy", activeProxy] : [];
-          const cookiePath = cookieArg.match(/"([^"]+)"/)?.[1];
-          const cookieArgs: string[] = cookiePath ? ["--cookies", cookiePath] : [];
-
-        // Resolution before codec: an avc1-only preference grabs 360p on older
-        // uploads even when 1080p VP9 exists (verified on a real MIT lecture).
-        // The render pipeline re-encodes to H.264 anyway, so source codec is secondary.
-        const preferredFormat =
-          "bestvideo[vcodec^=avc1][height<=1080]+bestaudio[ext=m4a]/bestvideo[height>=720][height<=1080]+bestaudio/bestvideo[vcodec^=avc1][height<=1080]+bestaudio/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best";
-
-        // Args array (no shell): a URL or proxy value containing quotes can
-        // no longer break the command line.
-        const dlArgs = [
-          "--js-runtimes", "node",
-          "--ffmpeg-location", ffmpegBin,
-          ...cookieArgs,
-          ...proxyArgs,
-          "--extractor-args", "youtube:player_client=android,ios,web",
-          "-f", preferredFormat,
-          "--no-warnings", "--ignore-errors",
-          "--merge-output-format", "mp4",
-          "-o", outTemplate,
-          // "--" ends option parsing: the URL can never be read as a flag.
-          "--",
-          safeYoutubeUrl,
-        ];
-
-        try {
-          // Long videos at 1080p can take several minutes to download + merge;
-          // 180s was killing healthy downloads mid-flight (verified: 196MB .part at kill time)
-          await execFilePromise(ytDlp, dlArgs, { timeout: 900000, maxBuffer: 64 * 1024 * 1024 });
-        } catch (dlErr: any) {
-          const raw = `${dlErr?.stderr || ""} ${dlErr?.message || ""}`;
-          throw new Error(friendlyDownloadError(raw));
-        } finally {
-          if (tempCookiePath && fs.existsSync(tempCookiePath)) {
-            try { fs.unlinkSync(tempCookiePath); } catch {}
+          // The download itself runs in the job worker (it can take
+          // minutes; a reverse proxy would cut this request off first).
+          options.youtubeUrl = safeYoutubeUrl;
+          options.proxy = normalizeProxy(proxy) || undefined;
+          // Cookies pasted with this request: normalize now into a per-job
+          // file under data/ (never served); the worker deletes it after
+          // the download. Without one it uses the server jar / env.
+          if (typeof cookies === "string" && cookies.trim().length > 10) {
+            const normalized = normalizeCookiesToNetscape(cookies);
+            if (normalized) {
+              const dir = path.join(process.cwd(), "data", "job-cookies");
+              fs.mkdirSync(dir, { recursive: true });
+              const cookieFile = path.join(dir, `${jobId}.txt`);
+              fs.writeFileSync(cookieFile, normalized.content, "utf-8");
+              options.cookieFile = cookieFile;
+            }
           }
-        }
-
-        const targetMp4 = path.join(downloadDir, `${filePrefix}.mp4`);
-        if (fs.existsSync(targetMp4)) {
-          resolvedFilePath = targetMp4;
-          fileId = `downloads/${filePrefix}.mp4`;
-        } else {
-          const files = fs.readdirSync(downloadDir);
-          const found = files.find((f) => f.startsWith(filePrefix));
-          if (!found) throw new Error("Failed to download YouTube video");
-          resolvedFilePath = path.join(downloadDir, found);
-          fileId = `downloads/${found}`;
-        }
       }
     } else if (inputId || inputPath) {
         fileId = inputId || inputPath;
@@ -219,6 +135,18 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // A raw upload from /api/upload ("uploads/raw-...") still needs converting:
+    // hand it to the worker's preparation stage instead of processing it as-is.
+    let rawUploadPath: string | undefined;
+    let rawBaseName: string | undefined;
+    const rawMatch = /^uploads\/(raw-([^/\\]+?))(\.[a-z0-9]{1,8})?$/i.exec(fileId.replace(/^\/+/, ""));
+    if (rawMatch) {
+      rawUploadPath = path.join(process.cwd(), "public", "uploads", rawMatch[1] + (rawMatch[3] || ""));
+      rawBaseName = rawMatch[2];
+      fileId = "";
+      resolvedFilePath = "";
+    }
+
     const jobRecord: JobRecord = {
       id: jobId,
       status: "uploaded",
@@ -228,9 +156,12 @@ export async function POST(req: NextRequest) {
       createdAt: Date.now(),
       updatedAt: Date.now(),
       options,
+      // Empty until the worker downloads (YouTube) or converts (raw upload).
       output: {
-        fileId,
-        filePath: resolvedFilePath,
+        fileId: fileId || undefined,
+        filePath: resolvedFilePath || undefined,
+        rawUploadPath,
+        rawBaseName,
       },
       stageTimestamps: {
         uploaded: { start: Date.now(), end: Date.now() },
