@@ -46,7 +46,14 @@ export function getOpenAIClient(apiKey?: string): OpenAI {
 }
 
 export function extractClipsFromJsonString(rawContent: string): CuratedClipResult[] {
-  const cleaned = rawContent.replace(/```json/g, "").replace(/```/g, "").trim();
+  const cleaned = rawContent
+    .replace(/```json/g, "")
+    .replace(/```/g, "")
+    // Models sometimes leak markdown before a key (`*"hookHeadline": ...`)
+    // or leave trailing commas; either makes JSON.parse drop the clip.
+    .replace(/([{,]\s*)[*_]+\s*"/g, '$1"')
+    .replace(/,(\s*[}\]])/g, "$1")
+    .trim();
 
   // 1. Direct JSON parse
   try {
@@ -221,12 +228,20 @@ You MUST respond strictly in valid JSON matching this schema:
       let lastErr: unknown = null;
       for (const key of groqKeys) {
         const groq = new OpenAI({ apiKey: key, baseURL: "https://api.groq.com/openai/v1" });
-        for (const groqModel of groqModels) {
+        // Strict JSON mode first; Groq rejects slightly-off JSON with a 400
+        // "Failed to validate JSON", which used to drop the whole transcript
+        // window (minutes of video never considered). Then retry once
+        // without JSON mode — the tolerant clip extractor handles prose.
+        const attempts = [
+          ...groqModels.map((m) => ({ model: m, json: true })),
+          { model: groqModels[0], json: false },
+        ];
+        for (const attempt of attempts) {
           try {
-            console.log(`[Stage: AI Curation] Calling Groq (${groqModel})...`);
+            console.log(`[Stage: AI Curation] Calling Groq (${attempt.model}${attempt.json ? "" : ", plain"})...`);
             const response = await groq.chat.completions.create({
-              model: groqModel,
-              response_format: { type: "json_object" },
+              model: attempt.model,
+              ...(attempt.json ? { response_format: { type: "json_object" as const } } : {}),
               messages: [
                 { role: "system", content: systemPrompt },
                 { role: "user", content: userContent },
@@ -235,7 +250,16 @@ You MUST respond strictly in valid JSON matching this schema:
             return response.choices[0]?.message?.content || "";
           } catch (err) {
             lastErr = err;
-            console.warn(`[Stage: AI Curation] Groq ${groqModel} failed, trying next:`, err);
+            // The rejected output usually holds usable clips — salvage it.
+            const failed = (err as { error?: { failed_generation?: unknown } })?.error?.failed_generation;
+            if (typeof failed === "string" && extractClipsFromJsonString(failed).length > 0) {
+              console.warn(`[Stage: AI Curation] Groq ${attempt.model} JSON was rejected; recovered clips from its output`);
+              return failed;
+            }
+            const status = (err as { status?: number })?.status;
+            console.warn(`[Stage: AI Curation] Groq ${attempt.model} failed (${status ?? "error"}), trying next: ${err instanceof Error ? err.message : err}`);
+            // Free tier is 8000 tokens/min: after a rate limit, wait before retrying.
+            if (status === 429) await sleep(15000);
           }
         }
       }

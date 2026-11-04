@@ -453,6 +453,26 @@ def run_tracking(video_path, start_time, duration, mode="auto-tracker", ai_shots
             "fh": float(np.median([s[4] for s in ss])),
         }
 
+    # Speech evidence per track over the WHOLE clip. A split needs two real
+    # speakers; within one 2s window usually only one of them is talking, so
+    # the second person must prove they speak somewhere in the clip. This
+    # stops silent bystanders (audience, people behind a podium) and
+    # crossfade artefacts from triggering split-screen on a solo speaker.
+    track_speaking = {
+        tr.id: sum(SAMPLE_DT for s in tr.samples if s[5] > 0.12) for tr in tracks
+    }
+    max_speaking = max(track_speaking.values()) if track_speaking else 0.0
+
+    def _real_second_speaker(main, other):
+        spoke = track_speaking.get(other["track"], 0.0)
+        return (
+            other["presence"] >= 0.6
+            and main["presence"] >= 0.6
+            # Similar size: a background face is far smaller than the speaker.
+            and other["fh"] >= 0.6 * main["fh"]
+            and spoke >= max(1.0, 0.2 * max_speaking)
+        )
+
     WIN = 2.0
     win_layouts = []
     wt = 0.0
@@ -473,9 +493,14 @@ def run_tracking(video_path, start_time, duration, mode="auto-tracker", ai_shots
             # Portraits on slides/graphics also detect as "faces", but they
             # never talk — require real mouth-motion evidence from at least
             # one of the pair before calling it a two-speaker split.
-            if top2[0]["speaking"] + top2[1]["speaking"] >= 0.4 and abs(top2[0]["cx"] - top2[1]["cx"]) > crop_w * 0.55:
+            top, bot = (top2[0], top2[1]) if top2[0]["speaking"] >= top2[1]["speaking"] else (top2[1], top2[0])
+            if (
+                top2[0]["speaking"] + top2[1]["speaking"] >= 0.4
+                and abs(top2[0]["cx"] - top2[1]["cx"]) > crop_w * 0.55
+                and _real_second_speaker(top, bot)
+                and _real_second_speaker(bot, top)
+            ):
                 layout = "split"
-                top, bot = (top2[0], top2[1]) if top2[0]["speaking"] >= top2[1]["speaking"] else (top2[1], top2[0])
                 panels = [
                     {"track": q["track"], "cx": round(q["cx"], 1), "cy": round(q["cy"], 1), "face_w": round(q["fw"], 1), "face_h": round(q["fh"], 1)}
                     for q in (top, bot)

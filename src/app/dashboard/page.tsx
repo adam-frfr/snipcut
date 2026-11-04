@@ -1359,7 +1359,11 @@ function DashboardContent() {
                             </div>
                           )}
 
-                          {/* Dynamic Subtitles Overlay */}
+                          {/* Dynamic Subtitles Overlay — only for clips not rendered yet
+                              (a raw source seek has no captions). Rendered clips already
+                              have their real captions burned in; drawing this box on top
+                              duplicated and hid them. */}
+                          {!(selectedClip as any).renderedVideoUrl && (
                           <div className="absolute bottom-12 inset-x-2 z-30 text-center pointer-events-none px-2">
                             <div className="inline-block px-3 py-1.5 bg-black border-2 border-white shadow-[2px_2px_0px_#000000] max-w-[90%]">
                               {selectedClip.transcript && selectedClip.transcript.length > 0 ? (
@@ -1400,6 +1404,7 @@ function DashboardContent() {
                               )}
                             </div>
                           </div>
+                          )}
 
                           {/* Play / Pause overlay */}
                           <button
