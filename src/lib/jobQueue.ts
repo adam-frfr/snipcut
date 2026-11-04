@@ -285,6 +285,10 @@ class JobQueueManager {
       if (!fs.existsSync(JOBS_DIR)) return 0;
       const files = fs.readdirSync(JOBS_DIR);
       let recoveredCount = 0;
+      // Jobs that were accepted but still waiting in the (in-memory) queue
+      // when the server stopped. Nothing else would ever pick them up, and
+      // the retry route refuses "uploaded" jobs, so re-queue them here.
+      const pending: { id: string; createdAt: number }[] = [];
 
       for (const file of files) {
         if (!file.endsWith(".json")) continue;
@@ -293,7 +297,9 @@ class JobQueueManager {
           const job = JSON.parse(fs.readFileSync(filePath, "utf-8")) as JobRecord;
           const runningStatuses: JobStatus[] = ["transcribing", "analyzing", "reframing", "rendering"];
 
-          if (runningStatuses.includes(job.status)) {
+          if (job.status === "uploaded" && !this.queue.includes(job.id) && this.activeJobId !== job.id) {
+            pending.push({ id: job.id, createdAt: job.createdAt || 0 });
+          } else if (runningStatuses.includes(job.status)) {
             job.status = "failed";
             job.error = "Server restarted during processing. Click retry to resume from the last completed stage.";
             job.updatedAt = Date.now();
@@ -305,6 +311,14 @@ class JobQueueManager {
 
       if (recoveredCount > 0) {
         console.log(`[JobQueue: Recovery] Marked ${recoveredCount} interrupted jobs as failed on startup`);
+      }
+
+      if (pending.length > 0) {
+        pending.sort((a, b) => a.createdAt - b.createdAt);
+        for (const p of pending) this.queue.push(p.id);
+        console.log(`[JobQueue: Recovery] Re-queued ${pending.length} job(s) that were waiting when the server stopped`);
+        // Defer so the singleton finishes constructing before work starts.
+        setTimeout(() => this.processNext(), 0);
       }
       return recoveredCount;
     } catch (e) {
@@ -319,6 +333,10 @@ class JobQueueManager {
       console.log(`[JobQueue] Enqueued job ${jobId}. Queue length: ${this.queue.length}`);
     }
     this.processNext();
+  }
+
+  public isQueuedOrActive(jobId: string): boolean {
+    return this.activeJobId === jobId || this.queue.includes(jobId);
   }
 
   public getActiveJobId(): string | null {

@@ -70,10 +70,19 @@ export function verifyAuthAndRateLimit(req: NextRequest): NextResponse | null {
   // download resumes) — counting those against the general 60/min bucket
   // made videos stall on 429s mid-playback. Media gets its own bucket.
   const isMedia = req.nextUrl.pathname.startsWith("/api/media") && req.method === "GET";
-  const effectiveMax = isPolling ? 180 : isMedia ? 1200 : MAX_REQUESTS_PER_WINDOW;
+  // Chunked uploads send one request per 2MB piece: on a fast link a file
+  // over ~120MB blew through the general 60/min bucket and failed with 429.
+  const isUploadChunk = req.nextUrl.pathname.startsWith("/api/upload-chunk") && req.method === "POST";
+  const effectiveMax = isPolling ? 180 : isMedia ? 1200 : isUploadChunk ? 1200 : MAX_REQUESTS_PER_WINDOW;
 
   const now = Date.now();
-  const bucketKey = isPolling ? `${clientIp}:poll` : isMedia ? `${clientIp}:media` : clientIp;
+  const bucketKey = isPolling
+    ? `${clientIp}:poll`
+    : isMedia
+      ? `${clientIp}:media`
+      : isUploadChunk
+        ? `${clientIp}:upload`
+        : clientIp;
   let record = rateLimitMap.get(bucketKey);
   if (!record || now > record.resetAt) {
     record = { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS };

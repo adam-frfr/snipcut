@@ -327,9 +327,9 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
             </label>
             <div className="grid grid-cols-3 gap-1.5">
               {[
-                { id: "claude-3-5-haiku", label: "Claude 3.5 Haiku", note: "Fast" },
+                { id: "claude-3-5-haiku", label: "Claude Haiku", note: "Fast" },
                 { id: "gpt-4o-mini", label: "GPT-4o Mini", note: "Budget" },
-                { id: "claude-3-5-sonnet", label: "Claude 3.5 Sonnet", note: "Deep" },
+                { id: "claude-3-5-sonnet", label: "Claude Sonnet", note: "Deep" },
               ].map((m) => (
                 <button
                   key={m.id}

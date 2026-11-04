@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import Anthropic from "@anthropic-ai/sdk";
+import { CLAUDE_DEEP_MODEL, CLAUDE_FAST_MODEL } from "./claudeModels";
 
 export interface WordTimestamp {
   word: string;
@@ -148,9 +149,7 @@ You MUST respond strictly in valid JSON matching this schema:
   const isGroqOnly = !hackclubKey && !activeOpenaiKey && !!activeGroqKey && !(activeClaudeKey && (model.includes("claude") || !activeOpenaiKey));
   const callCuration = async (userContent: string): Promise<string> => {
     if (activeClaudeKey && !hackclubKey && (model.includes("claude") || !activeOpenaiKey)) {
-      const anthropicModel = model.includes("sonnet")
-        ? "claude-3-5-sonnet-20241022"
-        : "claude-3-5-haiku-20241022";
+      const anthropicModel = model.includes("sonnet") ? CLAUDE_DEEP_MODEL : CLAUDE_FAST_MODEL;
       console.log(`[Stage: AI Curation] Calling Anthropic Claude (${anthropicModel})...`);
       const anthropic = new Anthropic({ apiKey: activeClaudeKey });
       const response = await anthropic.messages.create({

@@ -6,10 +6,45 @@ import { execFile } from "child_process";
 import util from "util";
 import { verifyAuthAndRateLimit } from "@/lib/authRateLimit";
 import { jobQueue, saveJobRecord, JobRecord, JobOptions } from "@/lib/jobQueue";
-import { getFfmpegBinary, getYtDlpBinary, probeVideoFormat, checkZscaleSupported } from "@/lib/videoService";
+import { getFfmpegBinary, getYtDlpBinary } from "@/lib/videoService";
 import { resolveCookieArg, friendlyDownloadError } from "@/lib/youtubeCookies";
 
 const execFilePromise = util.promisify(execFile);
+
+const YOUTUBE_HOSTS = new Set([
+  "youtube.com",
+  "www.youtube.com",
+  "m.youtube.com",
+  "music.youtube.com",
+  "youtu.be",
+]);
+
+/**
+ * Only real YouTube links reach yt-dlp. A value starting with "-" would be
+ * parsed as a yt-dlp option (e.g. --exec / --config-location), and any other
+ * host would let the server be pointed at internal URLs.
+ */
+function normalizeYoutubeUrl(raw: string): string | null {
+  try {
+    const u = new URL(raw.trim());
+    if (u.protocol !== "https:" && u.protocol !== "http:") return null;
+    if (!YOUTUBE_HOSTS.has(u.hostname.toLowerCase())) return null;
+    return u.toString();
+  } catch {
+    return null;
+  }
+}
+
+/** Accept only a plain proxy URL (http/https/socks) so it can't smuggle options. */
+function normalizeProxy(raw: unknown): string | null {
+  if (typeof raw !== "string" || raw.trim().length <= 5) return null;
+  try {
+    const u = new URL(raw.trim());
+    return /^(https?|socks5h?|socks4a?):$/.test(u.protocol) ? u.toString() : null;
+  } catch {
+    return null;
+  }
+}
 
 export async function POST(req: NextRequest) {
   const authError = verifyAuthAndRateLimit(req);
@@ -29,104 +64,12 @@ export async function POST(req: NextRequest) {
     };
 
     if (contentType.includes("multipart/form-data")) {
-      // 1. Multipart Form Data (File Upload)
-      // Upload size guard (2 GB, matching the landing page's promise):
-      // reject before the pipeline spends RAM/CPU on an unbounded file.
-      const declaredLen = Number(req.headers.get("content-length") || 0);
-      if (declaredLen > 2_300_000_000) {
-        return NextResponse.json(
-          { error: "That file is over the 2 GB upload limit. Trim it or compress it and try again." },
-          { status: 413 }
-        );
-      }
-      const formData = await req.formData();
-      const file = formData.get("file") as File;
-
-      if (!file) {
-        return NextResponse.json({ error: "No video file provided" }, { status: 400 });
-      }
-
-      const customPrompt = (formData.get("customPrompt") as string) || undefined;
-      const aspectRatio = (formData.get("aspectRatio") as any) || "9:16";
-      const reframeMode = (formData.get("reframeMode") as any) || "auto-tracker";
-      const captionStyle = (formData.get("captionStyle") as any) || "hormozi";
-
-      options = {
-        sourceType: "upload",
-        fileName: file.name,
-        customPrompt,
-        aspectRatio,
-        reframeMode,
-        captionStyle,
-        removeSilences: (formData.get("removeSilences") as string) === "true",
-        maxClipsToRender: 2,
-        groqKey: ((formData.get("groqKey") as string) || "").trim() || undefined,
-        openaiKey: ((formData.get("openaiKey") as string) || "").trim() || undefined,
-        claudeKey: ((formData.get("claudeKey") as string) || "").trim() || undefined,
-        preferredModel: ((formData.get("preferredModel") as string) || "").trim() || undefined,
-        broll: (formData.get("broll") as string) === "true",
-        musicBed: (formData.get("musicBed") as string) === "true",
-        pexelsKey: ((formData.get("pexelsKey") as string) || "").trim() || undefined,
-        pixabayKey: ((formData.get("pixabayKey") as string) || "").trim() || undefined,
-      };
-
-      const uploadsDir = path.join(process.cwd(), "public", "uploads");
-      if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
-
-      const bytes = await file.arrayBuffer();
-      const buffer = Buffer.from(bytes);
-
-      const rawExt = path.extname(file.name).toLowerCase();
-      const safeExt = /^\.[a-z0-9]{1,8}$/.test(rawExt) ? rawExt : ".mp4";
-      const rawBase = path.basename(file.name, rawExt);
-      const safeBaseName = rawBase.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 60) || "upload";
-      const baseName = `${Date.now()}-${safeBaseName}`;
-
-      const rawPath = path.join(uploadsDir, `raw-${baseName}${safeExt}`);
-      fs.writeFileSync(rawPath, buffer);
-
-      const webMp4Filename = `${baseName}.mp4`;
-      const webMp4Path = path.join(uploadsDir, webMp4Filename);
-      const ffmpegBin = getFfmpegBinary();
-
-      // Probe stream format
-      const streamInfo = await probeVideoFormat(rawPath);
-      let transcodeNeeded = !streamInfo.isH264Yuv420p8Bit || streamInfo.isHdr || streamInfo.isVfr;
-
-      if (transcodeNeeded) {
-        let vfFilter = "scale='min(1920,iw)':-2";
-        if (streamInfo.isHdr && checkZscaleSupported()) {
-          vfFilter =
-            "scale='min(1920,iw)':-2,zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p";
-        }
-        await execFilePromise(ffmpegBin, [
-          "-y",
-          "-i", rawPath,
-          "-vf", vfFilter,
-          "-r", "30",
-          "-c:v", "libx264",
-          "-preset", "veryfast",
-          "-crf", "23",
-          "-pix_fmt", "yuv420p",
-          "-c:a", "aac",
-          "-b:a", "128k",
-          "-movflags", "+faststart",
-          webMp4Path,
-        ]);
-        resolvedFilePath = webMp4Path;
-        fileId = `uploads/${webMp4Filename}`;
-      } else {
-        // Fast stream copy
-        await execFilePromise(ffmpegBin, [
-          "-y",
-          "-i", rawPath,
-          "-c", "copy",
-          "-movflags", "+faststart",
-          webMp4Path,
-        ]);
-        resolvedFilePath = webMp4Path;
-        fileId = `uploads/${webMp4Filename}`;
-      }
+      // Whole-file multipart uploads were buffered in RAM (OOM on large
+      // files). The dashboard uses the streaming /api/upload-chunk route.
+      return NextResponse.json(
+        { error: "Upload files through /api/upload-chunk; /api/jobs accepts JSON only." },
+        { status: 415 }
+      );
     } else {
       // 2. JSON Payload (Existing fileId or YouTube download)
       let body: any;
@@ -192,6 +135,13 @@ export async function POST(req: NextRequest) {
           resolvedFilePath = path.join(downloadDir, existingSample);
           fileId = `downloads/${existingSample}`;
         } else {
+          const safeYoutubeUrl = normalizeYoutubeUrl(youtubeUrl);
+          if (!safeYoutubeUrl) {
+            return NextResponse.json(
+              { error: "Please paste a valid YouTube link (youtube.com or youtu.be)." },
+              { status: 400 }
+            );
+          }
           const filePrefix = `yt-${Date.now()}`;
           const outTemplate = path.join(downloadDir, `${filePrefix}.%(ext)s`);
           const ytDlp = getYtDlpBinary();
@@ -203,9 +153,8 @@ export async function POST(req: NextRequest) {
           const { arg: cookieArg, tempFile: tempCookiePath } = resolveCookieArg(cookies);
 
           // Proxy handling
-          const activeProxy = proxy || process.env.YOUTUBE_PROXY || process.env.HTTP_PROXY || "";
-          const proxyArgs: string[] =
-            activeProxy && activeProxy.trim().length > 5 ? ["--proxy", activeProxy.trim()] : [];
+          const activeProxy = normalizeProxy(proxy || process.env.YOUTUBE_PROXY || process.env.HTTP_PROXY || "");
+          const proxyArgs: string[] = activeProxy ? ["--proxy", activeProxy] : [];
           const cookiePath = cookieArg.match(/"([^"]+)"/)?.[1];
           const cookieArgs: string[] = cookiePath ? ["--cookies", cookiePath] : [];
 
@@ -227,7 +176,9 @@ export async function POST(req: NextRequest) {
           "--no-warnings", "--ignore-errors",
           "--merge-output-format", "mp4",
           "-o", outTemplate,
-          youtubeUrl,
+          // "--" ends option parsing: the URL can never be read as a flag.
+          "--",
+          safeYoutubeUrl,
         ];
 
         try {

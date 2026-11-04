@@ -27,6 +27,7 @@ const execFilePromise = util.promisify(execFile);
 
 const CHUNK_ROOT = path.join(process.cwd(), "data", "chunk-uploads");
 const MAX_CHUNKS = 1024; // 2MB client chunks -> up to ~2GB files
+const MAX_CHUNK_REQUEST_BYTES = 8 * 1024 * 1024; // 2MB chunk + multipart overhead, with headroom
 
 function partsDirFor(uploadId: string): string | null {
   if (!/^[a-zA-Z0-9-]{8,64}$/.test(uploadId)) return null;
@@ -42,6 +43,12 @@ export async function POST(req: NextRequest) {
   try {
     // ---- One chunk ------------------------------------------------------
     if (contentType.includes("multipart/form-data")) {
+      // formData() buffers the whole body in memory, so refuse anything far
+      // larger than a 2MB client chunk before parsing it.
+      const declaredLen = Number(req.headers.get("content-length") || 0);
+      if (!declaredLen || declaredLen > MAX_CHUNK_REQUEST_BYTES) {
+        return NextResponse.json({ error: "Chunk too large (or missing Content-Length)" }, { status: 413 });
+      }
       const formData = await req.formData();
       const uploadId = String(formData.get("uploadId") || "");
       const index = Number(formData.get("index"));

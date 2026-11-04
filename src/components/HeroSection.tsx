@@ -26,14 +26,17 @@ export default function HeroSection() {
     if (activeTab === "upload" && uploadFile) {
       setIsUploading(true);
       try {
-        const formData = new FormData();
-        formData.append("file", uploadFile);
         const storedToken =
           typeof window !== "undefined" ? localStorage.getItem("app_access_token") : null;
+        // Raw body (not multipart) so the server can stream it to disk.
         const res = await fetch("/api/upload", {
           method: "POST",
-          headers: storedToken ? { "x-app-access-token": storedToken } : {},
-          body: formData,
+          headers: {
+            "Content-Type": "application/octet-stream",
+            "x-file-name": encodeURIComponent(uploadFile.name),
+            ...(storedToken ? { "x-app-access-token": storedToken } : {}),
+          },
+          body: uploadFile,
         });
         let data: any = {};
         try {

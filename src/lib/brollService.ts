@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { CLAUDE_DEEP_MODEL } from "./claudeModels";
 
 /**
  * AI B-roll: plan visual cutaways for a clip from its transcript, then fetch
@@ -95,7 +96,7 @@ async function chatJson(prompt: string, keys: ChatKeys): Promise<string | null> 
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          model: "claude-sonnet-latest",
+          model: CLAUDE_DEEP_MODEL,
           max_tokens: 1200,
           messages: [{ role: "user", content: prompt }],
         }),
