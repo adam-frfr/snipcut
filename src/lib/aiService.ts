@@ -159,13 +159,10 @@ export async function analyzeTranscriptForViralClips({
   groqKey?: string;
   segments?: { start: number; end: number; text: string }[];
 }): Promise<CuratedClipResult[]> {
-  const activeOpenaiKey = (openaiKey || process.env.OPENAI_API_KEY || "").trim();
-  const activeClaudeKey = (claudeKey || process.env.ANTHROPIC_API_KEY || "").trim();
   const activeGroqKey = (groqKey || process.env.GROQ_API_KEY || "").trim();
   const hackclubKey = [openaiKey, claudeKey, process.env.HACKCLUB_API_KEY]
     .map((k) => (k || "").trim())
     .find((k) => isHackClubKey(k));
-  const activeKey = hackclubKey || activeOpenaiKey;
 
   const systemPrompt = `You are Snipcut AI, an expert video curation assistant for TikTok, YouTube Shorts, and Instagram Reels.
 Your task is to analyze video transcripts and extract 1 to 6 standalone viral short clips (ALWAYS return at least 1 clip, even if the transcript is short or concise).
@@ -199,103 +196,171 @@ You MUST respond strictly in valid JSON matching this schema:
   ]
 }`;
 
-  // ---- Provider-agnostic single curation call (returns raw model text) ----
-  const isGroqOnly = !hackclubKey && !activeOpenaiKey && !!activeGroqKey && !(activeClaudeKey && (model.includes("claude") || !activeOpenaiKey));
-  const callCuration = async (userContent: string): Promise<string> => {
-    if (activeClaudeKey && !hackclubKey && (model.includes("claude") || !activeOpenaiKey)) {
-      const anthropicModel = model.includes("sonnet") ? CLAUDE_DEEP_MODEL : CLAUDE_FAST_MODEL;
-      console.log(`[Stage: AI Curation] Calling Anthropic Claude (${anthropicModel})...`);
-      const anthropic = new Anthropic({ apiKey: activeClaudeKey });
-      const response = await anthropic.messages.create({
-        model: anthropicModel,
-        max_tokens: 4000,
-        system: systemPrompt,
-        messages: [{ role: "user", content: userContent }],
-      });
-      return response.content
-        .filter((b) => b.type === "text")
-        .map((b) => (b as { text: string }).text)
-        .join("");
-    }
+  // ---- Provider chain with fallback ----------------------------------------
+  // Users can bring their own Claude / OpenAI key for better curation; the
+  // server's key (Groq by default) is the base. Order: the user's preferred
+  // provider, the user's other key, server Claude/OpenAI keys, then Groq.
+  // A failing key (wrong, out of credit, rate-limited, retired model) falls
+  // through to the next instead of failing the whole job — previously one
+  // bad user key killed every curation call.
+  const wantsOpenAI = /gpt|openai|mini/i.test(model) && !/haiku|sonnet|claude/i.test(model);
+  const anthropicModel = /sonnet|deep/i.test(model) ? CLAUDE_DEEP_MODEL : CLAUDE_FAST_MODEL;
+  const openaiModels = (process.env.OPENAI_CURATION_MODELS || "gpt-5-mini,gpt-4.1-mini,gpt-4o-mini")
+    .split(",")
+    .map((m) => m.trim())
+    .filter(Boolean);
 
-    if (isGroqOnly) {
-      // Groq free tier: 8000 tokens/min. Callers keep each request small
-      // (windowed transcript) and pace calls; here we fail over key2 -> smaller model.
-      const groqKeys = [activeGroqKey, (process.env.GROQ_API_KEY2 || "").trim()].filter(
-        (k, idx, arr) => k && arr.indexOf(k) === idx
-      );
-      const groqModels = ["openai/gpt-oss-120b", "openai/gpt-oss-20b"];
-      let lastErr: unknown = null;
-      for (const key of groqKeys) {
-        const groq = new OpenAI({ apiKey: key, baseURL: "https://api.groq.com/openai/v1" });
-        // Strict JSON mode first; Groq rejects slightly-off JSON with a 400
-        // "Failed to validate JSON", which used to drop the whole transcript
-        // window (minutes of video never considered). Then retry once
-        // without JSON mode — the tolerant clip extractor handles prose.
-        const attempts = [
-          ...groqModels.map((m) => ({ model: m, json: true })),
-          { model: groqModels[0], json: false },
-        ];
-        for (const attempt of attempts) {
-          try {
-            console.log(`[Stage: AI Curation] Calling Groq (${attempt.model}${attempt.json ? "" : ", plain"})...`);
-            const response = await groq.chat.completions.create({
-              model: attempt.model,
-              ...(attempt.json ? { response_format: { type: "json_object" as const } } : {}),
-              messages: [
-                { role: "system", content: systemPrompt },
-                { role: "user", content: userContent },
-              ],
-            });
-            return response.choices[0]?.message?.content || "";
-          } catch (err) {
-            lastErr = err;
-            // The rejected output usually holds usable clips — salvage it.
-            const failed = (err as { error?: { failed_generation?: unknown } })?.error?.failed_generation;
-            if (typeof failed === "string" && extractClipsFromJsonString(failed).length > 0) {
-              console.warn(`[Stage: AI Curation] Groq ${attempt.model} JSON was rejected; recovered clips from its output`);
-              return failed;
-            }
-            const status = (err as { status?: number })?.status;
-            console.warn(`[Stage: AI Curation] Groq ${attempt.model} failed (${status ?? "error"}), trying next: ${err instanceof Error ? err.message : err}`);
-            // Free tier is 8000 tokens/min: after a rate limit, wait before retrying.
-            if (status === 429) await sleep(15000);
-          }
-        }
+  const runClaude = async (key: string, userContent: string): Promise<string> => {
+    console.log(`[Stage: AI Curation] Calling Anthropic Claude (${anthropicModel})...`);
+    const anthropic = new Anthropic({ apiKey: key });
+    const response = await anthropic.messages.create({
+      model: anthropicModel,
+      max_tokens: 4000,
+      system: systemPrompt,
+      messages: [{ role: "user", content: userContent }],
+    });
+    return response.content
+      .filter((b) => b.type === "text")
+      .map((b) => (b as { text: string }).text)
+      .join("");
+  };
+
+  const runOpenAI = async (key: string, userContent: string): Promise<string> => {
+    const client = getOpenAIClient(key);
+    let lastErr: unknown = null;
+    // Newest model first; a retired / unavailable model falls to the next.
+    for (const m of openaiModels) {
+      try {
+        console.log(`[Stage: AI Curation] Calling OpenAI (${m})...`);
+        const response = await client.chat.completions.create({
+          model: m,
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userContent },
+          ],
+        });
+        return response.choices[0]?.message?.content || "{}";
+      } catch (err) {
+        lastErr = err;
+        const status = (err as { status?: number })?.status;
+        // Only a missing/unsupported model is worth retrying on this key.
+        if (status !== 404 && status !== 400) throw err;
       }
-      throw lastErr instanceof Error ? lastErr : new Error("All Groq curation attempts failed");
     }
+    throw lastErr instanceof Error ? lastErr : new Error("OpenAI curation failed");
+  };
 
-    if (isHackClubKey(activeKey)) {
-      let targetModel = "~anthropic/claude-sonnet-latest";
-      if (model.includes("haiku")) {
-        targetModel = "~anthropic/claude-haiku-latest";
-      } else if (model.includes("gpt") || model.includes("mini")) {
-        targetModel = "~openai/gpt-mini-latest";
-      }
-      const client = getOpenAIClient(activeKey);
-      const response = await client.chat.completions.create({
-        model: targetModel,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userContent },
-        ],
-        max_tokens: 4000,
-      });
-      return response.choices[0]?.message?.content || "";
+  const runHackClub = async (key: string, userContent: string): Promise<string> => {
+    let targetModel = "~anthropic/claude-sonnet-latest";
+    if (model.includes("haiku")) {
+      targetModel = "~anthropic/claude-haiku-latest";
+    } else if (model.includes("gpt") || model.includes("mini")) {
+      targetModel = "~openai/gpt-mini-latest";
     }
-
-    // Standard OpenAI
-    const client = getOpenAIClient(activeKey);
+    const client = getOpenAIClient(key);
     const response = await client.chat.completions.create({
-      model: "gpt-4o-mini",
-      response_format: { type: "json_object" },
+      model: targetModel,
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userContent },
       ],
+      max_tokens: 4000,
     });
-    return response.choices[0]?.message?.content || "{}";
+    return response.choices[0]?.message?.content || "";
+  };
+
+  const runGroq = async (userContent: string): Promise<string> => {
+    // Groq free tier: 8000 tokens/min. Callers keep each request small
+    // (windowed transcript) and pace calls; here we fail over key2 -> smaller model.
+    const groqKeys = [activeGroqKey, (process.env.GROQ_API_KEY2 || "").trim()].filter(
+      (k, idx, arr) => k && arr.indexOf(k) === idx
+    );
+    const groqModels = ["openai/gpt-oss-120b", "openai/gpt-oss-20b"];
+    let lastErr: unknown = null;
+    for (const key of groqKeys) {
+      const groq = new OpenAI({ apiKey: key, baseURL: "https://api.groq.com/openai/v1" });
+      // Strict JSON mode first; Groq rejects slightly-off JSON with a 400
+      // "Failed to validate JSON", which used to drop the whole transcript
+      // window (minutes of video never considered). Then retry once
+      // without JSON mode — the tolerant clip extractor handles prose.
+      const attempts = [
+        ...groqModels.map((m) => ({ model: m, json: true })),
+        { model: groqModels[0], json: false },
+      ];
+      for (const attempt of attempts) {
+        try {
+          console.log(`[Stage: AI Curation] Calling Groq (${attempt.model}${attempt.json ? "" : ", plain"})...`);
+          const response = await groq.chat.completions.create({
+            model: attempt.model,
+            ...(attempt.json ? { response_format: { type: "json_object" as const } } : {}),
+            messages: [
+              { role: "system", content: systemPrompt },
+              { role: "user", content: userContent },
+            ],
+          });
+          return response.choices[0]?.message?.content || "";
+        } catch (err) {
+          lastErr = err;
+          // The rejected output usually holds usable clips — salvage it.
+          const failed = (err as { error?: { failed_generation?: unknown } })?.error?.failed_generation;
+          if (typeof failed === "string" && extractClipsFromJsonString(failed).length > 0) {
+            console.warn(`[Stage: AI Curation] Groq ${attempt.model} JSON was rejected; recovered clips from its output`);
+            return failed;
+          }
+          const status = (err as { status?: number })?.status;
+          console.warn(`[Stage: AI Curation] Groq ${attempt.model} failed (${status ?? "error"}), trying next: ${err instanceof Error ? err.message : err}`);
+          // Free tier is 8000 tokens/min: after a rate limit, wait before retrying.
+          if (status === 429) await sleep(15000);
+        }
+      }
+    }
+    throw lastErr instanceof Error ? lastErr : new Error("All Groq curation attempts failed");
+  };
+
+  type Provider = { name: string; groq?: boolean; run: (userContent: string) => Promise<string> };
+  const providers: Provider[] = [];
+  const seen = new Set<string>();
+  const add = (name: string, key: string, run: (k: string, c: string) => Promise<string>) => {
+    const k = (key || "").trim();
+    if (!k || seen.has(k) || isHackClubKey(k)) return;
+    seen.add(k);
+    providers.push({ name, run: (c) => run(k, c) });
+  };
+  if (hackclubKey) {
+    seen.add(hackclubKey);
+    providers.push({ name: "Hack Club proxy", run: (c) => runHackClub(hackclubKey, c) });
+  }
+  const userClaude = (claudeKey || "").trim();
+  const userOpenAI = (openaiKey || "").trim();
+  const serverClaude = (process.env.ANTHROPIC_API_KEY || "").trim();
+  const serverOpenAI = (process.env.OPENAI_API_KEY || "").trim();
+  const ordered: [string, string, typeof runClaude][] = wantsOpenAI
+    ? [["your OpenAI key", userOpenAI, runOpenAI], ["your Claude key", userClaude, runClaude], ["server OpenAI key", serverOpenAI, runOpenAI], ["server Claude key", serverClaude, runClaude]]
+    : [["your Claude key", userClaude, runClaude], ["your OpenAI key", userOpenAI, runOpenAI], ["server Claude key", serverClaude, runClaude], ["server OpenAI key", serverOpenAI, runOpenAI]];
+  for (const [name, key, run] of ordered) add(name, key, run);
+  if (activeGroqKey) providers.push({ name: "Groq (base)", groq: true, run: runGroq });
+
+  let lastProviderWasGroq = false;
+  const callCuration = async (userContent: string): Promise<string> => {
+    if (providers.length === 0) {
+      throw new Error("No AI key available for clip curation. Set GROQ_API_KEY on the server or add your own key in API Keys.");
+    }
+    let lastErr: unknown = null;
+    for (const p of providers) {
+      try {
+        const text = await p.run(userContent);
+        lastProviderWasGroq = Boolean(p.groq);
+        return text;
+      } catch (err) {
+        lastErr = err;
+        const status = (err as { status?: number })?.status;
+        console.warn(
+          `[Stage: AI Curation] ${p.name} failed (${status ?? "error"}: ${err instanceof Error ? err.message.slice(0, 160) : err}); falling back to the next provider`
+        );
+      }
+    }
+    throw lastErr instanceof Error ? lastErr : new Error("All AI providers failed");
   };
 
   // ---- Build timestamped transcript lines ----
@@ -367,7 +432,7 @@ You MUST respond strictly in valid JSON matching this schema:
       console.warn(`[Stage: AI Curation] Window ${wi + 1}/${windows.length} failed:`, err);
     }
     // Pace Groq free-tier calls (8000 TPM): ~7s between windows
-    if (isGroqOnly && wi < windows.length - 1) await sleep(7000);
+    if (lastProviderWasGroq && wi < windows.length - 1) await sleep(7000);
   }
 
   // De-duplicate overlapping candidates, keep highest scores first, cap at 6

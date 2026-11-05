@@ -240,7 +240,7 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
             <span className="font-black uppercase text-black">Direct API Usage</span>
           </div>
           <p className="text-[11px] font-bold text-[#555555] leading-relaxed">
-            Whisper transcription is ~18 cents per 30 minutes. Claude 3.5 Haiku is under 1 cent per clip.
+            All optional: the site works on its built-in key. Your own Claude or OpenAI key is used first for clip picking (and OpenAI for AI B-roll); if it fails, the built-in key takes over. Keys stay in this browser and are only sent with your own jobs.
           </p>
         </div>
 
@@ -328,7 +328,7 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
             <div className="grid grid-cols-3 gap-1.5">
               {[
                 { id: "claude-3-5-haiku", label: "Claude Haiku", note: "Fast" },
-                { id: "gpt-4o-mini", label: "GPT-4o Mini", note: "Budget" },
+                { id: "gpt-4o-mini", label: "OpenAI GPT", note: "Budget" },
                 { id: "claude-3-5-sonnet", label: "Claude Sonnet", note: "Deep" },
               ].map((m) => (
                 <button

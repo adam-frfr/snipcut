@@ -219,7 +219,33 @@ function DashboardContent() {
   const [reframeMode, setReframeMode] = useState<"auto-tracker" | "split-screen" | "blurred-fit" | "center">("auto-tracker");
   const [removeSilences, setRemoveSilences] = useState(false);
   const [jobCaptionStyle, setJobCaptionStyle] = useState<"hormozi" | "neon" | "beast" | "clean" | "kinetic" | "snipcut">("snipcut");
-  const [brollEnabled, setBrollEnabled] = useState(true);
+  // B-roll is opt-in: it needs a stock (Pexels / Pixabay) or OpenAI key —
+  // the server's own, or one the user brings in API Keys.
+  const [brollEnabled, setBrollEnabled] = useState(false);
+  const [serverBroll, setServerBroll] = useState(false);
+  const [userBrollKey, setUserBrollKey] = useState(false);
+  const refreshUserBrollKey = () => {
+    try {
+      setUserBrollKey(
+        ["snipcut_pexels_key", "snipcut_pixabay_key", "snipcut_openai_key"].some(
+          (k) => (localStorage.getItem(k) || "").trim().length > 0
+        )
+      );
+    } catch {}
+  };
+  useEffect(() => {
+    try {
+      setBrollEnabled(localStorage.getItem("snipcut_broll_enabled") === "1");
+    } catch {}
+    refreshUserBrollKey();
+  }, []);
+  const toggleBroll = (on: boolean) => {
+    setBrollEnabled(on);
+    try {
+      localStorage.setItem("snipcut_broll_enabled", on ? "1" : "0");
+    } catch {}
+  };
+  const brollKeyMissing = brollEnabled && !serverBroll && !userBrollKey;
   const [musicBedEnabled, setMusicBedEnabled] = useState(true);
   const [hookTitleEnabled, setHookTitleEnabled] = useState(true);
   const [keywordHighlightsEnabled, setKeywordHighlightsEnabled] = useState(true);
@@ -350,6 +376,7 @@ function DashboardContent() {
         const res = await fetch("/api/config");
         const data = await res.json();
         setHasServerKey(Boolean(data.hasKey));
+        setServerBroll(Boolean(data.hasBrollSource));
         if (data.requiresAuth) {
           const storedToken = localStorage.getItem("app_access_token");
           if (!storedToken) {
@@ -960,7 +987,13 @@ function DashboardContent() {
           </div>
         </div>
 
-        <ApiSettingsModal isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} />
+        <ApiSettingsModal
+          isOpen={settingsOpen}
+          onClose={() => {
+            setSettingsOpen(false);
+            refreshUserBrollKey();
+          }}
+        />
       </header>
 
       {/* Main Studio Viewport */}
@@ -1832,7 +1865,7 @@ function DashboardContent() {
                   <input
                     type="checkbox"
                     checked={brollEnabled}
-                    onChange={(e) => setBrollEnabled(e.target.checked)}
+                    onChange={(e) => toggleBroll(e.target.checked)}
                     className="w-4 h-4 accent-black cursor-pointer"
                   />
                   <span className="text-xs font-black uppercase tracking-wider text-black">AI B-Roll cutaways</span>
@@ -1840,6 +1873,18 @@ function DashboardContent() {
                     AI picks stock photos/videos that match each sentence and cuts away to them (AI-generated from your OpenAI key, or stock if you have a Pexels/Pixabay key; never over screen recordings or split-screens)
                   </span>
                 </label>
+                {brollKeyMissing && (
+                  <div className="ml-6 -mt-1 p-2 bg-[#FFF3C4] border-2 border-black text-[10px] font-bold text-black flex items-center gap-2 flex-wrap">
+                    <span>B-roll needs a key: add your OpenAI key (AI-made B-roll) or a Pexels / Pixabay key.</span>
+                    <button
+                      type="button"
+                      onClick={() => setSettingsOpen(true)}
+                      className="px-2 py-0.5 border-2 border-black bg-white hover:bg-[#FFC700] font-black uppercase text-[10px] cursor-pointer"
+                    >
+                      Add key
+                    </button>
+                  </div>
+                )}
                 <label className="flex items-center gap-2.5 cursor-pointer select-none">
                   <input
                     type="checkbox"

@@ -113,23 +113,29 @@ async function chatJson(prompt: string, keys: ChatKeys): Promise<string | null> 
   // OpenAI
   const openaiKey = (keys.openaiKey || "").trim();
   if (openaiKey && !openaiKey.startsWith("sk-hc-v1-")) {
-    try {
-      const res = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${openaiKey}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "gpt-4o-mini",
-          messages: [{ role: "user", content: prompt }],
-          temperature: 0.4,
-        }),
-        signal: timeout,
-      });
-      if (res.ok) {
-        const data: any = await res.json();
-        const text = data.choices?.[0]?.message?.content;
-        if (text) return text;
+    // Newest model first; a retired / unavailable one falls to the next.
+    const models = (process.env.OPENAI_CURATION_MODELS || "gpt-5-mini,gpt-4.1-mini,gpt-4o-mini")
+      .split(",")
+      .map((m) => m.trim())
+      .filter(Boolean);
+    for (const model of models) {
+      try {
+        const res = await fetch("https://api.openai.com/v1/chat/completions", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${openaiKey}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ model, messages: [{ role: "user", content: prompt }] }),
+          signal: timeout,
+        });
+        if (res.ok) {
+          const data: any = await res.json();
+          const text = data.choices?.[0]?.message?.content;
+          if (text) return text;
+        }
+        if (res.status !== 404 && res.status !== 400) break;
+      } catch {
+        break;
       }
-    } catch {}
+    }
   }
 
   // Groq fallback (gpt-oss-120b, then 20b; key2 rotation like the curation path)
