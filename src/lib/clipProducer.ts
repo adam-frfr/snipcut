@@ -5,12 +5,13 @@ import {
   cutKeepRanges,
   applyPostEffects,
   pickPunchZooms,
-  dropCuesOverlappingSplits,
+  shapeBrollCues,
   captionCenterSpans,
   SplitScreenCustomOptions,
   TrackingResult,
 } from "./videoService";
-import { buildSentences, planBroll, fetchBrollAssets } from "./brollService";
+import { buildSentences, planBroll, fetchBrollAssets, hasBrollSource } from "./brollService";
+import { measureBackgroundAudio, shotMap, coverage, inside, overlaps, Span } from "./adaptiveFx";
 import { computeKeepRanges, toOutputTime, wordsOnOutput, keptDuration, inSpokenOrder, Range, TimelineWord } from "./timeline";
 
 /**
@@ -62,6 +63,8 @@ export interface ProduceClipResult {
   fillersRemoved: number;
   deletedRemoved: number;
   fxSummary?: string;
+  /** Why effects were used or skipped for this clip. */
+  fxDecisions?: { music: boolean; musicReason?: string; talkingHead: number; notes: string[] };
   /** Caption words on the output clock. */
   outputWords: { start: number; end: number; text: string }[];
 }
@@ -147,6 +150,11 @@ export async function produceClip(o: ProduceClipOptions): Promise<ProduceClipRes
     // ---- 2-4 ---------------------------------------------------------------
     if (fx) {
       try {
+        // Does the clip already carry music / a sound bed? (Checked on the
+        // source audio while the picture renders.)
+        const bgAudio = o.musicBed
+          ? measureBackgroundAudio(o.inputPath, spanStart, spanDur, keptWords)
+          : Promise.resolve(null);
         const base = await renderSpan(cutting ? spanPath : basePath, true);
         if (cutting) {
           temp.push(spanPath);
@@ -155,9 +163,34 @@ export async function produceClip(o: ProduceClipOptions): Promise<ProduceClipRes
         temp.push(basePath);
         const finalDur = cutting ? keptDuration(ranges) : spanDur;
         const mapRel = (t: number) => toOutputTime(ranges, spanStart + t);
+        const layoutMode = o.splitScreen ? "split-screen" : o.reframeMode || "auto-tracker";
+        const mapSpans = (sp: Span[]) =>
+          sp.map((s) => ({ start: mapRel(s.start), end: mapRel(s.end) })).filter((s) => s.end - s.start > 0.05);
+        const shotsRel = shotMap(base.tracking, layoutMode, spanDur);
+        const shots = { crop: mapSpans(shotsRel.crop), fit: mapSpans(shotsRel.fit), split: mapSpans(shotsRel.split) };
+        // Mostly screen recording / slides / split: the frame is the content.
+        const talkingHead = coverage(shots.crop, finalDur);
+        const notes: string[] = [];
+
+        // Split parts of the clip: tracker split segments, or the whole
+        // clip in split-screen mode. Captions go on the seam there, and
+        // B-roll stays off them (the split IS the visual — a full-frame
+        // cutaway over a chosen split-screen was seen in testing).
+        const centerSpans = (layoutMode === "auto-tracker" || layoutMode === "split-screen" ? captionCenterSpans(base.tracking, spanDur, o.aspectRatio) : [])
+          .map((s) => ({ start: mapRel(s.start), end: mapRel(s.end) }))
+          .filter((s) => s.end > s.start);
 
         let cues: { start: number; end: number; assetPath: string; kind: "image" | "video" }[] = [];
-        if (o.broll) {
+        const brollKeys = { pexelsKey: o.keys?.pexelsKey, pixabayKey: o.keys?.pixabayKey, openaiKey: o.keys?.openaiKey };
+        if (o.broll && talkingHead < 0.4) {
+          notes.push(
+            shots.fit.length && coverage(shots.fit, finalDur) >= coverage(shots.split, finalDur)
+              ? "B-roll skipped: the frame itself is the content (screen/slides/wide shot)"
+              : "B-roll skipped: split-screen clip"
+          );
+        } else if (o.broll && !hasBrollSource(brollKeys)) {
+          notes.push("B-roll skipped: add an OpenAI key (AI-generated B-roll) in API Keys");
+        } else if (o.broll) {
           const sentences = buildSentences(pseudoSegments(keptWords), spanStart, spanEnd);
           if (sentences.length) {
             const plan = await planBroll(sentences, {
@@ -165,8 +198,19 @@ export async function produceClip(o: ProduceClipOptions): Promise<ProduceClipRes
               openaiKey: o.keys?.openaiKey,
               claudeKey: o.keys?.claudeKey,
             });
-            if (plan.length) {
-              const assets = await fetchBrollAssets(plan, {
+            // Decide WHERE cutaways go before fetching anything (AI images
+            // cost money): output clock, never over a split or a fit shot,
+            // then the usual hook-clear / spacing / 20%-coverage rules.
+            let wanted = plan
+              .map((p) => ({ ...p, start: mapRel(p.start), end: mapRel(p.end) }))
+              .filter((p) => p.end - p.start >= 0.6)
+              .filter((p) => !overlaps(centerSpans, p.start, p.end, 0.4) && !overlaps(shots.fit, p.start, p.end, 0.4));
+            const dropped = plan.length - wanted.length;
+            if (dropped > 0 && (shots.fit.length || centerSpans.length)) notes.push(`${dropped} B-roll idea(s) kept off screen/split shots`);
+            wanted = shapeBrollCues(wanted, finalDur);
+            if (wanted.length) {
+              const assets = await fetchBrollAssets(wanted, {
+                ...brollKeys,
                 pexelsKey: o.keys?.pexelsKey || process.env.PEXELS_API_KEY,
                 pixabayKey: o.keys?.pixabayKey || process.env.PIXABAY_API_KEY,
                 destDir: path.join(process.cwd(), "data", "broll"),
@@ -176,20 +220,18 @@ export async function produceClip(o: ProduceClipOptions): Promise<ProduceClipRes
             }
           }
         }
-        // Everything below runs on the output clock.
-        const layoutMode = o.splitScreen ? "split-screen" : o.reframeMode || "auto-tracker";
-        // Split parts of the clip: tracker split segments, or the whole
-        // clip in split-screen mode. Captions go on the seam there, and
-        // B-roll stays off them (the split IS the visual — a full-frame
-        // cutaway over a chosen split-screen was seen in testing).
-        const centerSpans = (layoutMode === "auto-tracker" || layoutMode === "split-screen" ? captionCenterSpans(base.tracking, spanDur, o.aspectRatio) : [])
-          .map((s) => ({ start: mapRel(s.start), end: mapRel(s.end) }))
-          .filter((s) => s.end > s.start);
-        cues = cues
-          .map((c) => ({ ...c, start: mapRel(c.start), end: mapRel(c.end) }))
-          .filter((c) => c.end - c.start >= 0.6);
-        cues = dropCuesOverlappingSplits(cues, centerSpans.map((s) => ({ ...s, layout: "split" })));
-        const punches = pickPunchZooms(outputWords);
+        // Punch zooms only on a talking head: inside a crop shot and not
+        // while a cutaway covers it.
+        const punches = pickPunchZooms(
+          outputWords,
+          (s, e) => inside(shots.crop, s, e) && !overlaps(cues, s, e, 0.05) && !overlaps(centerSpans, s, e, 0.05)
+        );
+        const bg = await bgAudio;
+        const music = Boolean(o.musicBed) && !(bg && bg.hasBackground);
+        if (o.musicBed && bg) {
+          console.log(`[ClipProducer] Music bed ${music ? "on" : "skipped"}: ${bg.reason}`);
+          if (!music) notes.push("music skipped: the video already has music/sound");
+        }
 
         await applyPostEffects({
           basePath,
@@ -200,7 +242,7 @@ export async function produceClip(o: ProduceClipOptions): Promise<ProduceClipRes
           captionStyle: o.captionStyle,
           broll: cues,
           punches,
-          musicBed: Boolean(o.musicBed),
+          musicBed: music,
           captionPositionY: o.captionPositionY,
           captionOptions: { keywords, centerSpans, hook: hookText ? { text: hookText } : undefined },
         });
@@ -211,7 +253,10 @@ export async function produceClip(o: ProduceClipOptions): Promise<ProduceClipRes
           fillersRemoved,
           deletedRemoved,
           outputWords,
-          fxSummary: `🎬 ${cues.length} B-roll cutaway${cues.length === 1 ? "" : "s"}, ${punches.length} punch zoom${punches.length === 1 ? "" : "s"}${o.musicBed ? ", music bed" : ""}`,
+          fxSummary:
+            `🎬 ${cues.length} B-roll cutaway${cues.length === 1 ? "" : "s"}, ${punches.length} punch zoom${punches.length === 1 ? "" : "s"}${music ? ", music bed" : ""}` +
+            (notes.length ? ` (${notes.join("; ")})` : ""),
+          fxDecisions: { music, musicReason: bg?.reason, talkingHead: Number(talkingHead.toFixed(2)), notes },
         };
       } catch (fxErr) {
         // FX must never cost the user the clip: fall through to the plain render.

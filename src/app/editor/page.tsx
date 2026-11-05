@@ -404,6 +404,7 @@ function EditorContent() {
         keywords: fx.keywordHighlights ? clip.keyPhrases || [] : null,
         pexelsKey: localStorage.getItem("snipcut_pexels_key") || undefined,
         pixabayKey: localStorage.getItem("snipcut_pixabay_key") || undefined,
+        openaiKey: localStorage.getItem("snipcut_openai_key") || undefined,
       });
 
       const start = Number(trimStart.toFixed(2));

@@ -17,6 +17,11 @@ const tests = [
     args: ["tsx", path.join(__dirname, "test-clip-boundaries.ts")],
   },
   {
+    name: "Adaptive Effects: Music, B-roll & Zooms Follow the Video",
+    cmd: "npx",
+    args: ["tsx", path.join(__dirname, "test-adaptive-fx.ts")],
+  },
+  {
     name: "Job Lock: One Worker Per Job",
     cmd: "npx",
     args: ["tsx", path.join(__dirname, "test-job-lock.ts")],

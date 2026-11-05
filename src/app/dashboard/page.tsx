@@ -846,6 +846,7 @@ function DashboardContent() {
           keywords: (clip.fx ? clip.fx.keywordHighlights : keywordHighlightsEnabled) ? clip.keyPhrases || [] : null,
           pexelsKey: localStorage.getItem("snipcut_pexels_key") || undefined,
           pixabayKey: localStorage.getItem("snipcut_pixabay_key") || undefined,
+          openaiKey: localStorage.getItem("snipcut_openai_key") || undefined,
       });
 
       if (data.tracking?.summary) {
@@ -1836,7 +1837,7 @@ function DashboardContent() {
                   />
                   <span className="text-xs font-black uppercase tracking-wider text-black">AI B-Roll cutaways</span>
                   <span className="text-[10px] font-medium text-neutral-500 normal-case tracking-normal">
-                    AI picks stock photos/videos that match each sentence and cuts away to them
+                    AI picks stock photos/videos that match each sentence and cuts away to them (AI-generated from your OpenAI key, or stock if you have a Pexels/Pixabay key; never over screen recordings or split-screens)
                   </span>
                 </label>
                 <label className="flex items-center gap-2.5 cursor-pointer select-none">
@@ -1848,7 +1849,7 @@ function DashboardContent() {
                   />
                   <span className="text-xs font-black uppercase tracking-wider text-black">Music bed + punch-in zooms</span>
                   <span className="text-[10px] font-medium text-neutral-500 normal-case tracking-normal">
-                    Quiet background pad that ducks under speech, plus zoom punches on big words
+                    Quiet background pad that ducks under speech (skipped when the video already has music), plus zoom punches on big words
                   </span>
                 </label>
                 <label className="flex items-center gap-2.5 cursor-pointer select-none">

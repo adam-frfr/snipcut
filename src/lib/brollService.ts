@@ -282,13 +282,73 @@ export function brollTitleMatches(query: string, title: string): boolean {
   return hits >= (terms.length >= 3 ? 2 : 1);
 }
 
+export const wikimediaAllowed = () => process.env.BROLL_ALLOW_WIKIMEDIA === "1";
+
+const imageKey = (k?: string) => {
+  const key = (k || process.env.OPENAI_API_KEY || "").trim();
+  return key && !key.startsWith("sk-hc-v1-") ? key : "";
+};
+
+/** Is there a source that gives on-topic B-roll (stock keys or AI images)? */
+export function hasBrollSource(keys: { pexelsKey?: string; pixabayKey?: string; openaiKey?: string }): boolean {
+  const pexels = (keys.pexelsKey || process.env.PEXELS_API_KEY || "").trim();
+  const pixabay = (keys.pixabayKey || process.env.PIXABAY_API_KEY || "").trim();
+  return Boolean(pexels || pixabay || imageKey(keys.openaiKey) || wikimediaAllowed());
+}
+
+/** One photorealistic vertical B-roll still for a cue, written to `dest` (PNG). */
+async function generateBrollImage(apiKey: string, item: BrollPlanItem, dest: string): Promise<boolean> {
+  const prompt =
+    `Photorealistic vertical (9:16) B-roll photo for a short-form video. Show: ${item.query}. ` +
+    `It illustrates the line: "${item.text.slice(0, 220)}". ` +
+    `Natural cinematic lighting, shallow depth of field, real-world setting. ` +
+    `No text, no captions, no logos, no watermarks, no recognizable real people.`;
+  try {
+    const res = await fetch("https://api.openai.com/v1/images/generations", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: process.env.OPENAI_IMAGE_MODEL || "gpt-image-1",
+        prompt,
+        size: "1024x1536",
+        quality: process.env.OPENAI_IMAGE_QUALITY || "medium",
+        n: 1,
+      }),
+      signal: AbortSignal.timeout(120000),
+    });
+    if (!res.ok) {
+      console.warn(`[B-roll] AI image failed (${res.status}): ${(await res.text()).slice(0, 200)}`);
+      return false;
+    }
+    const data: any = await res.json();
+    const b64 = data?.data?.[0]?.b64_json;
+    if (b64) {
+      fs.writeFileSync(dest, Buffer.from(b64, "base64"));
+    } else if (data?.data?.[0]?.url) {
+      if (!(await downloadToFile(data.data[0].url, dest))) return false;
+    } else {
+      return false;
+    }
+    if (!looksLikeImage(dest)) {
+      try { fs.unlinkSync(dest); } catch {}
+      return false;
+    }
+    console.log(`[B-roll] AI image for "${item.query}"`);
+    return true;
+  } catch (e: any) {
+    console.warn(`[B-roll] AI image error: ${e?.message || e}`);
+    return false;
+  }
+}
+
 export async function fetchBrollAssets(
   plan: BrollPlanItem[],
-  opts: { pexelsKey?: string; pixabayKey?: string; destDir: string; tag: string }
+  opts: { pexelsKey?: string; pixabayKey?: string; openaiKey?: string; destDir: string; tag: string }
 ): Promise<BrollAsset[]> {
   fs.mkdirSync(opts.destDir, { recursive: true });
   const pexelsKey = (opts.pexelsKey || process.env.PEXELS_API_KEY || "").trim();
   const pixabayKey = (opts.pixabayKey || process.env.PIXABAY_API_KEY || "").trim();
+  const openaiKey = imageKey(opts.openaiKey);
   const assets: BrollAsset[] = [];
 
   for (let i = 0; i < plan.length; i++) {
@@ -402,7 +462,9 @@ export async function fetchBrollAssets(
     // Wikimedia Commons (no key) — images. Openverse's anonymous API is
     // Cloudflare-gated from many networks, so Commons is the reliable
     // no-key source; results are documentary/encyclopedic in flavour.
-    if (!done) {
+    // Opt-in only: tested on real clips it cut away to brain diagrams,
+    // museum objects and random scenery — worse than no B-roll at all.
+    if (!done && wikimediaAllowed()) {
       try {
         const api =
           `https://commons.wikimedia.org/w/api.php?action=query&generator=search` +
@@ -459,6 +521,17 @@ export async function fetchBrollAssets(
           }
         }
       } catch {}
+    }
+
+    // AI-generated still (OpenAI Images). Pexels / Pixabay stopped issuing
+    // new API keys, so for most users this is THE B-roll source: one
+    // on-topic vertical image per cutaway, animated with a Ken Burns drift.
+    if (!done && openaiKey) {
+      const dest = path.join(opts.destDir, `${opts.tag}-${i}-ai.png`);
+      if (await generateBrollImage(openaiKey, item, dest)) {
+        assets.push({ ...item, kind: "image", assetPath: dest });
+        done = true;
+      }
     }
 
     if (!done) console.log(`[B-roll] No asset found for cue ${i} ("${item.query}") — keeping base footage`);
