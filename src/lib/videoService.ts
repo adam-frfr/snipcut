@@ -5,7 +5,19 @@ import fs from "fs";
 import os from "os";
 import { spawn, execFile } from "child_process";
 import util from "util";
+import { emojiFor } from "./emojiMap";
 import {
+  parseCounter,
+  formatCounter,
+  filmLookFilter,
+  fitBackgroundChain,
+  hexToAss,
+  isProfane,
+  maskProfanity,
+  detectHypeMoments,
+  emojiImage,
+  CAPTION_SIZE_SCALE,
+  FitBackground,
   ClipStyle,
   MusicMood,
   DEFAULT_CLIP_STYLE,
@@ -340,6 +352,10 @@ export interface RenderOptions {
   hookTitle?: string;
   /** Caption font key (CAPTION_FONTS). */
   captionFont?: string;
+  /** Background behind fitted (screen / wide) shots. */
+  fitBackground?: FitBackground;
+  /** Brand colour (#RRGGBB) for the "brand" fit background. */
+  brandHex?: string;
 }
 
 export interface FocusShot {
@@ -477,6 +493,23 @@ export interface CaptionOptions {
   hook?: { text: string; until?: number };
   /** Caption height was chosen by the user: every style honours marginV. */
   customMarginV?: boolean;
+  textCase?: "upper" | "title" | "lower";
+  /** Caption size multiplier (1 = the style's size). */
+  sizeScale?: number;
+  /** Who is talking when (0 / 1); speaker 2's spoken word gets a second colour. */
+  speakerSpans?: { start: number; end: number; speaker: number }[];
+  /** Brand colours (ASS &H00BBGGRR) for the spoken word and keywords. */
+  brand?: { accent: string; kw: string };
+  /** Second-language line under the captions. */
+  translations?: { start: number; end: number; text: string }[];
+  hookAnim?: string;
+  endCard?: { text: string; sub?: string; start: number; end: number };
+  lowerThird?: { name: string; title?: string };
+  /** Numbers count up big on screen when they're said. */
+  counters?: boolean;
+  watermark?: { text: string; pos: string; opacity: number };
+  /** Telestrator marks (x/y in % of the frame). */
+  drawings?: { t: number; x: number; y: number; kind: "circle" | "arrow" }[];
 }
 
 const KEYWORD_STOPWORDS = new Set(
@@ -553,14 +586,27 @@ export function buildKaraokeAss(
   // Split-screen: captions on the seam between the two panels, never over a face.
   const posTag = (t: number) =>
     centerSpans.some((s) => t >= s.start - 0.05 && t < s.end) ? "{\\an5}" : "";
-  const pal = palettes[captionStyle] || palettes.hormozi;
+  const palBase = palettes[captionStyle] || palettes.hormozi;
+  const pal =
+    options.brand && captionStyle !== "clean" ? { ...palBase, accent: options.brand.accent, kw: options.brand.kw } : palBase;
+  const SPEAKER2 = pal.accent === "&H00FFC83C" ? "&H0000FFFF" : "&H00FFC83C";
+  const speakerSpans = options.speakerSpans || [];
+  // Spoken-word colour: speaker 2 gets a second colour.
+  const A = (t: number) =>
+    speakerSpans.some((s) => s.speaker === 1 && t >= s.start - 0.05 && t < s.end) ? SPEAKER2 : pal.accent;
+  const cased = (t: string) =>
+    options.textCase === "lower"
+      ? t.toLowerCase()
+      : options.textCase === "title"
+        ? t.replace(/^(\P{L}*)(\p{L})/u, (_m, pre, c) => pre + c.toUpperCase())
+        : t.toUpperCase();
   // Font size is authored against a 1920px-tall canvas; scale it to the
   // actual PlayRes so 16:9 / 1:1 renders don't get oversized captions.
   // Sizes are authored for a 1080px-wide 9:16 frame. Scale by the SHORT
   // side so 16:9 and 1:1 captions are as readable as 9:16 ones (scaling by
   // height/1920 shrank 16:9 captions to 56% — unreadable on a phone).
   const captionScale = Math.min(playRes.x, playRes.y) / 1080;
-  const fontBoost = CAPTION_FONT_SCALE[options.font || ""] || 1;
+  const fontBoost = (CAPTION_FONT_SCALE[options.font || ""] || 1) * (options.sizeScale || 1);
   const fontSize = Math.max(20, Math.round(pal.size * captionScale * fontBoost));
   const snipcutMarginV = options.customMarginV ? marginV : Math.round(playRes.y * 0.16);
   const fontName = CAPTION_FONTS[options.font || "default"] || "Arial";
@@ -588,9 +634,37 @@ export function buildKaraokeAss(
       l.replace(/\\/g, "\\\\").replace(/\{/g, "\\{").replace(/\}/g, "\\}")
     );
     if (lines.length) {
-      hookEvents.push(
-        `Dialogue: 1,${formatAssTime(0)},${formatAssTime(until)},Hook,,0,0,0,,{${hookFs !== hookSize ? `\\fs${hookFs}` : ""}\\fad(120,220)\\fscx88\\fscy88\\t(0,160,1,\\fscx100\\fscy100)}${lines.join("\\N")}`
-      );
+      const fsTag = hookFs !== hookSize ? `\\fs${hookFs}` : "";
+      const hx = Math.round(playRes.x / 2);
+      const hy = Math.round(playRes.y * 0.11);
+      const anim = options.hookAnim || "pop";
+      if (anim === "typewriter") {
+        // Letters appear one after another, the card grows with them.
+        const full = raw.join("\n");
+        const steps = Math.min(full.length, 26);
+        const span = Math.min(0.9, until * 0.4);
+        for (let k = 1; k <= steps; k++) {
+          const n = Math.round((full.length * k) / steps);
+          const t0 = ((k - 1) / steps) * span;
+          const t1 = k === steps ? until : (k / steps) * span;
+          const txt = full
+            .slice(0, n)
+            .split("\n")
+            .map((l) => l.replace(/\\/g, "\\\\").replace(/\{/g, "\\{").replace(/\}/g, "\\}"))
+            .join("\\N");
+          hookEvents.push(`Dialogue: 1,${formatAssTime(t0)},${formatAssTime(t1)},Hook,,0,0,0,,{${fsTag}${k === steps ? "\\fad(0,220)" : ""}}${txt}`);
+        }
+      } else {
+        const tags =
+          anim === "slide"
+            ? `\\fad(60,220)\\move(${-Math.round(playRes.x * 0.6)},${hy},${hx},${hy},0,280)`
+            : anim === "drop"
+              ? `\\fad(60,220)\\move(${hx},${-Math.round(playRes.y * 0.12)},${hx},${hy},0,240)\\t(240,320,\\fscy90)\\t(320,400,\\fscy100)`
+              : anim === "shake"
+                ? "\\fad(120,220)\\fscx88\\fscy88\\t(0,160,1,\\fscx100\\fscy100)\\t(160,210,\\frz4)\\t(210,260,\\frz-4)\\t(260,310,\\frz2)\\t(310,360,\\frz0)"
+                : "\\fad(120,220)\\fscx88\\fscy88\\t(0,160,1,\\fscx100\\fscy100)";
+        hookEvents.push(`Dialogue: 1,${formatAssTime(0)},${formatAssTime(until)},Hook,,0,0,0,,{${fsTag}${tags}}${lines.join("\\N")}`);
+      }
     }
   }
 
@@ -608,12 +682,29 @@ Style: Karaoke,${fontName},${fontSize},${pal.base},${pal.base},&H00000000,&H0000
 Style: Kinetic,${fontName},${fontSize},${pal.base},${pal.base},&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,${pal.outline},3,5,40,40,0,1
 Style: Snipcut,${fontName},${Math.max(20, Math.round(74 * captionScale * fontBoost))},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,10,2,2,50,50,${snipcutMarginV},1
 Style: Pro,${fontName},${proSize},${pal.base},${pal.base},&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,${pal.outline},2,2,50,50,${snipcutMarginV},1
+Style: Sub,${fontName},${Math.max(18, Math.round(42 * captionScale))},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,${Math.max(2, Math.round(4 * captionScale))},1,2,60,60,${Math.max(24, (captionStyle === "kinetic" ? Math.round(playRes.y * 0.16) : ["snipcut", "boxed", "bounce", "typewriter", "slide", "glow"].includes(captionStyle) ? snipcutMarginV : marginV) - Math.round(fontSize * 0.5) - Math.round(42 * captionScale))},1
+Style: End,${fontName},${Math.max(24, Math.round(118 * captionScale))},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,${Math.max(3, Math.round(8 * captionScale))},3,5,60,60,0,1
+Style: LTName,${fontName},${Math.max(18, Math.round(50 * captionScale))},&H00111111,&H00111111,${pal.accent === "&H00FFFFFF" ? "&H0000D7FF" : pal.accent},&H00000000,-1,0,0,0,100,100,0,0,3,${Math.max(6, Math.round(14 * captionScale))},0,1,60,60,0,1
+Style: LTTitle,${fontName},${Math.max(16, Math.round(36 * captionScale))},&H00FFFFFF,&H00FFFFFF,&H00111111,&H00000000,0,0,0,0,100,100,0,0,3,${Math.max(5, Math.round(11 * captionScale))},0,1,60,60,0,1
+Style: Counter,${fontName},${Math.max(30, Math.round(150 * captionScale))},${pal.accent === "&H00FFFFFF" ? "&H0000FFFF" : pal.accent},&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,${Math.max(4, Math.round(10 * captionScale))},4,5,40,40,0,1
+Style: Mark,${fontName},${Math.max(14, Math.round(34 * captionScale))},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,1,0,1,2,1,9,44,44,${Math.round(playRes.y * 0.05)},1
+Style: Draw,Arial,20,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,6,0,5,0,0,0,1
 Style: Hook,Arial,${hookSize},&H00111111,&H00111111,&H00FFFFFF,&H00000000,-1,0,0,0,100,100,0,0,3,${Math.max(6, Math.round(20 * captionScale))},0,8,80,80,${Math.round(playRes.y * 0.11)},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 `;
-  const finish = (evts: string[]) => header + [...preventCaptionOverlaps(evts), ...hookEvents].join("\n") + "\n";
+  const extraEvents = buildExtraEvents(words, options, {
+    playRes,
+    captionScale,
+    fontSize,
+    accent: pal.accent,
+    kw: pal.kw,
+    centred: (t: number) => posTag(t) !== "",
+    hookUntil: hookText ? Math.max(1.2, Math.min(options.hook?.until ?? 3.2, words.length ? words[words.length - 1].end : 3.2)) : 0,
+  });
+  const finish = (evts: string[]) =>
+    header + [...preventCaptionOverlaps(evts), ...hookEvents, ...extraEvents].join("\n") + "\n";
 
   const escapeAssText = (t: string) => t.replace(/\\/g, "\\\\").replace(/\{/g, "\\{").replace(/\}/g, "\\}");
 
@@ -653,7 +744,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
           lead = `{\\an${an}\\pos(${x},${y})}`;
         }
         const parts = phrase.map((pw, j) => {
-          const txt = escapeAssText(pw.text.toUpperCase());
+          const txt = escapeAssText(cased(pw.text));
           const kw = isKeyword(pw.text);
           if (captionStyle === "typewriter" && j > i) return `{\\alpha&HFF&}${txt}{\\r}`;
           if (j !== i) {
@@ -664,18 +755,18 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
           switch (captionStyle) {
             case "boxed":
               // A thick accent-coloured outline reads as a rounded box behind the word.
-              return `{\\c&H00111111&\\3c${pal.accent}\\bord${Math.round(16 * captionScale)}\\shad0}${txt}{\\r}`;
+              return `{\\c&H00111111&\\3c${A(w.start)}\\bord${Math.round(16 * captionScale)}\\shad0}${txt}{\\r}`;
             case "bounce": {
               const shake = kw ? "\\t(130,170,\\frz5)\\t(170,210,\\frz-5)\\t(210,250,\\frz0)" : "";
-              return `{\\c${pal.accent}\\fscx135\\fscy135\\t(0,110,\\fscx92\\fscy92)\\t(110,190,\\fscx100\\fscy100)${shake}}${txt}{\\r}`;
+              return `{\\c${A(w.start)}\\fscx135\\fscy135\\t(0,110,\\fscx92\\fscy92)\\t(110,190,\\fscx100\\fscy100)${shake}}${txt}{\\r}`;
             }
             case "typewriter":
-              return `{\\c${pal.accent}\\fad(60,0)}${txt}{\\r}`;
+              return `{\\c${A(w.start)}\\fad(60,0)}${txt}{\\r}`;
             case "glow":
               // White letters, strong coloured glow — readable, not a blur.
-              return `{\\c&H00FFFFFF&\\3c${pal.accent}\\bord7\\blur10\\fscx112\\fscy112\\t(0,120,\\fscx100\\fscy100)}${txt}{\\r}`;
+              return `{\\c&H00FFFFFF&\\3c${A(w.start)}\\bord7\\blur10\\fscx112\\fscy112\\t(0,120,\\fscx100\\fscy100)}${txt}{\\r}`;
             default:
-              return `{\\c${pal.accent}\\fscx112\\fscy112\\t(0,100,\\fscx100\\fscy100)}${txt}{\\r}`;
+              return `{\\c${A(w.start)}\\fscx112\\fscy112\\t(0,100,\\fscx100\\fscy100)}${txt}{\\r}`;
           }
         });
         evts.push(`Dialogue: 0,${formatAssTime(w.start)},${formatAssTime(evEnd)},Pro,,0,0,0,,${lead}${parts.join(" ")}`);
@@ -729,9 +820,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         const nextStart = i + 1 < phrase.length ? phrase[i + 1].start : w.end;
         const evEnd = Math.max(w.end, Math.min(nextStart, w.start + 0.12));
         const parts = phrase.map((pw, j) => {
-          const txt = escapeAssText(pw.text.toUpperCase());
+          const txt = escapeAssText(cased(pw.text));
           if (j === i) {
-            return `{\\c${pal.accent}\\fs${Math.round(snipcutFont * fit * 1.16)}\\fscx116\\fscy116\\t(0,90,1,\\fscx100\\fscy100)}${txt}{\\r}`;
+            return `{\\c${A(w.start)}\\fs${Math.round(snipcutFont * fit * 1.16)}\\fscx116\\fscy116\\t(0,90,1,\\fscx100\\fscy100)}${txt}{\\r}`;
           }
           const kw = isKeyword(pw.text) ? `\\c${pal.kw}` : "";
           if (fit < 1 || kw) return `{${kw}${fit < 1 ? `\\fs${Math.round(snipcutFont * fit)}` : ""}}${txt}{\\r}`;
@@ -787,9 +878,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
       }, 0);
       const fitScale = estWidth > avail ? Math.max(0.55, avail / estWidth) : 1;
       const parts = chunk.map((w, i) => {
-        const txt = escapeAssText(w.text.toUpperCase());
+        const txt = escapeAssText(cased(w.text));
         if (i === emph && chunk.length > 1) {
-          const col = isKeyword(w.text) ? pal.kw : pal.accent;
+          const col = isKeyword(w.text) ? pal.kw : A(w.start);
           return `{\\c${col}\\fs${Math.round(fontSize * fitScale * 1.14)}}${txt}{\\r}`;
         }
         return txt;
@@ -826,11 +917,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
       const evStart = w.start;
       const evEnd = Math.max(w.end, Math.min(nextStart, w.start + 0.12));
       const parts = phrase.map((pw, j) => {
-        const txt = escapeAss(pw.text.toUpperCase());
+        const txt = escapeAss(cased(pw.text));
         if (captionStyle === "clean") {
           return j === i ? `{\\b1}${txt}{\\b0}` : txt;
         }
-        if (j === i) return `{\\c${pal.accent}\\fs${Math.round(fontSize * 1.12)}}${txt}{\\r}`;
+        if (j === i) return `{\\c${A(w.start)}\\fs${Math.round(fontSize * 1.12)}}${txt}{\\r}`;
         if (isKeyword(pw.text)) return `{\\c${pal.kw}}${txt}{\\r}`;
         return txt;
       });
@@ -840,6 +931,109 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     }
   }
   return finish(events);
+}
+
+
+/** Layered extras: second-language line, end card, lower third, counters, watermark, drawings. */
+function buildExtraEvents(
+  words: KaraokeWord[],
+  options: CaptionOptions,
+  ctx: {
+    playRes: { x: number; y: number };
+    captionScale: number;
+    fontSize: number;
+    accent: string;
+    kw: string;
+    centred: (t: number) => boolean;
+    hookUntil: number;
+  }
+): string[] {
+  const out: string[] = [];
+  const { playRes, captionScale } = ctx;
+  const esc = (t: string) => t.replace(/\\/g, "\\\\").replace(/\{/g, "\\{").replace(/\}/g, "\\}");
+  const cx = Math.round(playRes.x / 2);
+  const T = formatAssTime;
+
+  for (const tl of options.translations || []) {
+    if (!tl.text) continue;
+    const pos = ctx.centred(tl.start) ? `{\\an8\\pos(${cx},${Math.round(playRes.y / 2 + ctx.fontSize * 0.75)})}` : "";
+    out.push(`Dialogue: 0,${T(tl.start)},${T(tl.end)},Sub,,0,0,0,,${pos}${esc(tl.text)}`);
+  }
+
+  if (options.endCard && options.endCard.end > options.endCard.start) {
+    const ec = options.endCard;
+    const sub = ec.sub ? `\\N{\\c${ctx.kw}\\fs${Math.round(64 * captionScale)}}${esc(ec.sub)}` : "";
+    out.push(
+      `Dialogue: 4,${T(ec.start)},${T(ec.end)},End,,0,0,0,,{\\an5\\pos(${cx},${Math.round(playRes.y * 0.44)})\\fad(160,0)\\fscx40\\fscy40\\t(0,220,\\fscx112\\fscy112)\\t(220,360,\\fscx100\\fscy100)}${esc(ec.text)}${sub}`
+    );
+  }
+
+  if (options.lowerThird?.name) {
+    const lt = options.lowerThird;
+    const last = words.length ? words[words.length - 1].end : 6;
+    const t0 = Math.min(0.6, last);
+    const t1 = Math.min(Math.max(t0 + 1.5, 4.8), last + 0.5);
+    const y = Math.round(playRes.y * (playRes.y > playRes.x ? 0.66 : 0.72));
+    const x = Math.round(60 * captionScale);
+    out.push(`Dialogue: 3,${T(t0)},${T(t1)},LTName,,0,0,0,,{\\an1\\move(${-playRes.x},${y},${x},${y},0,320)\\fad(0,250)}${esc(lt.name.toUpperCase())}`);
+    if (lt.title) {
+      const y2 = y + Math.round(64 * captionScale);
+      out.push(`Dialogue: 3,${T(t0 + 0.12)},${T(t1)},LTTitle,,0,0,0,,{\\an1\\move(${-playRes.x},${y2},${x},${y2},0,320)\\fad(0,250)}${esc(lt.title)}`);
+    }
+  }
+
+  if (options.counters) {
+    let n = 0;
+    let lastAt = -10;
+    for (const w of words) {
+      const c = w.text.split(/\s+/).map((tok) => parseCounter(tok)).find((x) => x) || null;
+      if (!c || n >= 3 || w.start - lastAt < 3 || w.start < ctx.hookUntil + 0.1) continue;
+      n++;
+      lastAt = w.start;
+      const steps = 12;
+      const stepDur = 0.045;
+      const y = Math.round(playRes.y * (playRes.y > playRes.x ? 0.3 : 0.32));
+      for (let k = 0; k < steps; k++) {
+        const f = (k + 1) / steps;
+        const eased = 1 - Math.pow(1 - f, 3);
+        const t0 = w.start + k * stepDur;
+        const t1 = k === steps - 1 ? Math.max(w.end + 0.9, t0 + 0.6) : t0 + stepDur;
+        const tags = k === 0 ? "\\fscx70\\fscy70\\t(0,120,\\fscx100\\fscy100)" : k === steps - 1 ? "\\fscx118\\fscy118\\t(0,140,\\fscx100\\fscy100)\\fad(0,200)" : "";
+        out.push(`Dialogue: 3,${T(t0)},${T(t1)},Counter,,0,0,0,,{\\an5\\pos(${cx},${y})${tags}}${esc(formatCounter(c, c.value * eased))}`);
+      }
+    }
+  }
+
+  if (options.watermark?.text) {
+    const wm = options.watermark;
+    const an = wm.pos === "top-left" ? 7 : wm.pos === "bottom-left" ? 1 : wm.pos === "bottom-right" ? 3 : 9;
+    const alpha = Math.round(255 * (1 - Math.min(100, Math.max(10, wm.opacity)) / 100))
+      .toString(16)
+      .padStart(2, "0")
+      .toUpperCase();
+    const end = (words.length ? words[words.length - 1].end : 60) + 60;
+    out.push(`Dialogue: 5,${T(0)},${T(end)},Mark,,0,0,0,,{\\an${an}\\alpha&H${alpha}&}${esc(wm.text)}`);
+  }
+
+  for (const d of options.drawings || []) {
+    const x = Math.round((d.x / 100) * playRes.x);
+    const y = Math.round((d.y / 100) * playRes.y);
+    const sc = Math.round(100 * captionScale);
+    if (d.kind === "arrow") {
+      out.push(
+        `Dialogue: 6,${T(d.t)},${T(d.t + 1.8)},Draw,,0,0,0,,{\\an2\\move(${x},${y - Math.round(120 * captionScale)},${x},${y},0,220)\\fscx${sc}\\fscy${sc}\\bord4\\3c&H00000000&\\1c${ctx.accent}\\shad0\\fad(80,250)\\p1}m 22 0 l 48 0 l 48 110 l 70 110 l 35 165 l 0 110 l 22 110{\\p0}`
+      );
+    } else {
+      const r = 90;
+      const k = Math.round(r * 0.552);
+      const d2 = 2 * r;
+      const path = `m 0 ${r} b 0 ${r - k} ${r - k} 0 ${r} 0 b ${r + k} 0 ${d2} ${r - k} ${d2} ${r} b ${d2} ${r + k} ${r + k} ${d2} ${r} ${d2} b ${r - k} ${d2} 0 ${r + k} 0 ${r}`;
+      out.push(
+        `Dialogue: 6,${T(d.t)},${T(d.t + 1.8)},Draw,,0,0,0,,{\\an5\\pos(${x},${y})\\fscx${Math.round(sc * 0.2)}\\fscy${Math.round(sc * 0.2)}\\t(0,200,\\fscx${sc}\\fscy${sc})\\bord7\\3c${ctx.accent}\\1a&HFF&\\shad0\\fad(0,250)\\p1}${path}{\\p0}`
+      );
+    }
+  }
+  return out;
 }
 
 /**
@@ -990,6 +1184,8 @@ export async function renderVideoClip({
   keywords,
   hookTitle,
   captionFont,
+  fitBackground,
+  brandHex,
 }: RenderOptions): Promise<{ outputPath: string; tracking: TrackingResult }> {
   // Resolve input and output paths safely strictly within allowed directories
   const resolvedInput = resolveSafeFilePath(inputPath);
@@ -1208,6 +1404,9 @@ export async function renderVideoClip({
       subtitleFilterStr = subtitlesFilter(tempSrtPath);
     }
 
+    if (fitBackground && fitBackground !== "blur" && trackingResult.filter_value?.includes("boxblur=22:5")) {
+      trackingResult.filter_value = trackingResult.filter_value.replace("boxblur=22:5", fitBackgroundChain(fitBackground, brandHex));
+    }
     const runMainRender = () => {
     // Apply filters based on aspect ratio and tracking
     if (aspectRatio === "9:16") {
@@ -1304,6 +1503,7 @@ export async function renderVideoClip({
         videoW: trackingResult.video_w || 1920,
         videoH: trackingResult.video_h || 1080,
         subtitleFilterStr,
+        fitBg: fitBackgroundChain(fitBackground, brandHex),
       })
         .then(() => {
           if (tempSrtPath && fs.existsSync(tempSrtPath)) {
@@ -1502,6 +1702,14 @@ export interface PostFxOptions {
   musicMood?: MusicMood;
   /** Clip-relative times of cuts (silence-removal joins) for transitions + whooshes. */
   transitionTimes?: number[];
+  /** AI narrator intro (plays over a frozen first frame). */
+  voiceover?: { path: string; duration: number } | null;
+  /** Uploaded music track (replaces the mood music). */
+  musicPath?: string | null;
+  /** Clip-relative fitted (screen / wide) shots: where the face bubble goes. */
+  fitSpans?: { start: number; end: number }[];
+  /** Source width / height (face bubble geometry). */
+  sourceAspect?: number;
 }
 
 function punchZoomExpr(punches: { start: number; end: number }[], fps = 30): string {
@@ -1586,6 +1794,7 @@ export async function renderSegmentedClip(opts: {
   videoW: number;
   videoH: number;
   subtitleFilterStr: string | null;
+  fitBg?: string;
 }): Promise<void> {
   const ff = getFfmpegBinary();
   const tmpDir = path.join(path.dirname(opts.output), `segfx-${Date.now()}`);
@@ -1620,7 +1829,7 @@ export async function renderSegmentedClip(opts: {
       ];
       if (seg.layout === "fit") {
         const fc =
-          "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,gblur=sigma=24,setsar=1[bg];" +
+          `[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,${opts.fitBg || "gblur=sigma=24"},setsar=1[bg];` +
           "[0:v]scale=1080:-2,setsar=1[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,fps=30[v]";
         await execFileP(ff, [...base, "-filter_complex", fc, "-map", "[v]", "-map", "0:a?", ...enc], MB);
       } else if (seg.layout === "split" && seg.panels && seg.panels.length >= 2) {
@@ -1735,15 +1944,185 @@ export function dropCuesOverlappingSplits<T extends { start: number; end: number
   return kept;
 }
 
-export async function applyPostEffects(opts: PostFxOptions): Promise<void> {
+export interface PostFxResult {
+  /** Final clip length (pace, inserts and teaser included). */
+  duration: number;
+  /** Clip-relative time before the effects pass -> time in the final clip. */
+  mapTime: (t: number) => number;
+  /** Big moments found (final clip times). */
+  hype: number[];
+  notes: string[];
+}
+
+type TimelineInsert = { at: number; dur: number; audio: string | null; desat: boolean };
+
+/**
+ * Timeline pre-pass: playback speed (pitch kept) and inserted holds — a
+ * frozen first frame under the AI voiceover intro, a freeze-frame (with
+ * record scratch) on the big moment. Everything after an insert moves later.
+ */
+async function prepassTimeline(input: string, output: string, duration: number, pace: number, inserts: TimelineInsert[]): Promise<void> {
+  const total = duration / pace;
+  const ins = [...inserts].sort((a, b) => a.at - b.at).map((i) => ({ ...i, cut: Math.min(total, i.at / pace) }));
+  const bounds = Array.from(new Set([0, ...ins.map((i) => Number(i.cut.toFixed(3))), Number(total.toFixed(3))])).sort((a, b) => a - b);
+  const segs: { s: number; e: number }[] = [];
+  for (let i = 0; i + 1 < bounds.length; i++) if (bounds[i + 1] - bounds[i] > 0.04) segs.push({ s: bounds[i], e: bounds[i + 1] });
+  if (!segs.length) segs.push({ s: 0, e: total });
+  const args = ["-y", "-i", input];
+  const audioIdx = new Map<TimelineInsert, number>();
+  let next = 1;
+  for (const i of ins) {
+    if (i.audio) {
+      args.push("-i", i.audio);
+      audioIdx.set(i as TimelineInsert, next++);
+    }
+  }
+  const AF = "aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo";
+  const f: string[] = [];
+  const vs = segs.map((_, i) => `[vs${i}]`).join("");
+  const as = segs.map((_, i) => `[as${i}]`).join("");
+  f.push(`[0:v]setpts=(PTS-STARTPTS)/${pace},fps=30,split=${segs.length}${vs}`);
+  f.push(`[0:a]asetpts=PTS-STARTPTS${pace !== 1 ? `,atempo=${pace}` : ""},${AF},asplit=${segs.length}${as}`);
+  const audioOrder: string[] = [];
+  ins.forEach((i, k) => {
+    const idx = audioIdx.get(i as TimelineInsert);
+    f.push(
+      idx !== undefined
+        ? `[${idx}:a]${AF},apad,atrim=0:${i.dur.toFixed(3)},asetpts=PTS-STARTPTS[ia${k}]`
+        : `anullsrc=r=48000:cl=stereo,atrim=0:${i.dur.toFixed(3)},${AF}[ia${k}]`
+    );
+  });
+  segs.forEach((sg, n) => {
+    const len = sg.e - sg.s;
+    let v = `[vs${n}]trim=start=${sg.s.toFixed(3)}:end=${sg.e.toFixed(3)},setpts=PTS-STARTPTS`;
+    const before: string[] = [];
+    const after: string[] = [];
+    ins.forEach((i, k) => {
+      if (Math.abs(i.cut - sg.s) < 0.03 && sg.s < 0.03) {
+        v += `,tpad=start_mode=clone:start_duration=${i.dur.toFixed(3)}`;
+        before.push(`[ia${k}]`);
+      } else if (Math.abs(i.cut - sg.e) < 0.03) {
+        v += `,tpad=stop_mode=clone:stop_duration=${i.dur.toFixed(3)}`;
+        if (i.desat) v += `,hue=s=0.15:enable='gte(t,${len.toFixed(3)})',eq=contrast=1.15:enable='gte(t,${len.toFixed(3)})'`;
+        after.push(`[ia${k}]`);
+      }
+    });
+    f.push(`${v}[sv${n}]`);
+    f.push(`[as${n}]atrim=start=${sg.s.toFixed(3)}:end=${sg.e.toFixed(3)},asetpts=PTS-STARTPTS[sa${n}]`);
+    audioOrder.push(...before, `[sa${n}]`, ...after);
+  });
+  f.push(`${segs.map((_, n) => `[sv${n}]`).join("")}concat=n=${segs.length}:v=1:a=0[pv]`);
+  f.push(`${audioOrder.join("")}concat=n=${audioOrder.length}:v=0:a=1[pa]`);
+  args.push(
+    "-filter_complex", f.join(";"), "-map", "[pv]", "-map", "[pa]",
+    "-c:v", "libx264", "-preset", "veryfast", "-crf", "17", "-pix_fmt", "yuv420p",
+    "-c:a", "aac", "-b:a", "192k", output
+  );
+  await execFileP(getFfmpegBinary(), args, { maxBuffer: 64 * 1024 * 1024 });
+}
+
+/** Zoom expression parts: punches by zoom type, hype hits, and the shake they carry. */
+function zoomParts(punches: { start: number; end: number }[], type: string, hype: number[], fps = 30) {
+  const z: string[] = [];
+  const shake: string[] = [];
+  const ramp = type === "smooth" ? 14 : 5;
+  const amt = type === "smooth" ? 0.09 : type === "whip" ? 0.2 : 0.13;
+  for (const p of punches) {
+    const f1 = Math.max(0, Math.round(p.start * fps));
+    const f2 = Math.max(f1 + 10, Math.round(p.end * fps));
+    const win =
+      type === "whip"
+        ? `max(0,min(1,(in-${f1})/2))*exp(-max(0,in-${f1})/10)`
+        : `max(0,min(1,min((in-${f1})/${ramp},(${f2}-in)/${ramp})))`;
+    z.push(`${amt}*${win}`);
+    if (type === "shake") shake.push(win);
+  }
+  for (const h of hype) {
+    const f1 = Math.max(0, Math.round(h * fps));
+    const win = `max(0,min(1,min((in-${f1})/3,(${f1 + 26}-in)/6)))`;
+    z.push(`0.17*${win}`);
+    shake.push(win);
+  }
+  return { z, shake };
+}
+
+const between = (spans: { start: number; end: number }[]) =>
+  spans.map((s) => `between(t\\,${s.start.toFixed(3)}\\,${s.end.toFixed(3)})`).join("+");
+
+export async function applyPostEffects(opts: PostFxOptions): Promise<PostFxResult> {
   const W = opts.aspectRatio === "16:9" ? 1920 : 1080;
   const H = opts.aspectRatio === "16:9" ? 1080 : opts.aspectRatio === "1:1" ? 1080 : 1920;
   const style: ClipStyle = opts.style || { ...DEFAULT_CLIP_STYLE, sfx: false, voiceEnhance: false, pushIn: false };
-  const transitions = (opts.transitionTimes || []).filter((t) => t > 0.3 && t < opts.duration - 0.3);
+  const notes: string[] = [];
+  const temp: string[] = [];
+  const fxDir = path.join(process.cwd(), "data", "postfx");
+  fs.mkdirSync(fxDir, { recursive: true });
+  const stamp = `${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+  let basePath = opts.basePath;
+  let duration = opts.duration;
+  let words = opts.words.map((w) => ({ ...w }));
+  let punchesIn = opts.punches;
+  let brollIn = opts.broll;
+  let transitionsIn = (opts.transitionTimes || []).filter((t) => t > 0.3 && t < opts.duration - 0.3);
+  const capOpts: CaptionOptions = { ...(opts.captionOptions || {}) };
+  let fitSpans = opts.fitSpans || [];
 
-  const broll = shapeBrollCues(opts.broll, opts.duration);
+  // Big moments (loudness peaks) on the clip as cut.
+  const wantHype = style.hypeMoments || style.freezeFrame || style.coldOpen;
+  let hype = wantHype ? await detectHypeMoments(basePath, duration, 2) : [];
+  if (wantHype && !hype.length) notes.push("no stand-out moment found for hype / freeze / cold open");
 
-  const args: string[] = ["-y", "-i", opts.basePath];
+  // Profanity: masked in the captions, bleeped in the audio.
+  let bleeps: { start: number; end: number }[] = [];
+  if (style.bleep) {
+    for (const w of words) {
+      if (isProfane(w.text)) {
+        bleeps.push({ start: Math.max(0, w.start - 0.03), end: w.end + 0.03 });
+        w.text = maskProfanity(w.text);
+      }
+    }
+  }
+
+  // ---- timeline: pace, voiceover intro, freeze-frame -------------------
+  const pace = style.pace && style.pace > 1 ? style.pace : 1;
+  const inserts: TimelineInsert[] = [];
+  if (opts.voiceover) inserts.push({ at: 0, dur: Number((opts.voiceover.duration + 0.25).toFixed(3)), audio: opts.voiceover.path, desat: false });
+  if (style.freezeFrame && hype.length) {
+    const scratch = await ensureSfx("scratch");
+    inserts.push({ at: Math.min(duration - 0.6, hype[0] + 0.35), dur: 0.9, audio: scratch, desat: true });
+  }
+  const mapT = (t: number) => {
+    let x = t / pace;
+    for (const i of inserts) if (t >= i.at - 1e-6) x += i.dur;
+    return Number(x.toFixed(3));
+  };
+  if (pace !== 1 || inserts.length) {
+    const prepped = path.join(fxDir, `pre-${stamp}.mp4`);
+    await prepassTimeline(basePath, prepped, duration, pace, inserts);
+    temp.push(prepped);
+    basePath = prepped;
+    const ms = <T extends { start: number; end: number }>(s: T): T => ({ ...s, start: mapT(s.start), end: mapT(s.end) });
+    duration = mapT(duration);
+    words = words.map(ms);
+    punchesIn = punchesIn.map(ms);
+    brollIn = brollIn.map(ms);
+    transitionsIn = transitionsIn.map(mapT);
+    bleeps = bleeps.map(ms);
+    fitSpans = fitSpans.map(ms);
+    hype = hype.map((h) => mapT(h));
+    if (capOpts.centerSpans) capOpts.centerSpans = capOpts.centerSpans.map(ms);
+    if (capOpts.speakerSpans) capOpts.speakerSpans = capOpts.speakerSpans.map(ms);
+    if (capOpts.translations) capOpts.translations = capOpts.translations.map(ms);
+    if (capOpts.hook) capOpts.hook = { ...capOpts.hook, until: mapT(capOpts.hook.until ?? 3.2) };
+    if (pace !== 1) notes.push(`${pace}x pace`);
+    if (opts.voiceover) notes.push("AI voiceover intro");
+  }
+  if (style.freezeFrame && inserts.some((i) => i.desat)) notes.push("freeze-frame");
+  const transitions = transitionsIn.filter((t) => t > 0.3 && t < duration - 0.3);
+  const hookUntil = capOpts.hook ? Math.min(capOpts.hook.until ?? 3.2, duration) : 0;
+
+  const broll = shapeBrollCues(brollIn, duration);
+  const args: string[] = ["-y", "-i", basePath];
   for (const cue of broll) {
     const win = Math.max(0.6, cue.end - cue.start);
     if (cue.kind === "image") {
@@ -1754,71 +2133,134 @@ export async function applyPostEffects(opts: PostFxOptions): Promise<void> {
   }
   let nextInput = 1 + broll.length;
 
-  // Music: the clip's mood track (generated, or a real one from data/music/<mood>/).
+  // Music: an uploaded track, a real one from data/music/<mood>/, or generated.
   let musicIdx = -1;
   let beats: number[] | null = null;
   if (opts.musicBed) {
-    const mood = opts.musicMood && opts.musicMood !== "auto" ? opts.musicMood : "chill";
-    const track = (await ensureMoodTrack(mood)) || null;
-    const bed = track?.path || (await ensureMusicBed());
+    let bed: string | null = null;
+    let bpm: number | null = null;
+    if (opts.musicPath) {
+      bed = opts.musicPath;
+      const m = /(\d{2,3})\s*bpm/i.exec(path.basename(bed));
+      bpm = m ? Number(m[1]) : null;
+    } else {
+      const mood = opts.musicMood && opts.musicMood !== "auto" ? opts.musicMood : "chill";
+      const track = (await ensureMoodTrack(mood)) || null;
+      bed = track?.path || (await ensureMusicBed());
+      bpm = track?.bpm ?? null;
+    }
     if (bed) {
       musicIdx = nextInput++;
+      if (style.musicStart > 0) args.push("-ss", style.musicStart.toFixed(2));
       args.push("-stream_loop", "-1", "-i", bed);
-      beats = beatGrid(track?.bpm, opts.duration);
+      beats = beatGrid(bpm, duration);
     }
   }
 
   // Beat sync: zoom punches land on the beat.
-  const punches = opts.punches.map((p) => {
+  const punches = punchesIn.map((p) => {
     const s = snapToBeat(p.start, beats, 0.25);
     return { start: s, end: s + (p.end - p.start) };
   });
+  const hypeHits = style.hypeMoments ? hype : [];
 
-  // Sound effects.
-  const sfxInputs: { idx: number; at: number; gain: number }[] = [];
+  // Sound effects (+ bleep tones, hype booms).
+  const sfxInputs: { idx: number; at: number; gain: number; len?: number }[] = [];
+  const addSfx = async (kind: Parameters<typeof ensureSfx>[0], at: number, gain: number, len?: number) => {
+    const file = await ensureSfx(kind);
+    if (!file) return;
+    sfxInputs.push({ idx: nextInput++, at, gain, len });
+    args.push("-i", file);
+  };
   if (style.sfx) {
-    const kw = keywordSet(opts.captionOptions?.keywords);
+    const kw = keywordSet(capOpts.keywords);
     const plan = planSfx({
-      words: opts.words,
+      words,
       isKeyword: (w) => kw.has(w.toLowerCase().replace(/[^a-z0-9]/g, "")),
       transitions: style.transition !== "none" ? transitions : [],
       brollStarts: broll.map((b) => b.start),
-      hookUntil: opts.captionOptions?.hook ? Math.min(3.2, opts.duration) : undefined,
-      duration: opts.duration,
+      hookUntil: capOpts.hook && !opts.voiceover ? Math.min(3.2, duration) : undefined,
+      duration,
       beats,
     });
-    for (const e of plan) {
-      const file = await ensureSfx(e.kind);
-      if (!file) continue;
-      sfxInputs.push({ idx: nextInput++, at: e.at, gain: e.gain });
-      args.push("-i", file);
-    }
+    for (const e of plan) await addSfx(e.kind, e.at, e.gain);
   }
+  for (const h of hypeHits) await addSfx("boom", h, 0.55);
+  for (const b of bleeps) await addSfx("beep", b.start, 0.32, Math.min(2.4, b.end - b.start));
+
+  // Emoji pops.
+  const emojiEvents: { at: number; file: string }[] = [];
+  if (style.emoji || hypeHits.length) {
+    if (style.emoji) {
+      let last = -10;
+      for (const w of words) {
+        if (emojiEvents.length >= 5) break;
+        if (w.start < hookUntil + 0.2 || w.start > duration - 1.5 || w.start - last < 2.8) continue;
+        const code = w.text.split(/\s+/).map((tok) => emojiFor(tok)).find((x) => x) || null;
+        const file = code ? emojiImage(code) : null;
+        if (file) {
+          emojiEvents.push({ at: w.start, file });
+          last = w.start;
+        }
+      }
+    }
+    const fire = emojiImage("1f525");
+    for (const h of hypeHits) if (fire && !emojiEvents.some((e) => Math.abs(e.at - h) < 1)) emojiEvents.push({ at: h, file: fire });
+  }
+  const emojiIdx = emojiEvents.map((e) => {
+    args.push("-loop", "1", "-framerate", "30", "-t", "1.3", "-i", e.file);
+    return nextInput++;
+  });
 
   const filters: string[] = [];
-  // Zoom: punch-ins, a slow push-in across the clip, and zoom transitions.
-  const totalFrames = Math.max(1, Math.round(opts.duration * 30));
-  const zoomParts: string[] = [];
-  if (punches.length) zoomParts.push(punchZoomExpr(punches).replace(/^min\(1\.16,1\+/, "").replace(/\)$/, ""));
-  if (style.pushIn) zoomParts.push(`0.055*in/${totalFrames}`);
+  // Zoom: punches (by type), hype hits, slow push-in, zoom transitions.
+  const totalFrames = Math.max(1, Math.round(duration * 30));
+  const zp = zoomParts(punches, style.zoomType, hypeHits);
+  const zParts = [...zp.z];
+  if (style.pushIn) zParts.push(`0.055*in/${totalFrames}`);
   if (style.transition === "zoom") {
-    for (const t of transitions) {
-      const f = Math.round(t * 30);
-      zoomParts.push(`0.22*max(0,1-abs(in-${f})/5)`);
-    }
+    for (const t of transitions) zParts.push(`0.22*max(0,1-abs(in-${Math.round(t * 30)})/5)`);
   }
-  if (zoomParts.length) {
+  if (zParts.length) {
+    const sh = zp.shake.length ? `(${zp.shake.join("+")})` : "";
+    const xs = sh ? `+${sh}*14*sin(in*1.9)` : "";
+    const ys = sh ? `+${sh}*10*cos(in*2.7)` : "";
     // fps=30 FIRST: zoompan with d=1 emits one frame per input frame and
-    // stamps them at its own fps, so a 25fps clip came out 17% short
-    // (picture ended 6s before the sound on a 37s clip).
+    // stamps them at its own fps, so a 25fps clip came out 17% short.
     filters.push(
-      `[0:v]fps=30,scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},zoompan=z='min(1.3,1+${zoomParts.join("+")})':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${W}x${H}:fps=30[base]`
+      `[0:v]fps=30,scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},zoompan=z='min(1.35,1+${zParts.join("+")})':x='iw/2-(iw/zoom/2)${xs}':y='ih/2-(ih/zoom/2)${ys}':d=1:s=${W}x${H}:fps=30[base]`
     );
   } else {
     filters.push(`[0:v]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},fps=30[base]`);
   }
-
   let last = "base";
+
+  // Face bubble: on screen-recording shots the webcam corner becomes a round bubble above the screen.
+  if (style.faceBubble !== "off" && W === 1080 && H === 1920 && fitSpans.length && opts.sourceAspect && opts.sourceAspect > 1.1) {
+    const fh = Math.round(1080 / opts.sourceAspect);
+    const y0 = Math.round((1920 - fh) / 2);
+    const rw = Math.round(1080 * 0.27);
+    const rh = Math.round(fh * 0.36);
+    const side = Math.max(40, Math.min(rw, rh));
+    const left = style.faceBubble.endsWith("left");
+    const top = style.faceBubble.startsWith("top");
+    const rx = left ? Math.round((rw - side) / 2) : 1080 - rw + Math.round((rw - side) / 2);
+    const ry = top ? y0 + Math.round((rh - side) / 2) : y0 + fh - rh + Math.round((rh - side) / 2);
+    const by = Math.max(40, y0 - 420 - 50);
+    const en = between(fitSpans);
+    filters.push(`[${last}]split[fb0][fbsrc]`);
+    filters.push(
+      `[fbsrc]crop=${side}:${side}:${rx}:${ry},scale=420:420,format=yuva420p,geq=lum='lum(X,Y)':cb='cb(X,Y)':cr='cr(X,Y)':a='if(lt(hypot(X-210,Y-210),205),255,0)'[bub]`
+    );
+    filters.push(
+      `color=c=white:s=436x436:r=30:d=${duration.toFixed(2)},format=yuva420p,geq=lum=255:cb=128:cr=128:a='if(lt(hypot(X-218,Y-218),217),255,0)'[ring]`
+    );
+    filters.push(`[fb0][ring]overlay=x=322:y=${by - 8}:enable='${en}'[fb1]`);
+    filters.push(`[fb1][bub]overlay=x=330:y=${by}:enable='${en}'[fbv]`);
+    last = "fbv";
+    notes.push("face bubble");
+  }
+
   broll.forEach((cue, i) => {
     const idx = i + 1;
     const win = Math.max(0.6, cue.end - cue.start);
@@ -1839,23 +2281,60 @@ export async function applyPostEffects(opts: PostFxOptions): Promise<void> {
         `[${idx}:v]scale=${sw}:${sh}:force_original_aspect_ratio=increase,crop=${W}:${H},setpts=PTS+${cue.start.toFixed(2)}/TB${fade}[b${i}]`
       );
     }
-    filters.push(
-      `[${last}][b${i}]overlay=0:0:enable='between(t,${cue.start.toFixed(2)},${cue.end.toFixed(2)})'[v${i}]`
-    );
+    filters.push(`[${last}][b${i}]overlay=0:0:enable='between(t,${cue.start.toFixed(2)},${cue.end.toFixed(2)})'[v${i}]`);
     last = `v${i}`;
   });
 
-  // Colour grade + cut transitions on the whole picture (B-roll included).
-  const look = [gradeFilter(style.grade), transitionFilter(style.transition, transitions)].filter(Boolean).join(",");
+  // End card (darkened last seconds + animated text in the captions).
+  const brand = style.brand;
+  if (style.endCard && duration > 6) {
+    const start = Number((duration - 2.2).toFixed(2));
+    capOpts.endCard = {
+      text: (style.endCardText || "FOLLOW FOR MORE").toUpperCase(),
+      sub: brand?.name ? `@${brand.name.replace(/\s+/g, "")}` : undefined,
+      start,
+      end: duration + 0.5,
+    };
+  }
+
+  // Colour grade, film look, cut transitions, hype flashes, end-card dim.
+  const lookParts = [gradeFilter(style.grade), filmLookFilter(style.filmLook), transitionFilter(style.transition, transitions)];
+  if (hypeHits.length) lookParts.push(`drawbox=x=0:y=0:w=iw:h=ih:color=white@0.6:t=fill:enable='${hypeHits.map((h) => `between(t\\,${h.toFixed(3)}\\,${(h + 0.07).toFixed(3)})`).join("+")}'`);
+  if (capOpts.endCard) lookParts.push(`drawbox=x=0:y=0:w=iw:h=ih:color=black@0.45:t=fill:enable='gte(t\\,${capOpts.endCard.start.toFixed(2)})'`);
+  const look = lookParts.filter(Boolean).join(",");
   if (look) {
     filters.push(`[${last}]${look}[looked]`);
     last = "looked";
   }
 
-  // Captions last so they sit on top of base AND B-roll.
-  let finalV = last;
+  // Emoji pops (bounce up + fade), above the captions.
+  const es = Math.round(170 * (Math.min(W, H) / 1080));
+  const ey = opts.captionStyle === "kinetic" ? Math.round(H * 0.3) : H > W ? Math.round(H * 0.6) - es : Math.round(H * 0.42) - es;
+  emojiEvents.forEach((e, i) => {
+    const ex = Math.round(W / 2 - es / 2 + (i % 2 ? 1 : -1) * 150 * (Math.min(W, H) / 1080));
+    filters.push(
+      `[${emojiIdx[i]}:v]scale=${es}:${es},format=yuva420p,fade=t=in:st=0:d=0.12:alpha=1,fade=t=out:st=1.05:d=0.25:alpha=1,setpts=PTS+${e.at.toFixed(2)}/TB[em${i}]`
+    );
+    filters.push(
+      `[${last}][em${i}]overlay=x=${ex}:y='${ey}-40*max(0\\,1-(t-${e.at.toFixed(2)})*6)':enable='between(t\\,${e.at.toFixed(2)}\\,${(e.at + 1.3).toFixed(2)})'[ev${i}]`
+    );
+    last = `ev${i}`;
+  });
+
+  // Captions (on top of base, B-roll and emoji) + every caption-layer extra.
+  if (brand) {
+    capOpts.brand = { accent: hexToAss(brand.primary), kw: hexToAss(brand.secondary) };
+    if (brand.watermark && brand.name) capOpts.watermark = { text: brand.name, pos: brand.watermarkPos, opacity: brand.watermarkOpacity };
+  }
+  capOpts.textCase = style.captionCase;
+  capOpts.sizeScale = CAPTION_SIZE_SCALE[style.captionSize] || 1;
+  capOpts.hookAnim = style.hookAnim;
+  capOpts.counters = style.counters;
+  if (style.lowerThirdName) capOpts.lowerThird = { name: style.lowerThirdName, title: style.lowerThirdTitle || undefined };
+  if (style.drawings.length) capOpts.drawings = style.drawings.filter((d) => d.t < duration);
   let assPath: string | null = null;
-  if (opts.words.length > 0) {
+  const hasCaptionLayer = words.length > 0 || capOpts.endCard || capOpts.lowerThird || capOpts.watermark || capOpts.drawings?.length;
+  if (hasCaptionLayer) {
     const playRes =
       opts.aspectRatio === "16:9" ? { x: 1920, y: 1080 } : opts.aspectRatio === "1:1" ? { x: 1080, y: 1080 } : { x: 1080, y: 1920 };
     const marginV =
@@ -1863,29 +2342,38 @@ export async function applyPostEffects(opts: PostFxOptions): Promise<void> {
         ? Math.max(60, Math.min(playRes.y - 120, Math.round(playRes.y * (1 - opts.captionPositionY / 100))))
         : Math.round(playRes.y * 0.27);
     const assContent = buildKaraokeAss(
-      opts.words.map((w) => ({ start: w.start, end: w.end, text: w.text })),
+      words.map((w) => ({ start: w.start, end: w.end, text: w.text })),
       opts.captionStyle,
       marginV,
       playRes,
-      { ...(opts.captionOptions || {}), customMarginV: opts.captionPositionY !== undefined }
+      { ...capOpts, customMarginV: opts.captionPositionY !== undefined }
     );
-    const fxDir = path.join(process.cwd(), "data", "postfx");
-    fs.mkdirSync(fxDir, { recursive: true });
-    assPath = path.join(fxDir, `fx-${Date.now()}-${Math.floor(Math.random() * 10000)}.ass`);
+    assPath = path.join(fxDir, `fx-${stamp}.ass`);
     fs.writeFileSync(assPath, assContent, "utf-8");
-    filters.push(`[${last}]${subtitlesFilter(assPath)}[vfinal]`);
-    finalV = "vfinal";
+    filters.push(`[${last}]${subtitlesFilter(assPath)}[vcap]`);
+    last = "vcap";
   }
 
-  // ---- audio: voice (+ studio clean-up), ducked music, sound effects ----
-  const voiceChain = style.voiceEnhance ? STUDIO_VOICE_CHAIN : "anull";
+  // Progress bar across the top.
+  if (style.progressBar) {
+    const hex = (brand?.primary || "#FFC700").slice(1);
+    const bh = Math.max(8, Math.round(12 * (Math.min(W, H) / 1080)));
+    filters.push(`color=c=0x${hex}:s=${W}x${bh}:r=30:d=${duration.toFixed(3)}[pbar]`);
+    filters.push(`[${last}][pbar]overlay=x='-w+w*t/${duration.toFixed(3)}':y=0:shortest=1[vbar]`);
+    last = "vbar";
+  }
+  const finalV = last;
+
+  // ---- audio: voice (+ clean-up, bleeps), ducked music, sound effects ----
+  const voiceChain = (style.voiceEnhance ? STUDIO_VOICE_CHAIN : "anull") + (bleeps.length ? `,volume=0:enable='${between(bleeps)}'` : "");
   const hasMusic = musicIdx >= 0;
   const mixIn: string[] = [];
   if (hasMusic) {
     filters.push(`[0:a]${voiceChain},asplit=2[vo][side]`);
-    filters.push(
-      `[${musicIdx}:a]atrim=0:${opts.duration.toFixed(2)},asetpts=PTS-STARTPTS,volume=0.55,afade=t=in:st=0:d=0.8,afade=t=out:st=${Math.max(0, opts.duration - 1.2).toFixed(2)}:d=1.2[mus]`
-    );
+    const vol = Math.max(0, Math.min(1, style.musicVolume / 100));
+    const fin = style.musicFadeIn > 0 ? `,afade=t=in:st=0:d=${style.musicFadeIn.toFixed(2)}` : "";
+    const fout = style.musicFadeOut > 0 ? `,afade=t=out:st=${Math.max(0, duration - style.musicFadeOut).toFixed(2)}:d=${style.musicFadeOut.toFixed(2)}` : "";
+    filters.push(`[${musicIdx}:a]atrim=0:${duration.toFixed(2)},asetpts=PTS-STARTPTS,volume=${vol.toFixed(2)}${fin}${fout}[mus]`);
     filters.push(`[mus][side]sidechaincompress=threshold=0.02:ratio=9:attack=30:release=400[ducked]`);
     mixIn.push("[vo]", "[ducked]");
   } else {
@@ -1894,7 +2382,8 @@ export async function applyPostEffects(opts: PostFxOptions): Promise<void> {
   }
   sfxInputs.forEach((s, i) => {
     const ms = Math.max(0, Math.round(s.at * 1000));
-    filters.push(`[${s.idx}:a]adelay=${ms}|${ms},volume=${s.gain.toFixed(2)}[sfx${i}]`);
+    const trim = s.len ? `atrim=0:${s.len.toFixed(3)},` : "";
+    filters.push(`[${s.idx}:a]${trim}adelay=${ms}|${ms},volume=${s.gain.toFixed(2)}[sfx${i}]`);
     mixIn.push(`[sfx${i}]`);
   });
   const loud = style.voiceEnhance ? `,${LOUDNESS_CHAIN}` : "";
@@ -1904,23 +2393,98 @@ export async function applyPostEffects(opts: PostFxOptions): Promise<void> {
     filters.push(`[vo]anull${loud}[aout]`);
   }
 
+  const coldOpen = style.coldOpen && hype.length > 0 && duration > 8;
+  const mainOut = coldOpen ? path.join(fxDir, `main-${stamp}.mp4`) : opts.outputPath;
   args.push("-filter_complex", filters.join(";"), "-map", `[${finalV}]`, "-map", "[aout]");
   args.push(
-    "-t", opts.duration.toFixed(3),
-    "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+    "-t", duration.toFixed(3),
+    "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
     "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart",
-    opts.outputPath
+    mainOut
   );
 
+  let offset = 0;
   try {
     await execFileP(getFfmpegBinary(), args, { maxBuffer: 64 * 1024 * 1024 });
+    if (coldOpen) {
+      temp.push(mainOut);
+      offset = await addColdOpen(mainOut, opts.outputPath, hype[0], duration, W, H, opts.captionOptions?.font);
+      if (offset > 0) notes.push("cold-open teaser");
+    }
     console.log(
-      `[PostFX] Applied ${broll.length} B-roll cue(s), ${punches.length} punch zoom(s)${beats ? " on the beat" : ""}, music=${hasMusic}${opts.musicMood ? `(${opts.musicMood})` : ""}, sfx=${sfxInputs.length}, grade=${style.grade}, transition=${style.transition}x${transitions.length}, voice=${style.voiceEnhance}, pushIn=${style.pushIn}, captions=${opts.words.length > 0}`
+      `[PostFX] Applied ${broll.length} B-roll, ${punches.length} ${style.zoomType} zoom(s)${beats ? " on the beat" : ""}, hype=${hypeHits.length}, music=${hasMusic}${opts.musicMood ? `(${opts.musicMood})` : ""}, sfx=${sfxInputs.length}, emoji=${emojiEvents.length}, bleeps=${bleeps.length}, grade=${style.grade}, look=${style.filmLook}, transition=${style.transition}x${transitions.length}, pace=${pace}, inserts=${inserts.length}, coldOpen=${offset > 0}, endCard=${Boolean(capOpts.endCard)}, bar=${style.progressBar}, captions=${words.length > 0}`
     );
   } finally {
     if (assPath) {
       try { fs.unlinkSync(assPath); } catch {}
     }
+    for (const p of temp) {
+      try { fs.unlinkSync(p); } catch {}
+    }
+    if (opts.voiceover) {
+      try { fs.unlinkSync(opts.voiceover.path); } catch {}
+    }
+  }
+  const finalDuration = duration + offset;
+  return {
+    duration: Number(finalDuration.toFixed(3)),
+    mapTime: (t: number) => Number((offset + mapT(t)).toFixed(3)),
+    hype: hype.map((h) => Number((h + offset).toFixed(2))),
+    notes,
+  };
+}
+
+/** Prepends the big moment as a 2s "wait for it" teaser. Returns the teaser length (0 if it failed). */
+async function addColdOpen(main: string, output: string, at: number, duration: number, W: number, H: number, font?: string): Promise<number> {
+  const len = 2;
+  const a = Math.max(0, Math.min(duration - len - 0.1, at - 0.4));
+  const fontName = CAPTION_FONTS[font || "default"] || "Arial";
+  const size = Math.round(78 * (Math.min(W, H) / 1080));
+  const ass = `[Script Info]
+ScriptType: v4.00+
+PlayResX: ${W}
+PlayResY: ${H}
+WrapStyle: 2
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Tease,${fontName},${size},&H00111111,&H00111111,&H0000D7FF,&H00000000,-1,0,0,0,100,100,0,0,3,${Math.round(18 * (Math.min(W, H) / 1080))},0,8,60,60,${Math.round(H * 0.11)},1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 2,0:00:00.00,0:00:02.00,Tease,,0,0,0,,{\\fad(80,120)\\fscx80\\fscy80\\t(0,160,\\fscx100\\fscy100)}WAIT FOR IT...
+`;
+  const assPath = path.join(process.cwd(), "data", "postfx", `tease-${Date.now()}.ass`);
+  fs.writeFileSync(assPath, ass, "utf-8");
+  const rewind = await ensureSfx("rewind");
+  const AF = "aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo";
+  try {
+    const args = ["-y", "-i", main, "-i", main];
+    if (rewind) args.push("-i", rewind);
+    const rwMs = Math.round((len - 0.7) * 1000);
+    const f = [
+      `[0:v]trim=start=${a.toFixed(3)}:duration=${len},setpts=PTS-STARTPTS,eq=saturation=1.15:contrast=1.05,${subtitlesFilter(assPath)}[tv]`,
+      `[0:a]atrim=start=${a.toFixed(3)}:duration=${len},asetpts=PTS-STARTPTS,${AF}[ta0]`,
+      rewind ? `[2:a]${AF},adelay=${rwMs}|${rwMs},volume=0.6[rw]` : "",
+      rewind ? `[ta0][rw]amix=inputs=2:duration=first:normalize=0,${AF}[ta]` : `[ta0]anull[ta]`,
+      `[1:v]setpts=PTS-STARTPTS[mv]`,
+      `[1:a]asetpts=PTS-STARTPTS,${AF}[ma]`,
+      `[tv][ta][mv][ma]concat=n=2:v=1:a=1[v][a]`,
+    ].filter(Boolean);
+    args.push(
+      "-filter_complex", f.join(";"), "-map", "[v]", "-map", "[a]",
+      "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
+      "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", output
+    );
+    await execFileP(getFfmpegBinary(), args, { maxBuffer: 64 * 1024 * 1024 });
+    return len;
+  } catch (e) {
+    console.warn("[PostFX] Cold open failed; keeping the clip without it:", e);
+    fs.copyFileSync(main, output);
+    return 0;
+  } finally {
+    try { fs.unlinkSync(assPath); } catch {}
   }
 }
 

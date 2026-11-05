@@ -28,25 +28,13 @@ import {
   Mic,
   Lock,
   Loader2,
+  Image as ImageIcon,
 } from "lucide-react";
 import ApiSettingsModal from "@/components/ApiSettingsModal";
+import StyleControls from "@/components/StyleControls";
 import confetti from "canvas-confetti";
 import type { CaptionStyleName } from "@/lib/videoService";
-import {
-  ClipStyle,
-  MusicMood,
-  ColorGrade,
-  CutTransition,
-  DEFAULT_CLIP_STYLE,
-  normalizeClipStyle,
-  MUSIC_MOODS,
-  COLOR_GRADES,
-  TRANSITIONS,
-  MOOD_LABELS,
-  GRADE_LABELS,
-  TRANSITION_LABELS,
-  CAPTION_FONT_OPTIONS,
-} from "@/lib/clipStyleOptions";
+import { ClipStyle, DEFAULT_CLIP_STYLE, normalizeClipStyle, CAPTION_FONT_OPTIONS } from "@/lib/clipStyleOptions";
 
 
 // Poster thumbnails: the server drops poster-<clip>.jpg next to every
@@ -364,6 +352,38 @@ function DashboardContent() {
   // player panel, out of sight below the list on narrow screens).
   const [renderingClipId, setRenderingClipId] = useState<string | null>(null);
   const [keywordHighlightsEnabled, setKeywordHighlightsEnabled] = useState(true);
+  const [thumbClipId, setThumbClipId] = useState<string | null>(null);
+  const makeThumbnail = async (clip: RealClip) => {
+    setThumbClipId(clip.id);
+    try {
+      const res = await fetch("/api/thumbnail", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({
+          videoUrl: clip.videoUrl,
+          headline: clip.hookHeadline || clip.title,
+          words: clip.transcript,
+          font: clip.fx?.captionFont && clip.fx.captionFont !== "default" ? clip.fx.captionFont : "anton",
+          accent: clip.fx?.clipStyle?.brand?.primary,
+        }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok || !d.url) throw new Error(d.error || "Couldn't make the thumbnail");
+      const t = localStorage.getItem("app_access_token");
+      const blob = await (await fetch(d.url, { headers: t ? { "x-app-access-token": t } : {} })).blob();
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `${(clip.title || "clip").replace(/[^\w-]+/g, "_").slice(0, 40)}-thumbnail.jpg`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    } catch (e: any) {
+      alert(e?.message || "Couldn't make the thumbnail");
+    } finally {
+      setThumbClipId(null);
+    }
+  };
   // Look & sound: music mood, sound effects, voice, grade, transitions,
   // push-in, caption font. Remembered per browser.
   const [clipStyle, setClipStyleState] = useState<ClipStyle>(DEFAULT_CLIP_STYLE);
@@ -1486,6 +1506,21 @@ function DashboardContent() {
                             <Sliders className="w-3.5 h-3.5" />
                             <span className="sm:hidden font-black">Edit</span>
                           </Link>
+
+                          {/^\/api\/media\?file=rendered_clips\//.test(clip.videoUrl || "") && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                makeThumbnail(clip);
+                              }}
+                              disabled={thumbClipId === clip.id}
+                              className="flex-1 sm:flex-none p-2.5 bg-white hover:bg-[#FFC700] text-black border-2 border-black font-black text-xs uppercase flex items-center justify-center gap-1.5 transition-colors shadow-[2px_2px_0px_#000000] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none disabled:opacity-50 cursor-pointer"
+                              title="Make a thumbnail (best frame + headline)"
+                            >
+                              {thumbClipId === clip.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ImageIcon className="w-3.5 h-3.5" />}
+                              <span className="sm:hidden font-black">Thumbnail</span>
+                            </button>
+                          )}
                         </div>
                       </div>
                     );
@@ -2126,51 +2161,13 @@ function DashboardContent() {
 
               <div>
                 <label className="block text-xs font-black uppercase tracking-wider text-black mb-1.5">Look &amp; Sound</label>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-2">
-                  {(
-                    [
-                      { label: "Caption font", value: captionFont, set: (v: string) => setCaptionFont(v), options: CAPTION_FONT_OPTIONS.map((o) => [o.id, o.label]) },
-                      { label: "Music mood", value: clipStyle.musicMood, set: (v: string) => setClipStyle({ musicMood: v as MusicMood }), options: MUSIC_MOODS.map((m) => [m, MOOD_LABELS[m]]) },
-                      { label: "Colour grade", value: clipStyle.grade, set: (v: string) => setClipStyle({ grade: v as ColorGrade }), options: COLOR_GRADES.map((g) => [g, GRADE_LABELS[g]]) },
-                      { label: "Cut transition", value: clipStyle.transition, set: (v: string) => setClipStyle({ transition: v as CutTransition }), options: TRANSITIONS.map((t) => [t, TRANSITION_LABELS[t]]) },
-                    ] as { label: string; value: string; set: (v: string) => void; options: string[][] }[]
-                  ).map((f) => (
-                    <label key={f.label} className="flex flex-col gap-1">
-                      <span className="text-[10px] font-black uppercase text-neutral-600">{f.label}</span>
-                      <select
-                        value={f.value}
-                        onChange={(e) => f.set(e.target.value)}
-                        className="bg-[#F8F7F4] text-black text-xs font-bold px-2 py-1.5 border-2 border-black focus:outline-none focus:bg-white cursor-pointer"
-                      >
-                        {f.options.map(([id, label]) => (
-                          <option key={id} value={id}>
-                            {label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  ))}
-                </div>
-                <div className="flex flex-wrap gap-x-5 gap-y-1.5">
-                  {(
-                    [
-                      { key: "sfx", label: "Sound effects", hint: "whoosh, pop, ding" },
-                      { key: "voiceEnhance", label: "Studio voice", hint: "clean, loud, clear" },
-                      { key: "pushIn", label: "Slow push-in", hint: "camera drifts in" },
-                    ] as { key: "sfx" | "voiceEnhance" | "pushIn"; label: string; hint: string }[]
-                  ).map((t) => (
-                    <label key={t.key} className="flex items-center gap-2 cursor-pointer select-none">
-                      <input
-                        type="checkbox"
-                        checked={clipStyle[t.key]}
-                        onChange={(e) => setClipStyle({ [t.key]: e.target.checked } as Partial<ClipStyle>)}
-                        className="w-4 h-4 accent-black cursor-pointer"
-                      />
-                      <span className="text-xs font-black uppercase tracking-wider text-black">{t.label}</span>
-                      <span className="text-[10px] font-medium text-neutral-500">{t.hint}</span>
-                    </label>
-                  ))}
-                </div>
+                <StyleControls
+                  style={clipStyle}
+                  onChange={setClipStyle}
+                  font={captionFont}
+                  onFont={setCaptionFont}
+                  onCaptionStyle={(st) => setJobCaptionStyle(st as CaptionStyleName)}
+                />
               </div>
 
               <div>

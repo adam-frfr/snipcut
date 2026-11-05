@@ -47,6 +47,11 @@ const tests = [
     args: ["tsx", path.join(__dirname, "test-caption-styles.ts")],
   },
   {
+    name: "Clip Style Options, Packs & Caption-Layer Effects",
+    cmd: "npx",
+    args: ["tsx", path.join(__dirname, "test-clip-style.ts")],
+  },
+  {
     name: "Cut Accuracy & A/V Sync Across Layout and Silence-Removal Joins",
     cmd: "npx",
     args: ["tsx", path.join(__dirname, "test-cut-accuracy.ts")],
