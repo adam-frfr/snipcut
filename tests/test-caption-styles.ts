@@ -4,9 +4,9 @@
  * default "snipcut" preset's events used "Snipcut", so libass silently
  * fell back to its tiny built-in default style on every default clip.
  */
-import { buildKaraokeAss } from "../src/lib/videoService";
+import { buildKaraokeAss, CAPTION_STYLES } from "../src/lib/videoService";
 
-const presets = ["hormozi", "neon", "beast", "clean", "kinetic", "snipcut"] as const;
+const presets = CAPTION_STYLES;
 const words = ["This", "is", "how", "you", "win.", "Every", "single", "time."].map((text, i) => ({
   text,
   start: 0.2 + i * 0.4,

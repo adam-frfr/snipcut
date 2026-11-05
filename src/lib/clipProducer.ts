@@ -10,7 +10,9 @@ import {
   SplitScreenCustomOptions,
   TrackingResult,
 } from "./videoService";
+import type { CaptionStyleName } from "./videoService";
 import { buildSentences, planBroll, fetchBrollAssets, hasBrollSource } from "./brollService";
+import { normalizeClipStyle, styleNeedsFx, pickMood, ClipStyle } from "./clipStyle";
 import { measureBackgroundAudio, shotMap, coverage, inside, overlaps, Span } from "./adaptiveFx";
 import { computeKeepRanges, toOutputTime, wordsOnOutput, keptDuration, inSpokenOrder, Range, TimelineWord } from "./timeline";
 
@@ -26,7 +28,7 @@ import { computeKeepRanges, toOutputTime, wordsOnOutput, keptDuration, inSpokenO
  *   4. B-roll / punch zooms / music on the final timeline, captions last.
  */
 
-type CaptionStyle = "hormozi" | "neon" | "beast" | "clean" | "kinetic" | "snipcut";
+type CaptionStyle = CaptionStyleName;
 
 export interface ProduceClipOptions {
   inputPath: string;
@@ -52,6 +54,10 @@ export interface ProduceClipOptions {
   musicBed?: boolean;
   keys?: { groqKey?: string; openaiKey?: string; claudeKey?: string; pexelsKey?: string; pixabayKey?: string };
   brollTag?: string;
+  /** Music mood, sound effects, voice clean-up, grade, transitions, push-in. */
+  style?: Partial<ClipStyle>;
+  /** Caption font key (CAPTION_FONTS). */
+  captionFont?: string;
 }
 
 export interface ProduceClipResult {
@@ -118,7 +124,8 @@ export async function produceClip(o: ProduceClipOptions): Promise<ProduceClipRes
   const outputWords = wordsOnOutput(keptWords, ranges).map((w) => ({ start: w.start, end: w.end, text: w.text }));
   const hookText = o.hookTitle && o.headline ? o.headline : undefined;
   const keywords = o.keywords || undefined;
-  const fx = Boolean(o.broll || o.musicBed);
+  const style = normalizeClipStyle(o.style);
+  const fx = Boolean(o.broll || o.musicBed) || styleNeedsFx(style);
 
   const outDir = path.dirname(o.outputPath);
   fs.mkdirSync(outDir, { recursive: true });
@@ -144,6 +151,7 @@ export async function produceClip(o: ProduceClipOptions): Promise<ProduceClipRes
       skipCaptions,
       keywords,
       hookTitle: hookText,
+      captionFont: o.captionFont,
     });
 
   try {
@@ -233,6 +241,22 @@ export async function produceClip(o: ProduceClipOptions): Promise<ProduceClipRes
           if (!music) notes.push("music skipped: the video already has music/sound");
         }
 
+        // Music mood: chosen, or picked from what's said in the clip.
+        const mood =
+          style.musicMood === "auto"
+            ? pickMood(`${o.headline || ""} ${outputWords.map((w) => w.text).join(" ")}`)
+            : style.musicMood;
+        // Cuts inside the finished clip (silence / deleted-word joins).
+        const joins: number[] = [];
+        if (cutting) {
+          let acc = 0;
+          for (const r of ranges.slice(0, -1)) {
+            acc += r.end - r.start;
+            joins.push(Number(acc.toFixed(3)));
+          }
+        }
+        // A slow push-in suits a talking head, not a screen recording.
+        const clipStyle = { ...style, pushIn: style.pushIn && talkingHead >= 0.4 };
         await applyPostEffects({
           basePath,
           outputPath: o.outputPath,
@@ -243,9 +267,14 @@ export async function produceClip(o: ProduceClipOptions): Promise<ProduceClipRes
           broll: cues,
           punches,
           musicBed: music,
+          musicMood: mood,
+          style: clipStyle,
+          transitionTimes: joins,
           captionPositionY: o.captionPositionY,
-          captionOptions: { keywords, centerSpans, hook: hookText ? { text: hookText } : undefined },
+          captionOptions: { keywords, centerSpans, hook: hookText ? { text: hookText } : undefined, font: o.captionFont },
         });
+        if (music) notes.push(`${mood} music`);
+        if (style.grade !== "none") notes.push(`${style.grade} grade`);
         return {
           tracking: base.tracking,
           duration: Number(finalDur.toFixed(2)),

@@ -6,6 +6,8 @@ import { analyzeTranscriptForViralClips, CuratedClipResult } from "./aiService";
 import { snapAndValidateClips, SnappedClipResult } from "./wordSnapping";
 import { probeVideoFormat } from "./videoService";
 import { produceClip } from "./clipProducer";
+import type { CaptionStyleName } from "./videoService";
+import { normalizeClipStyle, ClipStyle } from "./clipStyle";
 import { acquireJobLock, releaseJobLock } from "./jobLock";
 import { resolveSafeFilePath, extractAudioForWhisper, generatePreviewClip, generatePosterImage, generateSourcePoster } from "./videoService";
 import { downloadYoutubeVideo, normalizeUploadedVideo } from "./mediaPrep";
@@ -82,7 +84,7 @@ export interface JobOptions {
   customPrompt?: string;
   aspectRatio?: "9:16" | "1:1" | "16:9";
   reframeMode?: "auto-tracker" | "split-screen" | "blurred-fit" | "center";
-  captionStyle?: "hormozi" | "neon" | "beast" | "clean" | "kinetic" | "snipcut";
+  captionStyle?: CaptionStyleName;
   removeSilences?: boolean; // tighten clips by cutting internal pauses > 0.55s
   maxClipsToRender?: number; // default MAX_CLIPS_TO_RENDER or 6 (all clips)
   retentionHours?: number; // default 24h
@@ -98,6 +100,8 @@ export interface JobOptions {
   musicBed?: boolean;
   hookTitle?: boolean; // hook headline card in the upper third (default on)
   keywordHighlights?: boolean; // colour AI key-phrase words in captions (default on)
+  clipStyle?: Partial<ClipStyle>; // music mood, sfx, voice, grade, transitions, push-in
+  captionFont?: string; // CAPTION_FONTS key
   pexelsKey?: string;
   pixabayKey?: string;
 }
@@ -633,7 +637,7 @@ class JobQueueManager {
         const captionStyle = job.options.captionStyle || "hormozi";
 
         // Render cache key: sha256(sourceHash:start:end:mode:captionStyle:aspectRatio)
-        const renderKeyRaw = `${sourceHash}:${clip.startTime}:${clip.endTime}:${reframeMode}:${captionStyle}:${aspectRatio}:${job.options.removeSilences ? "tight2" : "full"}:fx${job.options.broll ? "b" : ""}${job.options.musicBed ? "m" : ""}:v3${job.options.hookTitle === false ? "" : "h"}${job.options.keywordHighlights === false ? "" : "k"}`;
+        const renderKeyRaw = `${sourceHash}:${clip.startTime}:${clip.endTime}:${reframeMode}:${captionStyle}:${aspectRatio}:${job.options.removeSilences ? "tight2" : "full"}:fx${job.options.broll ? "b" : ""}${job.options.musicBed ? "m" : ""}:v3${job.options.hookTitle === false ? "" : "h"}${job.options.keywordHighlights === false ? "" : "k"}:s${JSON.stringify(normalizeClipStyle(job.options.clipStyle))}:f${job.options.captionFont || ""}`;
         const renderKey = crypto.createHash("sha256").update(renderKeyRaw).digest("hex");
         const renderCachePath = path.join(RENDERS_CACHE_DIR, `${renderKey}.json`);
 
@@ -697,6 +701,8 @@ class JobQueueManager {
           headline: clip.hookHeadline || clip.title,
           hookTitle: job.options.hookTitle !== false,
           keywords: job.options.keywordHighlights === false ? null : (clip as any).keyPhrases || [],
+          style: job.options.clipStyle,
+          captionFont: job.options.captionFont,
           removeSilences: Boolean(job.options.removeSilences),
           broll: Boolean(job.options.broll),
           musicBed: Boolean(job.options.musicBed),

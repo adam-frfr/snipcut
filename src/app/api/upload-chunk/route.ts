@@ -5,6 +5,8 @@ import fs from "fs";
 import { verifyAuthAndRateLimit } from "@/lib/authRateLimit";
 import { jobQueue, saveJobRecord, JobRecord, JobOptions } from "@/lib/jobQueue";
 import { safeUploadName } from "@/lib/mediaPrep";
+import { normalizeClipStyle } from "@/lib/clipStyle";
+import { CAPTION_FONTS } from "@/lib/videoService";
 
 /**
  * Chunked upload endpoint.
@@ -129,6 +131,8 @@ export async function POST(req: NextRequest) {
       musicBed: body.musicBed === true,
       hookTitle: body.hookTitle !== false,
       keywordHighlights: body.keywordHighlights !== false,
+      clipStyle: normalizeClipStyle(body.clipStyle),
+      captionFont: typeof body.captionFont === "string" && CAPTION_FONTS[body.captionFont] ? body.captionFont : undefined,
       pexelsKey: (body.pexelsKey || "").trim?.() || undefined,
       pixabayKey: (body.pixabayKey || "").trim?.() || undefined,
     };
