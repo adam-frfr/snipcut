@@ -96,31 +96,47 @@ export async function downloadYoutubeVideo(opts: {
   const preferredFormat =
     "bestvideo[vcodec^=avc1][height<=1080]+bestaudio[ext=m4a]/bestvideo[height>=720][height<=1080]+bestaudio/bestvideo[vcodec^=avc1][height<=1080]+bestaudio/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best";
 
-  const args = [
-    "--js-runtimes", "node",
-    "--ffmpeg-location", getFfmpegBinary(),
-    ...cookieArgs,
-    ...proxyArgs,
-    "--extractor-args", "youtube:player_client=android,ios,web",
-    "-f", preferredFormat,
-    "--no-warnings", "--ignore-errors", "--no-playlist",
-    "--merge-output-format", "mp4",
-    "-o", outTemplate,
-    // "--" ends option parsing: the URL can never be read as a flag.
-    "--",
-    url,
-  ];
+  // Player clients: yt-dlp's DEFAULT set first. Forcing
+  // "android,ios,web" (the old behaviour) only exposes YouTube's 360p
+  // progressive format now, so every clip came from a 360p source even when
+  // 1080p existed (verified: default -> 137+140 1920x1080, forced -> 18
+  // 640x360). The forced set is kept as a fallback for when the default
+  // clients hit a bot check.
+  const clientStrategies: string[][] = [[], ["--extractor-args", "youtube:player_client=android,ios,web"]];
+  const hasOutput = () => fs.readdirSync(downloadDir).some((f) => f.startsWith(filePrefix) && /\.(mp4|mkv|webm|mov)$/i.test(f));
 
+  let lastErr = "";
   try {
-    // Long 1080p videos can take several minutes to download + merge.
-    await execFilePromise(getYtDlpBinary(), args, { timeout: 900000, maxBuffer: 64 * 1024 * 1024 });
-  } catch (dlErr: any) {
-    throw new Error(friendlyDownloadError(`${dlErr?.stderr || ""} ${dlErr?.message || ""}`));
+    for (const clientArgs of clientStrategies) {
+      const args = [
+        "--js-runtimes", "node",
+        "--ffmpeg-location", getFfmpegBinary(),
+        ...cookieArgs,
+        ...proxyArgs,
+        ...clientArgs,
+        "-f", preferredFormat,
+        "--no-warnings", "--no-playlist",
+        "--merge-output-format", "mp4",
+        "-o", outTemplate,
+        // "--" ends option parsing: the URL can never be read as a flag.
+        "--",
+        url,
+      ];
+      try {
+        // Long 1080p videos can take several minutes to download + merge.
+        await execFilePromise(getYtDlpBinary(), args, { timeout: 900000, maxBuffer: 64 * 1024 * 1024 });
+      } catch (dlErr: any) {
+        lastErr = `${dlErr?.stderr || ""} ${dlErr?.message || ""}`;
+        console.warn(`[Stage: YouTube] Download attempt failed (${clientArgs.length ? clientArgs[1] : "default clients"}): ${lastErr.slice(0, 300)}`);
+      }
+      if (hasOutput()) break;
+    }
   } finally {
     if (tempCookie) {
       try { fs.unlinkSync(tempCookie); } catch {}
     }
   }
+  if (!hasOutput()) throw new Error(friendlyDownloadError(lastErr));
 
   const target = path.join(downloadDir, `${filePrefix}.mp4`);
   if (fs.existsSync(target)) return { filePath: target, fileId: `downloads/${filePrefix}.mp4` };

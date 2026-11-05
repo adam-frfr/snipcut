@@ -27,6 +27,30 @@ for (const preset of presets) {
   if (!ok) failures++;
 }
 
+// Overlapping word timings (fast speech: each word padded to 0.3s while
+// words start every 0.18s) must never put two caption events on screen at
+// once — libass stacks them, showing the same line twice.
+const fast = ["a", "small", "few", "hours", "and", "then", "I", "need", "some", "breaks."].map((text, i) => ({
+  text,
+  start: 1 + i * 0.18,
+  end: 1 + i * 0.18 + 0.3,
+}));
+const t = (s: string) => {
+  const [h, m, sec] = s.split(":");
+  return Number(h) * 3600 + Number(m) * 60 + Number(sec);
+};
+for (const preset of presets) {
+  const ass = buildKaraokeAss(fast, preset, 500);
+  const evs = [...ass.matchAll(/^Dialogue: [^,]*,([^,]*),([^,]*),/gm)]
+    .map((m) => ({ s: t(m[1]), e: t(m[2]) }))
+    .sort((a, b) => a.s - b.s);
+  let overlaps = 0;
+  for (let i = 1; i < evs.length; i++) if (evs[i].s < evs[i - 1].e - 0.001) overlaps++;
+  const ok = evs.length > 0 && overlaps === 0;
+  console.log(`${ok ? "-> PASS" : "-> FAIL"}: "${preset}" fast speech: ${evs.length} events, ${overlaps} overlapping`);
+  if (!ok) failures++;
+}
+
 if (failures) {
   console.error(`\nCAPTION STYLE FAILURES: ${failures}`);
   process.exit(1);

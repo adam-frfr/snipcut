@@ -381,6 +381,36 @@ interface KaraokeWord {
 }
 
 /**
+ * Caption events must never overlap: libass stacks simultaneous events, so
+ * two karaoke states of one phrase showed as the same line twice (seen in
+ * testing). Overlaps are common — word timings from Whisper overlap, the
+ * renderer pads words to >=0.2s, and silence-removal parts clamp early
+ * words to 0. End every event where the next one starts.
+ */
+export function preventCaptionOverlaps(dialogues: string[]): string[] {
+  const parseT = (s: string) => {
+    const [h, m, sec] = s.split(":");
+    return Number(h) * 3600 + Number(m) * 60 + Number(sec);
+  };
+  const evs = dialogues
+    .map((line) => {
+      const m = /^Dialogue: ([^,]*),([^,]*),([^,]*),(.*)$/.exec(line);
+      return m ? { layer: m[1], start: parseT(m[2]), end: parseT(m[3]), rest: m[4] } : null;
+    })
+    .filter((e): e is { layer: string; start: number; end: number; rest: string } => e !== null)
+    .sort((a, b) => a.start - b.start);
+  const out: string[] = [];
+  for (let i = 0; i < evs.length; i++) {
+    const e = evs[i];
+    const next = evs[i + 1];
+    const end = next && next.start > e.start ? Math.min(e.end, next.start) : e.end;
+    if (end - e.start < 0.03) continue;
+    out.push(`Dialogue: ${e.layer},${formatAssTime(e.start)},${formatAssTime(end)},${e.rest}`);
+  }
+  return out;
+}
+
+/**
  * Karaoke-style captions: a short phrase stays
  * on screen while the currently-spoken word is highlighted in the accent
  * colour. Emitted as ASS with one Dialogue event per word; each event
@@ -405,7 +435,11 @@ export function buildKaraokeAss(
   const pal = palettes[captionStyle] || palettes.hormozi;
   // Font size is authored against a 1920px-tall canvas; scale it to the
   // actual PlayRes so 16:9 / 1:1 renders don't get oversized captions.
-  const fontSize = Math.max(20, Math.round(pal.size * (playRes.y / 1920)));
+  // Sizes are authored for a 1080px-wide 9:16 frame. Scale by the SHORT
+  // side so 16:9 and 1:1 captions are as readable as 9:16 ones (scaling by
+  // height/1920 shrank 16:9 captions to 56% — unreadable on a phone).
+  const captionScale = Math.min(playRes.x, playRes.y) / 1080;
+  const fontSize = Math.max(20, Math.round(pal.size * captionScale));
 
   const header = `[Script Info]
 Title: Snipcut Karaoke Captions
@@ -419,7 +453,7 @@ ScaledBorderAndShadow: yes
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Karaoke,Arial,${fontSize},${pal.base},${pal.base},&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,${pal.outline},2,2,60,60,${marginV},1
 Style: Kinetic,Arial,${fontSize},${pal.base},${pal.base},&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,${pal.outline},3,5,40,40,0,1
-Style: Snipcut,Arial,${Math.max(20, Math.round(74 * (playRes.y / 1920)))},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,10,2,2,50,50,${Math.round(playRes.y * 0.16)},1
+Style: Snipcut,Arial,${Math.max(20, Math.round(74 * captionScale))},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,10,2,2,50,50,${Math.round(playRes.y * 0.16)},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -432,13 +466,25 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     // words sit low-centre; the whole phrase stays on screen while the
     // spoken word turns accent-yellow with a slight pop. Auto-fit keeps
     // long phrases inside the frame (theirs occasionally overflow).
-    const snipcutFont = Math.max(20, Math.round(74 * (playRes.y / 1920)));
+    const snipcutFont = Math.max(20, Math.round(74 * captionScale));
+    // Estimated rendered width of a phrase (same model as the auto-fit below).
+    const phraseWidth = (ws: KaraokeWord[]) =>
+      ws.reduce((sum, pw, i) => sum + pw.text.length * 0.66 * snipcutFont * 1.16 + (i > 0 ? 0.32 * snipcutFont : 0), 0);
+    const lineBudget = playRes.x - 100;
     const phrases: KaraokeWord[][] = [];
     let cur: KaraokeWord[] = [];
     for (const w of words) {
       if (cur.length > 0) {
         const prev = cur[cur.length - 1];
-        if (cur.length >= 5 || w.start - prev.end > 0.5 || /[.!?]$/.test(prev.text)) {
+        // Also break before a word that would overflow the line: long
+        // phrases used to be shrunk to fit, so caption size jumped between
+        // big and small from one phrase to the next.
+        if (
+          cur.length >= 5 ||
+          w.start - prev.end > 0.5 ||
+          /[.!?]$/.test(prev.text) ||
+          phraseWidth([...cur, w]) > lineBudget
+        ) {
           phrases.push(cur);
           cur = [];
         }
@@ -471,7 +517,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         );
       }
     }
-    return header + evts.join("\n") + "\n";
+    return header + preventCaptionOverlaps(evts).join("\n") + "\n";
   }
 
   if (captionStyle === "kinetic") {
@@ -521,7 +567,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
       const anim = `{\\fad(45,60)${fitScale < 1 ? `\\fs${Math.round(fontSize * fitScale)}` : ""}\\fscx115\\fscy115\\t(0,110,1,\\fscx100\\fscy100)}`;
       evts.push(`Dialogue: 0,${formatAssTime(start)},${formatAssTime(end)},Kinetic,,0,0,0,,${anim}${parts.join(" ")}`);
     });
-    return header + evts.join("\n") + "\n";
+    return header + preventCaptionOverlaps(evts).join("\n") + "\n";
   }
 
   // Group words into phrases: max 4 words, break on sentence punctuation
@@ -562,7 +608,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
       );
     }
   }
-  return header + events.join("\n") + "\n";
+  return header + preventCaptionOverlaps(events).join("\n") + "\n";
 }
 
 /**
@@ -574,7 +620,8 @@ export async function detectSubjectAndReframe(
   startTime: number,
   duration: number,
   mode: ReframeMode = "auto-tracker",
-  speechSpans?: { start: number; end: number }[]
+  speechSpans?: { start: number; end: number }[],
+  aspect: "9:16" | "1:1" = "9:16"
 ): Promise<TrackingResult> {
   return new Promise((resolve) => {
     const scriptPath = path.join(process.cwd(), "scripts", "track_reframe.py");
@@ -604,6 +651,8 @@ export async function detectSubjectAndReframe(
       String(duration),
       "--mode",
       mode,
+      "--aspect",
+      aspect,
     ];
     if (speechSpans && speechSpans.length > 0) {
       try {
@@ -766,6 +815,18 @@ export async function renderVideoClip({
         console.warn("AI Tracking warning:", e);
       }
     }
+  } else if (aspectRatio === "1:1" && (effectiveMode === "auto-tracker" || effectiveMode === "split-screen")) {
+    // Square output follows the speaker too (it used to be a fixed centre
+    // crop that cut two-person shots in half). Split/fit layouts are 9:16-
+    // only, so 1:1 always gets the tracked single crop.
+    try {
+      const tracked = await detectSubjectAndReframe(resolvedInput, startTime, duration, "auto-tracker", transcript, "1:1");
+      if (tracked?.status === "success" && tracked.filter_type === "vf" && /scale=1080:1080/.test(tracked.filter_value || "")) {
+        trackingResult = { ...tracked, layoutSegments: [] };
+      }
+    } catch (e) {
+      console.warn("AI Tracking warning (1:1):", e);
+    }
   }
 
   return new Promise((resolve, reject) => {
@@ -904,7 +965,10 @@ export async function renderVideoClip({
         command = command.videoFilters(filters);
       }
     } else if (aspectRatio === "1:1") {
-      const filters = ["scale=1080:1080:force_original_aspect_ratio=increase,crop=1080:1080"];
+      const tracked1x1 = /scale=1080:1080/.test(trackingResult.filter_value || "");
+      const filters = [
+        tracked1x1 ? trackingResult.filter_value : "scale=1080:1080:force_original_aspect_ratio=increase,crop=1080:1080",
+      ];
       if (subtitleFilterStr) {
         filters.push(subtitleFilterStr);
       }
@@ -1314,11 +1378,16 @@ export async function renderSegmentedClip(opts: {
 export function shapeBrollCues<T extends { start: number; end: number }>(cues: T[], duration: number): T[] {
   const MAX_CUE = 2.5;
   const MIN_GAP = 1.5;
+  // The first seconds are the hook: viewers decide to stay by seeing the
+  // speaker say it. A cutaway at 0s (seen in testing: 3s of stock laptop
+  // footage over the opening line) hides exactly that, and becomes the
+  // thumbnail too. Keep the speaker on screen for the opening.
+  const HOOK_CLEAR = Math.min(3.0, duration * 0.2);
   const budget = Math.max(0, duration * 0.2);
   const sorted = [...cues].sort((a, b) => a.start - b.start);
   const out: T[] = [];
   let used = 0;
-  let lastEnd = -Infinity;
+  let lastEnd = HOOK_CLEAR - MIN_GAP;
   for (const cue of sorted) {
     const start = Math.max(cue.start, lastEnd + MIN_GAP);
     if (start >= duration - 0.4) continue;

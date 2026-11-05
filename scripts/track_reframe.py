@@ -15,7 +15,9 @@ try:
 except Exception:
     pass
 
-SAMPLE_DT = 0.25  # dense sampling: 4 observations per second
+NOMINAL_SAMPLE_DT = 0.25  # dense sampling: ~4 observations per second
+# run_tracking() rebinds SAMPLE_DT to the REAL spacing for the video's fps.
+SAMPLE_DT = NOMINAL_SAMPLE_DT
 TARGET_W, TARGET_H = 1080, 1920
 
 
@@ -187,7 +189,7 @@ def detect_faces(detector, frame, min_face=18):
     return out
 
 
-def run_tracking(video_path, start_time, duration, mode="auto-tracker", ai_shots_json=None, words=None):
+def run_tracking(video_path, start_time, duration, mode="auto-tracker", ai_shots_json=None, words=None, aspect="9:16"):
     if not os.path.exists(video_path):
         return {"status": "error", "error": f"Video file not found: {video_path}"}
 
@@ -242,12 +244,16 @@ def run_tracking(video_path, start_time, duration, mode="auto-tracker", ai_shots
         except Exception:
             pass
 
-    # 9:16 crop window fitted inside the source
-    crop_w = int(height * 9.0 / 16.0)
+    # Crop window of the OUTPUT aspect (9:16 or 1:1) fitted inside the source.
+    # 1:1 used to skip tracking entirely and centre-crop, cutting speakers
+    # in half on two-person shots.
+    ar = 1.0 if aspect == "1:1" else 9.0 / 16.0
+    out_w, out_h = (1080, 1080) if aspect == "1:1" else (1080, 1920)
+    crop_w = int(height * ar)
     crop_h = height
-    if crop_w > width:  # portrait/square source: fit by width instead
+    if crop_w > width:  # source narrower than the output aspect: fit by width
         crop_w = width
-        crop_h = int(width * 16.0 / 9.0)
+        crop_h = int(width / ar)
     if crop_w % 2:
         crop_w -= 1
     if crop_h % 2:
@@ -271,20 +277,34 @@ def run_tracking(video_path, start_time, duration, mode="auto-tracker", ai_shots
 
     Track._next_id = 0
     tracks = []
-    num_samples = max(4, int(duration / SAMPLE_DT) + 1)
-    frame_step = max(1, int(round(fps * SAMPLE_DT)))
-    cap.set(cv2.CAP_PROP_POS_FRAMES, int(start_time * fps))
+    frame_step = max(1, int(round(fps * NOMINAL_SAMPLE_DT)))
+    # Real spacing between samples. fps*0.25 is rarely a whole number
+    # (30fps -> round(7.5) = 8 frames = 0.267s), and labelling every sample
+    # as exactly 0.25s made the tracker's clock run ~7% off the video: a
+    # camera cut at 13.55s was "seen" at 12.7s, so the crop switched to the
+    # next speaker early and drifted further off as the clip went on.
+    step_dt = frame_step / fps
+    # Presence, speaking time, camera speed and every tolerance below are
+    # measured in samples; make one sample mean its true duration.
+    SAMPLE_DT = step_dt
+    num_samples = max(4, int(duration / step_dt) + 1)
+    start_frame = int(round(start_time * fps))
+    cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
 
     observations = []  # per sample: {t, faces, cut, motion_centroid, motion_energy}
     prev_gray_small = None
     prev_hist = None
 
     for i in range(num_samples):
-        t = i * SAMPLE_DT
-        if t > duration:
-            break
         ret, frame = cap.read()
         if not ret:
+            break
+        # Timestamp from the decoder when it reports one (exact even if the
+        # seek landed a frame off); otherwise from the frame count.
+        pos_ms = cap.get(cv2.CAP_PROP_POS_MSEC)
+        t = (pos_ms / 1000.0 - start_time) if pos_ms and pos_ms > 0 else (start_frame + i * frame_step) / fps - start_time
+        t = max(0.0, t)
+        if t > duration:
             break
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -573,40 +593,91 @@ def run_tracking(video_path, start_time, duration, mode="auto-tracker", ai_shots
     for obs in observations:
         t = obs["t"]
         primary = primary_for(t)
-        s = nearest_sample(primary, t, SAMPLE_DT * 2.2)
+        # Faces actually visible in THIS frame.
+        now = []
+        for tr in tracks:
+            ps = nearest_sample(tr, t, SAMPLE_DT * 0.6)
+            if ps is not None:
+                now.append((tr, ps))
+        s = next((ps for tr, ps in now if primary is not None and tr.id == primary.id), None)
         if s is not None:
             last_face_t = t
             raw_focus.append((t, s[1], s[2], primary.id))
             continue
-        # Primary briefly missing: use another present face from this segment
-        present = []
-        for tr in tracks:
-            ps = nearest_sample(tr, t, SAMPLE_DT * 1.6)
-            if ps is not None:
-                present.append((tr, ps))
-        if present and (t - last_face_t) <= 2.0:
-            chosen = max(present, key=lambda ps: ps[0].mean_area)
+        # The shot's primary isn't on screen but someone else is: follow who
+        # is visible. (Cuts between similar-looking angles of one room slip
+        # past the histogram cut detector, so the "primary" can belong to the
+        # previous shot. The old code kept using that person's last position
+        # — up to 0.6s stale — and then fell back to motion tracking.)
+        if now:
+            chosen = max(now, key=lambda ps: (ps[0].speaking_time, ps[0].mean_area))
+            last_face_t = t
             raw_focus.append((t, chosen[1][1], chosen[1][2], chosen[0].id))
             continue
-        if obs["motion_centroid"] is not None and obs["motion_energy"] > 0.03 and (t - last_face_t) > 1.5:
+        # Nobody detected this frame: a brief dropout of the primary.
+        s = nearest_sample(primary, t, SAMPLE_DT * 2.2)
+        if s is not None:
+            raw_focus.append((t, s[1], s[2], primary.id))
+            continue
+        # Face lost for a moment (head turn, hand in front, profile view):
+        # hold the last face position for up to 4s within the same shot. The
+        # old 1.5s limit handed the camera to motion tracking, which chased
+        # gesturing hands and slid the speaker half out of frame.
+        same_shot_face = (t - last_face_t) <= 4.0 and not any(last_face_t < ct <= t for ct in cut_set)
+        if raw_focus and same_shot_face:
+            raw_focus.append((t, raw_focus[-1][1], raw_focus[-1][2], raw_focus[-1][3]))
+        elif obs["motion_centroid"] is not None and obs["motion_energy"] > 0.03 and (t - last_face_t) > 1.5:
             raw_focus.append((t, obs["motion_centroid"][0], obs["motion_centroid"][1], None))
         elif raw_focus:
             raw_focus.append((t, raw_focus[-1][1], raw_focus[-1][2], raw_focus[-1][3]))
         else:
             raw_focus.append((t, width / 2.0, height / 2.0, None))
 
+    # Opening frames with no detected face (still settling, blur, or the
+    # tail of the previous shot) used to start the clip on motion/centre —
+    # i.e. on empty background, which is the very first frame and thumbnail
+    # viewers see. Start on the first face found within the first 1.5s.
+    first_face = next((i for i, f in enumerate(raw_focus) if f[3] is not None), None)
+    if first_face is not None and 0 < first_face and raw_focus[first_face][0] <= 1.5:
+        fx, fy, ftid = raw_focus[first_face][1], raw_focus[first_face][2], raw_focus[first_face][3]
+        for i in range(first_face):
+            raw_focus[i] = (raw_focus[i][0], fx, fy, ftid)
+
     # Median-of-3 kills single-sample detection spikes; the EMA (tau ~0.45s)
     # then gives the camera a target that glides instead of twitching.
+    # Smoothing must NOT run across a camera cut or a jump to another
+    # person: the averaged target would still point mostly at the previous
+    # subject, so the camera "snapped" to a stale spot and then glided over
+    # for ~1s with the new speaker half out of frame. Restart it there.
+    def _is_boundary(i):
+        if i == 0:
+            return True
+        t, cx, _, tid = raw_focus[i]
+        pt, pcx, _, ptid = raw_focus[i - 1]
+        if any(pt < ct <= t + SAMPLE_DT * 0.6 for ct in cut_set):
+            return True
+        return tid is not None and ptid is not None and tid != ptid and abs(cx - pcx) > 0.5 * crop_w
+
+    boundaries = {i for i in range(len(raw_focus)) if _is_boundary(i)}
     focus = []
+    focus_snap = set()
     alpha = 1.0 - math.exp(-SAMPLE_DT / 0.45)
     sm_x = sm_y = None
+    seg_lo = 0
     for i, (t, cx, cy, tid) in enumerate(raw_focus):
-        window = [raw_focus[j][1] for j in range(max(0, i - 1), min(len(raw_focus), i + 2))]
-        med_x = float(np.median(window))
-        window_y = [raw_focus[j][2] for j in range(max(0, i - 1), min(len(raw_focus), i + 2))]
-        med_y = float(np.median(window_y))
-        if sm_x is None:
+        if i in boundaries:
+            seg_lo = i
+        seg_hi = min(len(raw_focus), i + 2)
+        nxt = next((b for b in sorted(boundaries) if b > i), None)
+        if nxt is not None:
+            seg_hi = min(seg_hi, nxt)
+        lo = max(seg_lo, i - 1)
+        med_x = float(np.median([raw_focus[j][1] for j in range(lo, seg_hi)]))
+        med_y = float(np.median([raw_focus[j][2] for j in range(lo, seg_hi)]))
+        if sm_x is None or i in boundaries:
             sm_x, sm_y = med_x, med_y
+            if i > 0:
+                focus_snap.add(i)
         else:
             sm_x += alpha * (med_x - sm_x)
             sm_y += alpha * (med_y - sm_y)
@@ -629,17 +700,27 @@ def run_tracking(video_path, start_time, duration, mode="auto-tracker", ai_shots
         if tid is not None:
             prev_track = tid
         desired_x = np.clip(cx - crop_w / 2.0, 0, max_x)
-        snap = any(abs(t - ct) < SAMPLE_DT * 0.6 for ct in cut_times)
+        snap = idx in focus_snap or any(abs(t - ct) < SAMPLE_DT * 0.6 for ct in cut_times)
         # Histogram correlation misses cuts between similar-looking angles of
         # the same room; a focus teleport with a track change is a cut too.
         if tid is not None and focus[idx - 1][3] is not None and tid != focus[idx - 1][3] and abs(cx - prev_cx) > 0.9 * crop_w:
             snap = True
         prev_cx = cx
+        prev_x = cam.x
+        prev_y = cam_y.x if cam_y is not None else None
         x = cam.step(desired_x, SAMPLE_DT, panning=(t <= pan_until), snap=snap)
+        # The crop path is linear between keyframes, so a snap between two
+        # samples played as a 0.25s slide that started BEFORE the cut (the
+        # old shot drifted onto empty background). Hold the old position
+        # until just before the snap so the move is a hard cut.
+        if snap and keyframes and abs(x - prev_x) > 1.0:
+            keyframes.append((round(t - 0.02, 3), prev_x))
         keyframes.append((t, x))
         if cam_y is not None:
             desired_y = np.clip(cy - crop_h * 0.38, 0, max_y)
             y = cam_y.step(desired_y, SAMPLE_DT, panning=(t <= pan_until), snap=snap)
+            if snap and keyframes_y and abs(y - prev_y) > 1.0:
+                keyframes_y.append((round(t - 0.02, 3), prev_y))
             keyframes_y.append((t, y))
 
     # Thin keyframes: keep points where direction/value changes meaningfully
@@ -661,7 +742,7 @@ def run_tracking(video_path, start_time, duration, mode="auto-tracker", ai_shots
     else:
         expr_y = "0"
 
-    vf_value = f"crop={crop_w}:{crop_h}:'{expr_x}':'{expr_y}',scale=1080:1920"
+    vf_value = f"crop={crop_w}:{crop_h}:'{expr_x}':'{expr_y}',scale={out_w}:{out_h}"
 
     # Shots for the editor UI: contiguous runs of the same focus track
     shots = []
@@ -723,7 +804,9 @@ def run_tracking(video_path, start_time, duration, mode="auto-tracker", ai_shots
         "crop_h": crop_h,
         "filter_type": "vf",
         "filter_value": vf_value,
-        "layoutSegments": layout_segments,
+        # Split/fit layouts are built for a 9:16 canvas; other aspects use the
+        # tracked crop alone.
+        "layoutSegments": layout_segments if aspect == "9:16" else [],
         "video_w": width,
         "video_h": height,
         "summary": summary + "; layouts: " + ", ".join(
@@ -739,6 +822,7 @@ if __name__ == "__main__":
     parser.add_argument("--duration", type=float, default=10.0)
     parser.add_argument("--mode", default="auto-tracker", choices=["auto-tracker", "split-screen", "blurred-fit", "center"])
     parser.add_argument("--words", default=None, help="Path to JSON [{start,end}] word timings (absolute seconds)")
+    parser.add_argument("--aspect", default="9:16", choices=["9:16", "1:1"], help="Output aspect ratio of the crop")
 
     args = parser.parse_args()
     words = None
@@ -747,5 +831,5 @@ if __name__ == "__main__":
             words = json.load(open(args.words))
         except Exception:
             words = None
-    result = run_tracking(args.video, args.start, args.duration, args.mode, words=words)
+    result = run_tracking(args.video, args.start, args.duration, args.mode, words=words, aspect=args.aspect)
     print(json.dumps(result))
