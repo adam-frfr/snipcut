@@ -82,7 +82,7 @@ export interface JobOptions {
   reframeMode?: "auto-tracker" | "split-screen" | "blurred-fit" | "center";
   captionStyle?: "hormozi" | "neon" | "beast" | "clean" | "kinetic" | "snipcut";
   removeSilences?: boolean; // tighten clips by cutting internal pauses > 0.55s
-  maxClipsToRender?: number; // default 2
+  maxClipsToRender?: number; // default MAX_CLIPS_TO_RENDER or 6 (all clips)
   retentionHours?: number; // default 24h
   // Per-job API keys from the user's own Settings (stored only in the on-disk
   // job record under data/, which is gitignored and never served; stripped
@@ -170,6 +170,52 @@ export function getJobRecord(id: string): JobRecord | null {
     return null;
   }
 }
+
+export interface ProjectSummary {
+  id: string;
+  createdAt: number;
+  title: string;
+  source: string;
+  clipCount: number;
+  renderedCount: number;
+  posterUrl?: string;
+}
+
+/**
+ * Finished projects whose videos are still on disk (files expire after the
+ * retention period), newest first — so clips survive a cleared browser or
+ * a switch to another device.
+ */
+export function listRecentProjects(limit = 12): ProjectSummary[] {
+  if (!fs.existsSync(JOBS_DIR)) return [];
+  const out: ProjectSummary[] = [];
+  for (const file of fs.readdirSync(JOBS_DIR)) {
+    if (!file.endsWith(".json")) continue;
+    try {
+      const job = JSON.parse(fs.readFileSync(path.join(JOBS_DIR, file), "utf-8")) as JobRecord;
+      if (job.status !== "done" || !job.output?.curatedClips?.length) continue;
+      const src = job.output.filePath;
+      if (!src || !fs.existsSync(src)) continue;
+      const rendered = (job.output.renderedClips || []).filter((r) =>
+        fs.existsSync(path.join(process.cwd(), "public", "rendered_clips", r.filename))
+      );
+      const first = job.output.curatedClips[0] as { title?: string; posterUrl?: string };
+      out.push({
+        id: job.id,
+        createdAt: job.createdAt,
+        title: String(first?.title || "Untitled project"),
+        source: job.options.youtubeUrl || path.basename(job.output.fileId || src),
+        clipCount: job.output.curatedClips.length,
+        renderedCount: rendered.length,
+        posterUrl: rendered[0]?.posterUrl || first?.posterUrl,
+      });
+    } catch {}
+  }
+  return out.sort((a, b) => b.createdAt - a.createdAt).slice(0, limit);
+}
+
+/** How long uploads, downloads and rendered clips are kept (FILE_RETENTION_HOURS, default 24h). */
+export const retentionHours = () => Math.max(1, Number(process.env.FILE_RETENTION_HOURS) || 24);
 
 /**
  * Cleanup: Deletes uploads, downloads, rendered clips, and extracted audio older than retentionHours (default 24h)
@@ -543,7 +589,7 @@ class JobQueueManager {
       // Stage 4: Reframing & Rendering Top Clips (with Render Cache)
       // -------------------------------------------------------------
       const curatedClips = job.output.curatedClips || [];
-      const maxClips = job.options.maxClipsToRender ?? 2;
+      const maxClips = job.options.maxClipsToRender ?? (Number(process.env.MAX_CLIPS_TO_RENDER) || 6);
       const clipsToRender = curatedClips.slice(0, maxClips);
 
       if (!job.output.renderedClips) {
@@ -555,6 +601,17 @@ class JobQueueManager {
 
       const outputDir = path.join(process.cwd(), "public", "rendered_clips");
       if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
+
+      // Thumbnails for every clip up front: a frame of the source, so the
+      // clips still waiting to render (they now appear one by one) aren't
+      // black boxes. Rendered clips switch to their own poster.
+      for (let ci = 0; ci < (job.output.curatedClips || []).length; ci++) {
+        const c: any = job.output.curatedClips![ci];
+        if (c.posterUrl || job.output.renderedClips.some((r) => Math.abs(r.startTime - c.startTime) < 0.1)) continue;
+        const name = await generateSourcePoster(resolvedVideoPath, c.startTime + 1, `${job.id.slice(4, 16)}-${ci}`).catch(() => null);
+        if (name) c.posterUrl = `/api/media?file=rendered_clips/${name}`;
+      }
+      saveJobRecord(job);
 
       for (let i = 0; i < clipsToRender.length; i++) {
         const clip = clipsToRender[i];
@@ -710,16 +767,6 @@ class JobQueueManager {
         saveJobRecord(job);
       }
 
-      // Thumbnails for the clips that weren't auto-rendered (they render on
-      // download): a frame of the source, so the list isn't black boxes.
-      for (let ci = 0; ci < (job.output.curatedClips || []).length; ci++) {
-        const c: any = job.output.curatedClips![ci];
-        if (c.posterUrl || job.output.renderedClips.some((r) => Math.abs(r.startTime - c.startTime) < 0.1)) continue;
-        const name = await generateSourcePoster(resolvedVideoPath, c.startTime + 1, `${job.id.slice(4, 16)}-${ci}`).catch(() => null);
-        if (name) c.posterUrl = `/api/media?file=rendered_clips/${name}`;
-      }
-      saveJobRecord(job);
-
       job.stageTimestamps.rendering.end = Date.now();
 
       // -------------------------------------------------------------
@@ -734,7 +781,7 @@ class JobQueueManager {
       console.log(`[JobQueue] Job ${jobId} successfully completed in ${Date.now() - job.createdAt}ms`);
 
       // Run automatic 24h cleanup
-      cleanupExpiredFiles(job.options.retentionHours ?? 24);
+      cleanupExpiredFiles(job.options.retentionHours ?? retentionHours());
     } catch (err: any) {
       console.error(`[JobQueue] Job ${jobId} failed at stage ${job.status}:`, err.message);
       job.status = "failed";

@@ -3,7 +3,7 @@ import crypto from "crypto";
 import path from "path";
 import fs from "fs";
 import { verifyAuthAndRateLimit } from "@/lib/authRateLimit";
-import { jobQueue, saveJobRecord, JobRecord, JobOptions } from "@/lib/jobQueue";
+import { jobQueue, saveJobRecord, JobRecord, JobOptions, listRecentProjects, retentionHours } from "@/lib/jobQueue";
 import { normalizeCookiesToNetscape } from "@/lib/youtubeCookies";
 import { normalizeYoutubeUrl, normalizeProxy } from "@/lib/mediaPrep";
 
@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
       aspectRatio: "9:16",
       reframeMode: "auto-tracker",
       captionStyle: "hormozi",
-      maxClipsToRender: 2,
+      maxClipsToRender: Number(process.env.MAX_CLIPS_TO_RENDER) || 6,
     };
 
     if (contentType.includes("multipart/form-data")) {
@@ -78,7 +78,7 @@ export async function POST(req: NextRequest) {
         reframeMode: reframeMode || "auto-tracker",
         captionStyle: captionStyle || "hormozi",
         removeSilences: removeSilences === true,
-        maxClipsToRender: 2,
+        maxClipsToRender: Number(process.env.MAX_CLIPS_TO_RENDER) || 6,
         groqKey: (groqKey || "").trim?.() || undefined,
         openaiKey: (openaiKey || "").trim?.() || undefined,
         claudeKey: (claudeKey || "").trim?.() || undefined,
@@ -196,4 +196,11 @@ export async function POST(req: NextRequest) {
       { status: 500 }
     );
   }
+}
+
+/** Recent finished projects (clips still on disk), newest first. */
+export async function GET(req: NextRequest) {
+  const authError = verifyAuthAndRateLimit(req);
+  if (authError) return authError;
+  return NextResponse.json({ success: true, projects: listRecentProjects(12), retentionHours: retentionHours() });
 }

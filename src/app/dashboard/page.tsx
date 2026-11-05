@@ -81,6 +81,94 @@ export interface RealClip {
   fx?: { removeSilences: boolean; broll: boolean; musicBed: boolean; hookTitle: boolean; keywordHighlights: boolean };
 }
 
+/** Dashboard clips for a job (rendered ones carry their video). */
+function buildClipsFromJob(job: any): RealClip[] {
+  const rawClips = job.output?.curatedClips || [];
+  const renderedMap = new Map<string, any>();
+  if (Array.isArray(job.output?.renderedClips)) {
+    for (const r of job.output.renderedClips) {
+      renderedMap.set(String(Number(r.startTime).toFixed(2)), r);
+    }
+  }
+
+  const generatedClips: RealClip[] = rawClips.map((c: any, index: number) => {
+    const startKey = String(Number(c.startTime).toFixed(2));
+    const rendered = renderedMap.get(startKey);
+
+    const clipWords =
+      c.snappedWords && c.snappedWords.length > 0
+        ? c.snappedWords.map((cw: any) => ({
+            start: Math.max(0, Number((cw.start - c.startTime).toFixed(2))),
+            end: Math.max(0.3, Number((cw.end - c.startTime).toFixed(2))),
+            text: cw.word || cw.text,
+          }))
+        : Array.isArray(job.output?.transcription?.words)
+        ? job.output.transcription.words
+            .filter((w: any) => w.end > c.startTime && w.start < c.endTime)
+            .map((w: any) => ({
+              start: Math.max(0, Number((w.start - c.startTime).toFixed(2))),
+              end: Math.max(0.3, Number((w.end - c.startTime).toFixed(2))),
+              text: w.word || w.text,
+            }))
+        : [
+            { start: 0, end: 3, text: c.hookHeadline || c.title },
+            { start: 3, end: 7, text: "Key insight" },
+          ];
+
+    const initialVideoUrl = rendered
+      ? rendered.downloadUrl
+      : job.output?.fileId
+      ? `/api/media?file=${encodeURIComponent(job.output.fileId)}`
+      : "/placeholder.mp4";
+
+    return {
+      // Stable per job + position: clips now appear while the rest are
+      // still rendering, so the id must not change when a clip renders.
+      id: `${job.id}_c${index}`,
+      videoFilePath: job.output?.filePath || "",
+      videoUrl: initialVideoUrl,
+      renderedVideoUrl: rendered ? rendered.downloadUrl : undefined,
+      previewUrl: rendered?.previewDownloadUrl || undefined,
+      posterUrl: rendered?.posterUrl || c.posterUrl || undefined,
+      fileSize: rendered?.fileSize || undefined,
+      previewFileSize: rendered?.previewFileSize || undefined,
+      title: c.title || `Viral Short #${index + 1}`,
+      hookHeadline: c.hookHeadline || "",
+      startTime: c.startTime || 0,
+      endTime: c.endTime || 30,
+      duration: Number(Math.max(5, c.endTime - c.startTime).toFixed(2)),
+      durationFormatted: c.durationFormatted || "0:30",
+      viralityScore: c.viralityScore || 92,
+      hookStrength: c.hookStrength || 94,
+      engagementScore: c.engagementScore || 90,
+      trendMatch: c.trendMatch || 92,
+      viralityReason: c.viralityReason || "High-retention narrative segment",
+      description: c.description || rendered?.description || "",
+      aspectRatio: job.options?.aspectRatio || "9:16",
+      captionStyle: job.options?.captionStyle || "hormozi",
+      transcript: clipWords,
+      // 30s of source words either side so the editor can extend the clip.
+      sourceWords: (Array.isArray(job.output?.transcription?.words) && job.output.transcription.words.length
+        ? job.output.transcription.words
+        : c.snappedWords || []
+      )
+        .filter((w: any) => w.end > c.startTime - 30 && w.start < c.endTime + 30)
+        .map((w: any) => ({ start: Number(w.start), end: Number(w.end), text: String(w.word ?? w.text ?? "") })),
+      keepRanges: rendered?.keepRanges,
+      ...(rendered?.duration ? { duration: rendered.duration } : {}),
+      keyPhrases: Array.isArray(c.keyPhrases) ? c.keyPhrases : [],
+      fx: {
+        removeSilences: Boolean(job.options?.removeSilences),
+        broll: Boolean(job.options?.broll),
+        musicBed: Boolean(job.options?.musicBed),
+        hookTitle: job.options?.hookTitle !== false,
+        keywordHighlights: job.options?.keywordHighlights !== false,
+      },
+    };
+  });
+  return generatedClips;
+}
+
 function DashboardContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -438,9 +526,68 @@ function DashboardContent() {
     }
   }, [searchParams]);
 
+  // Recent projects saved on the server (clips survive a cleared browser
+  // or another device; videos are kept for the retention period).
+  const [projects, setProjects] = useState<
+    { id: string; createdAt: number; title: string; source: string; clipCount: number; renderedCount: number; posterUrl?: string }[]
+  >([]);
+  const [projectsRetention, setProjectsRetention] = useState(24);
+  const [openingProject, setOpeningProject] = useState<string | null>(null);
+  const loadProjects = async () => {
+    try {
+      const res = await fetch("/api/jobs", { headers: { ...getAuthHeaders() } });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (Array.isArray(data.projects)) setProjects(data.projects);
+      if (data.retentionHours) setProjectsRetention(data.retentionHours);
+    } catch {}
+  };
+  useEffect(() => {
+    loadProjects();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const openProject = async (id: string) => {
+    setOpeningProject(id);
+    try {
+      const res = await fetch(`/api/jobs/${id}`, { headers: { ...getAuthHeaders() } });
+      const data = await res.json();
+      if (data?.job) {
+        const built = buildClipsFromJob(data.job);
+        if (built.length) publishClips(built);
+      }
+    } catch {
+      setErrorMsg("Could not open that project — please try again.");
+    } finally {
+      setOpeningProject(null);
+    }
+  };
+  const currentProjectId = clips[0]?.id?.split("_c")[0] || "";
+
+  // Clips already on screen for the job being polled (progressive display).
+  const shownRenderedRef = React.useRef(0);
+  const publishClips = (generated: RealClip[]) => {
+    // Keep clips the user already changed in the editor while the rest of
+    // the job was still rendering.
+    let stored: any[] = [];
+    try {
+      stored = JSON.parse(localStorage.getItem("snipcut_user_clips") || "[]");
+    } catch {}
+    const merged = generated.map((c) => {
+      const prev = Array.isArray(stored) ? stored.find((s: any) => s?.id === c.id) : null;
+      return prev?.editedAt ? prev : c;
+    });
+    setClips(merged);
+    setSelectedClip((prev) => merged.find((c) => c.id === prev?.id) || merged[0]);
+    try {
+      localStorage.setItem("snipcut_user_clips", JSON.stringify(merged));
+    } catch {}
+    setActiveTab("clips");
+  };
+
   // Phase 4: Job Polling & Worker Synchronization
   const pollJob = (jobId: string) => {
     stopPolling();
+    shownRenderedRef.current = 0;
     setCurrentJobId(jobId);
     setIsProcessing(true);
 
@@ -473,94 +620,28 @@ function DashboardContent() {
         setJobStatus(job.status);
         setProcessingStage(job.stageMessage || "Processing...");
 
+        const renderedCount = Array.isArray(job.output?.renderedClips) ? job.output.renderedClips.length : 0;
         if (job.status === "failed") {
           stopPolling();
           setErrorMsg(job.error || "Job processing failed.");
+        } else if (job.status === "rendering" && renderedCount > shownRenderedRef.current) {
+          // Show clips as each one finishes (all of them render now), like
+          // OpusClip — the progress modal closes after the first, and the
+          // banner keeps counting while the rest render.
+          const firstBatch = shownRenderedRef.current === 0;
+          shownRenderedRef.current = renderedCount;
+          publishClips(buildClipsFromJob(job));
+          if (firstBatch) {
+            setIsProcessing(false);
+            try {
+              confetti({ particleCount: 60, spread: 60, origin: { y: 0.6 } });
+            } catch (e) {}
+          }
         } else if (job.status === "done") {
           stopPolling();
           localStorage.removeItem("active_job_id");
 
-          const rawClips = job.output?.curatedClips || [];
-          const renderedMap = new Map<string, any>();
-          if (Array.isArray(job.output?.renderedClips)) {
-            for (const r of job.output.renderedClips) {
-              renderedMap.set(String(Number(r.startTime).toFixed(2)), r);
-            }
-          }
-
-          const generatedClips: RealClip[] = rawClips.map((c: any, index: number) => {
-            const startKey = String(Number(c.startTime).toFixed(2));
-            const rendered = renderedMap.get(startKey);
-
-            const clipWords =
-              c.snappedWords && c.snappedWords.length > 0
-                ? c.snappedWords.map((cw: any) => ({
-                    start: Math.max(0, Number((cw.start - c.startTime).toFixed(2))),
-                    end: Math.max(0.3, Number((cw.end - c.startTime).toFixed(2))),
-                    text: cw.word || cw.text,
-                  }))
-                : Array.isArray(job.output?.transcription?.words)
-                ? job.output.transcription.words
-                    .filter((w: any) => w.end > c.startTime && w.start < c.endTime)
-                    .map((w: any) => ({
-                      start: Math.max(0, Number((w.start - c.startTime).toFixed(2))),
-                      end: Math.max(0.3, Number((w.end - c.startTime).toFixed(2))),
-                      text: w.word || w.text,
-                    }))
-                : [
-                    { start: 0, end: 3, text: c.hookHeadline || c.title },
-                    { start: 3, end: 7, text: "Key insight" },
-                  ];
-
-            const initialVideoUrl = rendered
-              ? rendered.downloadUrl
-              : job.output?.fileId
-              ? `/api/media?file=${encodeURIComponent(job.output.fileId)}`
-              : "/placeholder.mp4";
-
-            return {
-              id: rendered?.clipId || `clip-${Date.now()}-${index}`,
-              videoFilePath: job.output?.filePath || "",
-              videoUrl: initialVideoUrl,
-              renderedVideoUrl: rendered ? rendered.downloadUrl : undefined,
-              previewUrl: rendered?.previewDownloadUrl || undefined,
-              posterUrl: rendered?.posterUrl || c.posterUrl || undefined,
-              fileSize: rendered?.fileSize || undefined,
-              previewFileSize: rendered?.previewFileSize || undefined,
-              title: c.title || `Viral Short #${index + 1}`,
-              hookHeadline: c.hookHeadline || "",
-              startTime: c.startTime || 0,
-              endTime: c.endTime || 30,
-              duration: Number(Math.max(5, c.endTime - c.startTime).toFixed(2)),
-              durationFormatted: c.durationFormatted || "0:30",
-              viralityScore: c.viralityScore || 92,
-              hookStrength: c.hookStrength || 94,
-              engagementScore: c.engagementScore || 90,
-              trendMatch: c.trendMatch || 92,
-              viralityReason: c.viralityReason || "High-retention narrative segment",
-              description: c.description || rendered?.description || "",
-              aspectRatio: job.options?.aspectRatio || "9:16",
-              captionStyle: job.options?.captionStyle || "hormozi",
-              transcript: clipWords,
-              // 30s of source words either side so the editor can extend the clip.
-              sourceWords: (Array.isArray(job.output?.transcription?.words) && job.output.transcription.words.length
-                ? job.output.transcription.words
-                : c.snappedWords || []
-              )
-                .filter((w: any) => w.end > c.startTime - 30 && w.start < c.endTime + 30)
-                .map((w: any) => ({ start: Number(w.start), end: Number(w.end), text: String(w.word ?? w.text ?? "") })),
-              keepRanges: rendered?.keepRanges,
-              ...(rendered?.duration ? { duration: rendered.duration } : {}),
-              keyPhrases: Array.isArray(c.keyPhrases) ? c.keyPhrases : [],
-              fx: {
-                removeSilences: Boolean(job.options?.removeSilences),
-                broll: Boolean(job.options?.broll),
-                musicBed: Boolean(job.options?.musicBed),
-                hookTitle: job.options?.hookTitle !== false,
-                keywordHighlights: job.options?.keywordHighlights !== false,
-              },
-            };
-          });
+          const generatedClips = buildClipsFromJob(job);
 
           // A very low-res source (e.g. a downloader's default 144p/240p)
           // physically caps how good any clip can look — every crop is a
@@ -575,18 +656,20 @@ function DashboardContent() {
           }
 
           if (generatedClips.length > 0) {
-            setClips(generatedClips);
-            setSelectedClip(generatedClips[0]);
-            localStorage.setItem("snipcut_user_clips", JSON.stringify(generatedClips));
-            setActiveTab("clips");
-            try {
-              confetti({
-                particleCount: 90,
-                spread: 70,
-                origin: { y: 0.6 },
-              });
-            } catch (e) {}
+            const alreadyShown = shownRenderedRef.current > 0;
+            publishClips(generatedClips);
+            if (!alreadyShown) {
+              try {
+                confetti({
+                  particleCount: 90,
+                  spread: 70,
+                  origin: { y: 0.6 },
+                });
+              } catch (e) {}
+            }
           }
+          shownRenderedRef.current = 0;
+          loadProjects();
           setIsProcessing(false);
         }
       } catch (err: any) {
@@ -1192,6 +1275,40 @@ function DashboardContent() {
         {/* View 1: Clips Gallery */}
         {activeTab === "clips" && (
           <div>
+            {projects.length > 0 && (
+              <div className="mb-6 bg-white border-2 border-black shadow-[4px_4px_0px_#000000] p-3 sm:p-4">
+                <div className="flex items-center justify-between gap-2 mb-2.5 flex-wrap">
+                  <span className="text-xs font-black uppercase tracking-wider text-black">Recent projects</span>
+                  <span className="text-[10px] font-bold text-neutral-500">Saved on the server for {projectsRetention}h — open them from any device</span>
+                </div>
+                <div className="flex gap-2.5 overflow-x-auto pb-1">
+                  {projects.slice(0, 8).map((p) => {
+                    const isCurrent = p.id === currentProjectId;
+                    return (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => !isCurrent && openProject(p.id)}
+                        disabled={openingProject !== null}
+                        className={`shrink-0 w-44 text-left border-2 border-black p-2 transition-all cursor-pointer disabled:opacity-60 ${
+                          isCurrent ? "bg-[#FFFBEA] shadow-[2px_2px_0px_#FFC700]" : "bg-[#F8F7F4] hover:bg-white shadow-[2px_2px_0px_#000000]"
+                        }`}
+                      >
+                        <div className="text-[11px] font-black uppercase leading-tight line-clamp-2 text-black">{p.title}</div>
+                        <div className="text-[10px] font-bold text-neutral-500 mt-1 truncate">{p.source}</div>
+                        <div className="text-[10px] font-black mt-1 text-black">
+                          {openingProject === p.id
+                            ? "Opening…"
+                            : isCurrent
+                            ? "Open now"
+                            : `${p.clipCount} clips · ${new Date(p.createdAt).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}`}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
             {clips.length === 0 ? (
               /* Clean Empty State */
               <div className="bg-white border-2 border-black shadow-[6px_6px_0px_#000000] p-8 sm:p-12 text-center max-w-xl mx-auto">

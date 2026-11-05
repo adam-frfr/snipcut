@@ -193,8 +193,12 @@ function EditorContent() {
   // Source ranges the current preview video is made of.
   const clipStart = Number(clip?.startTime) || 0;
   const clipEnd = Number(clip?.endTime) || clipStart + (Number(clip?.duration) || 0);
-  const renderedRanges: Range[] =
-    Array.isArray(clip?.keepRanges) && clip.keepRanges.length
+  // Not rendered yet: the preview is the whole source video, so the
+  // preview clock IS the source clock.
+  const previewIsSource = Boolean(clip) && !clip.renderedVideoUrl;
+  const renderedRanges: Range[] = previewIsSource
+    ? [{ start: 0, end: Number.MAX_SAFE_INTEGER }]
+    : Array.isArray(clip?.keepRanges) && clip.keepRanges.length
       ? clip.keepRanges
       : clip
         ? [{ start: clipStart, end: clipEnd }]
@@ -463,6 +467,8 @@ function EditorContent() {
         fileSize: data.fileSize,
         previewFileSize: data.previewFileSize,
         hookHeadline: headline.trim() || clip.hookHeadline,
+        // The dashboard keeps edited clips when a job is still rendering.
+        editedAt: Date.now(),
         captionStyle,
         aspectRatio,
         fx,
@@ -698,12 +704,23 @@ function EditorContent() {
               onLoadedMetadata={(e) => {
                 const d = e.currentTarget.duration;
                 if (isFinite(d) && d > 0) setDuration(d);
+                // Source preview of an unrendered clip: start at the clip.
+                if (previewIsSource && clipStart > 0) {
+                  e.currentTarget.currentTime = clipStart;
+                  setCurrentTime(clipStart);
+                }
               }}
               onPlay={() => setIsPlaying(true)}
               onPause={() => setIsPlaying(false)}
               onEnded={() => setIsPlaying(false)}
             />
           </div>
+
+          {previewIsSource && (
+            <div className="mt-3 p-2.5 bg-[#FFF3C4] border-2 border-black text-[11px] font-bold text-black">
+              This clip isn't rendered yet — you're previewing the original video. Press "Re-render" to make the vertical clip.
+            </div>
+          )}
 
           {/* Transport */}
           <div className="mt-4 bg-white border-2 border-black shadow-[4px_4px_0px_#000000] p-3.5">
