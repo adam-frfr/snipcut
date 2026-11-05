@@ -464,7 +464,7 @@ export function wrapTitle(text: string, max: number): string[] {
     }
   }
   if (cur) lines.push(cur);
-  return lines.slice(0, 3);
+  return lines;
 }
 
 export function stripEmoji(text: string): string {
@@ -519,13 +519,22 @@ export function buildKaraokeAss(
   if (hookText) {
     const lastWordEnd = words.length ? words[words.length - 1].end : 3.2;
     const until = Math.max(1.2, Math.min(options.hook?.until ?? 3.2, lastWordEnd));
-    const maxChars = Math.max(10, Math.floor((playRes.x - 180) / (0.62 * hookSize)));
-    const lines = wrapTitle(hookText, maxChars).map((l) =>
+    // Fit the whole title in at most 3 lines by stepping the font down
+    // (long titles used to be cut off mid-sentence after line 3).
+    const charsFor = (size: number) => Math.max(10, Math.floor((playRes.x - 180) / (0.62 * size)));
+    let hookFs = hookSize;
+    let raw = wrapTitle(hookText, charsFor(hookFs));
+    while (raw.length > 3 && hookFs > hookSize * 0.62) {
+      hookFs = Math.round(hookFs * 0.88);
+      raw = wrapTitle(hookText, charsFor(hookFs));
+    }
+    if (raw.length > 4) raw = [...raw.slice(0, 3), `${raw.slice(3).join(" ").slice(0, 28).trim()}…`];
+    const lines = raw.map((l) =>
       l.replace(/\\/g, "\\\\").replace(/\{/g, "\\{").replace(/\}/g, "\\}")
     );
     if (lines.length) {
       hookEvents.push(
-        `Dialogue: 1,${formatAssTime(0)},${formatAssTime(until)},Hook,,0,0,0,,{\\fad(120,220)\\fscx88\\fscy88\\t(0,160,1,\\fscx100\\fscy100)}${lines.join("\\N")}`
+        `Dialogue: 1,${formatAssTime(0)},${formatAssTime(until)},Hook,,0,0,0,,{${hookFs !== hookSize ? `\\fs${hookFs}` : ""}\\fad(120,220)\\fscx88\\fscy88\\t(0,160,1,\\fscx100\\fscy100)}${lines.join("\\N")}`
       );
     }
   }
@@ -1384,14 +1393,18 @@ async function ensureMusicBed(): Promise<string | null> {
  * job pipeline and the render-clip FX path.
  */
 export function pickPunchZooms(
-  relWords: { text: string; start: number; end: number }[]
+  relWords: { text: string; start: number; end: number }[],
+  /** Only zoom where this allows (talking-head shots, no B-roll on screen). */
+  allowed?: (start: number, end: number) => boolean
 ): { start: number; end: number }[] {
   const punches: { start: number; end: number }[] = [];
   for (const w of relWords) {
     const clean = (w.text || "").replace(/[^A-Za-z0-9]/g, "");
     if (clean.length < 8 && !/\d/.test(clean)) continue;
     if (punches.length > 0 && w.start - punches[punches.length - 1].start < 2.4) continue;
-    punches.push({ start: Math.max(0, w.start - 0.05), end: w.start + 0.85 });
+    const p = { start: Math.max(0, w.start - 0.05), end: w.start + 0.85 };
+    if (allowed && !allowed(p.start, p.end)) continue;
+    punches.push(p);
     if (punches.length >= 3) break;
   }
   return punches;

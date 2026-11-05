@@ -121,6 +121,14 @@ const words = texts.map((text, i) => {
     check(late.length > 0 && late.every((l) => l.includes("\\an5") || style === "kinetic"), `${style}: captions in the split span sit mid-screen`);
     check(early.every((l) => !l.includes("\\an5")), `${style}: captions outside the split stay at their normal height`);
   }
+  // Long hook titles shrink to fit instead of being cut off mid-sentence.
+  const longHook = "Meet the brand-new 2025 iPhone 16e — and why it's no longer a budget phone at all";
+  const lh = buildKaraokeAss(cw, "snipcut", 500, { x: 1080, y: 1920 }, { hook: { text: longHook } })
+    .split("\n")
+    .find((l) => l.includes(",Hook,")) || "";
+  const shown = lh.replace(/\{[^}]*\}/g, "").split(",,").pop()!.replace(/\\N/g, " ");
+  check(shown.includes("budget phone at all") && (lh.match(/\\N/g) || []).length <= 2, `long hook title kept whole in <=3 lines ("${shown}")`);
+
   const clean = buildKaraokeAss(cw, "clean", 500, { x: 1080, y: 1920 }, { keywords: ["deep work"] });
   check(!clean.includes("&H006BE322"), "clean style stays minimal (no keyword colour)");
 }

@@ -248,7 +248,7 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
         <div className="space-y-3.5">
           <div>
             <label className="block text-xs font-black uppercase text-black mb-1">
-              OpenAI API Key (Whisper Audio)
+              OpenAI API Key (Whisper Audio + AI B-Roll)
             </label>
             <input
               type="password"
@@ -287,7 +287,7 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
               className="w-full neo-input py-2.5 px-3 text-base sm:text-sm font-mono"
             />
             <p className="text-[10px] font-bold text-[#555555] mt-1">
-              Pexels paused NEW API keys in Sept 2026, so this only helps if you already have one. New users: use the Pixabay key below instead.
+              Pexels paused new API keys, so this only helps if you already have one. Without a stock key, B-Roll is AI-generated from your OpenAI key.
             </p>
           </div>
 
@@ -303,7 +303,7 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
               className="w-full neo-input py-2.5 px-3 text-base sm:text-sm font-mono"
             />
             <p className="text-[10px] font-bold text-[#555555] mt-1">
-              Enables stock VIDEO cutaways for AI B-Roll (free Pixabay account, key is on their API docs page). B-Roll picks are relevance-checked either way — off-topic stock never reaches your clips.
+              Only if you already have one (new keys are paused). Enables stock VIDEO cutaways; without a stock key, B-Roll is AI-generated from your OpenAI key.
             </p>
           </div>
 

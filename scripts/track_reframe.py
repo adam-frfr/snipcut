@@ -167,6 +167,17 @@ def mouth_energy(prev_face, face):
         return 0.0
 
 
+def _change_score(prev_hist, prev_small, hist, small):
+    """How different two consecutive frames are, as a correlation-like
+    value (1 = same, lower = more change). Histogram correlation alone
+    misses cuts between shots with the same tones (e.g. two close-ups on a
+    black studio background); the mean pixel difference catches those —
+    ordinary motion between neighbouring frames stays far below it."""
+    corr = float(np.corrcoef(prev_hist, hist)[0, 1])
+    mad = float(np.mean(cv2.absdiff(prev_small, small)))
+    return min(corr, 1.0 - mad / 50.0)
+
+
 def _frame_hist(small_gray):
     hist = cv2.calcHist([small_gray], [0], None, [32], [0, 256])
     return cv2.normalize(hist, hist).flatten()
@@ -300,6 +311,7 @@ def run_tracking(video_path, start_time, duration, mode="auto-tracker", ai_shots
     prev_gray_small = None
     prev_hist = None
     last_frame_hist = None
+    last_frame_small = None
     seg_min_corr, seg_cut_t = 1.0, None
 
     for i in range(num_samples):
@@ -326,12 +338,17 @@ def run_tracking(video_path, start_time, duration, mode="auto-tracker", ai_shots
         # (every in-between frame is checked), so a camera snap lands on the
         # real cut frame instead of up to one sample interval late.
         if last_frame_hist is not None:
-            c = float(np.corrcoef(last_frame_hist, hist)[0, 1])
+            c = _change_score(last_frame_hist, last_frame_small, hist, small)
             if c < seg_min_corr:
                 seg_min_corr, seg_cut_t = c, t
         last_frame_hist = hist
+        last_frame_small = small
         change_t, change_corr = seg_cut_t, seg_min_corr
         seg_min_corr, seg_cut_t = 1.0, None
+        # A hard cut between two neighbouring frames anywhere since the last
+        # sample (catches same-tone cuts the sample histogram misses).
+        if change_corr < 0.58:
+            cut = True
 
         motion_centroid, motion_energy = None, 0.0
         if prev_gray_small is not None:
@@ -422,12 +439,14 @@ def run_tracking(video_path, start_time, duration, mode="auto-tracker", ai_shots
             ok, mid = cap.retrieve()
             if not ok:
                 continue
-            mid_hist = _frame_hist(cv2.resize(cv2.cvtColor(mid, cv2.COLOR_BGR2GRAY), (96, 54)))
+            mid_small = cv2.resize(cv2.cvtColor(mid, cv2.COLOR_BGR2GRAY), (96, 54))
+            mid_hist = _frame_hist(mid_small)
             if last_frame_hist is not None:
-                c = float(np.corrcoef(last_frame_hist, mid_hist)[0, 1])
+                c = _change_score(last_frame_hist, last_frame_small, mid_hist, mid_small)
                 if c < seg_min_corr:
                     seg_min_corr, seg_cut_t = c, t + (k + 1) / fps
             last_frame_hist = mid_hist
+            last_frame_small = mid_small
 
     cap.release()
 
@@ -533,10 +552,29 @@ def run_tracking(video_path, start_time, duration, mode="auto-tracker", ai_shots
         )
 
     WIN = 2.0
+    # Windows start at the real camera cuts (exact frame), then ~2s steps
+    # inside each shot. A fixed 2s grid switched layouts up to 2s away from
+    # the cut (seen in testing: the tracked crop of a close-up kept running
+    # over the start of a wide shot, framing an empty table).
+    shot_cuts = sorted({
+        round(obs.get("change_t") if obs.get("change_t") is not None else obs["t"], 3)
+        for obs in observations
+        if obs["cut"] or obs.get("change_corr", 1.0) < 0.6
+    })
+    bounds = [0.0]
+    for c in shot_cuts:
+        if c - bounds[-1] >= 0.5 and c < duration - 0.3:
+            bounds.append(c)
+    bounds.append(duration)
+    if os.environ.get("TRACK_DEBUG"):
+        sys.stderr.write("cuts: " + " ".join(f"{c:.2f}" for c in shot_cuts) + "\n")
+    windows = []
+    for a, b in zip(bounds[:-1], bounds[1:]):
+        n = max(1, int(round((b - a) / WIN)))
+        step = (b - a) / n
+        windows.extend((a + k * step, a + (k + 1) * step if k < n - 1 else b) for k in range(n))
     win_layouts = []
-    wt = 0.0
-    while wt < duration - 0.01:
-        w1 = min(duration, wt + WIN)
+    for wt, w1 in windows:
         infos = [i for i in (_win_info(tr, wt, w1) for tr in tracks) if i]
         present = [i for i in infos if i["presence"] >= 0.35]
         layout = "crop"
@@ -565,10 +603,15 @@ def run_tracking(video_path, start_time, duration, mode="auto-tracker", ai_shots
                     for q in (top, bot)
                 ]
                 ptrack = top["track"]
-        if layout == "crop" and (prim is None or (prim["fh"] / max(1, height)) < 0.10):
+        # Faces under ~13% of the frame height (wide / group shots) look tiny
+        # in a vertical crop: show the whole frame instead. Close-ups in the
+        # tested shows were 29-52%; a 3-person wide table shot was 10.5%.
+        if layout == "crop" and (prim is None or (prim["fh"] / max(1, height)) < 0.13):
             layout = "fit"
-        win_layouts.append({"start": round(wt, 2), "end": round(w1, 2), "layout": layout, "track": ptrack, "panels": panels})
-        wt = w1
+        win_layouts.append({"start": round(wt, 3), "end": round(w1, 3), "layout": layout, "track": ptrack, "panels": panels})
+        if os.environ.get("TRACK_DEBUG"):
+            fh_dbg = round(prim["fh"] / height, 3) if prim else None
+            sys.stderr.write(f"win {wt:.2f}-{w1:.2f} {layout} prim_fh={fh_dbg}\n")
 
     # Merge adjacent windows with the same layout, then fold sub-1s runs
     # into their longer neighbour. Split windows merge when their panel
