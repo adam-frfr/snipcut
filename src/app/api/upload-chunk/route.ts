@@ -120,7 +120,7 @@ export async function POST(req: NextRequest) {
       reframeMode: body.reframeMode || "auto-tracker",
       captionStyle: body.captionStyle || "hormozi",
       removeSilences: body.removeSilences === true,
-      maxClipsToRender: 2,
+      maxClipsToRender: Number(process.env.MAX_CLIPS_TO_RENDER) || 6,
       groqKey: (body.groqKey || "").trim?.() || undefined,
       openaiKey: (body.openaiKey || "").trim?.() || undefined,
       claudeKey: (body.claudeKey || "").trim?.() || undefined,
