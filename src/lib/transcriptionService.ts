@@ -17,6 +17,15 @@ export interface TranscribeResult {
 }
 
 /**
+ * Whisper copies the style of its prompt. Without one, Whisper turbo often
+ * writes long unpunctuated run-ons in conversational speech (tested: ~1
+ * mark per 8-12 words), which leaves clip boundaries and captions nowhere
+ * clean to break. A short, well-punctuated prompt fixes the style without
+ * adding content.
+ */
+const PUNCTUATION_PROMPT = "Hello, and welcome back. Today we're talking about it, step by step. Okay? Let's get into it.";
+
+/**
  * Transcribes audio file using Groq Whisper (primary) or OpenAI Whisper (fallback)
  * Supports audio chunking if file size exceeds Groq's 25MB threshold.
  */
@@ -101,6 +110,7 @@ export async function transcribeAudioFile(
             model: "whisper-large-v3-turbo",
             response_format: "verbose_json",
             timestamp_granularities: ["word", "segment"],
+            prompt: PUNCTUATION_PROMPT,
           } as any)) as any;
 
           chunkOutputs.push({
@@ -129,6 +139,7 @@ export async function transcribeAudioFile(
           model: "whisper-large-v3-turbo",
           response_format: "verbose_json",
           timestamp_granularities: ["word", "segment"],
+          prompt: PUNCTUATION_PROMPT,
         } as any)) as any;
 
         const duration = await probeAudioDuration(audioPath);
@@ -158,6 +169,7 @@ export async function transcribeAudioFile(
         model: "whisper-1",
         response_format: "verbose_json",
         timestamp_granularities: ["word", "segment"],
+        prompt: PUNCTUATION_PROMPT,
       } as any)) as any;
 
       const duration = await probeAudioDuration(audioPath);

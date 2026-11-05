@@ -26,6 +26,9 @@ function formatDuration(seconds: number): string {
 }
 
 const SENTENCE_END_REGEX = /[.?!…]+["']?$/;
+/** Words a clip must not end on: they leave the thought hanging. */
+const DANGLING_WORD = /^(the|a|an|and|or|but|so|to|of|in|on|at|for|with|from|by|as|that|which|who|if|because|than|then|we|i|you|he|she|they|it|my|your|our|their|is|are|was|were|be|um|uh|like|just|very|really|actually)$/;
+const cleanWord = (w: string) => w.toLowerCase().replace(/[^a-z']/g, "");
 // When a boundary has to move (min-length extension, overlap trim), go to a
 // sentence edge only if one is this close; otherwise use the nearest word.
 const SENTENCE_PREFER_SEC = 1.5;
@@ -133,10 +136,17 @@ export function snapAndValidateClips(
         chosenStartIdx = sentenceStartCandidates[0].idx;
       }
     } else {
-      // No sentence start within 3s -> snap to nearest word boundary in range
-      // But avoid starting on a word that ends with sentence punctuation if the next word is also in range
+      // No sentence start within 3s -> start right after the speaker's
+      // clearest pause in range (Whisper sometimes drops punctuation for a
+      // whole stretch), else the nearest word boundary.
+      // Avoid starting on a word that ends with sentence punctuation if the next word is also in range
+      const pauseBefore = (idx: number) => (idx > 0 ? sortedWords[idx].start - sortedWords[idx - 1].end : 1);
+      const startPauses = wordsNearStart.filter((it) => pauseBefore(it.idx) >= 0.3);
+      if (startPauses.length > 0) {
+        startPauses.sort((a, b) => pauseBefore(b.idx) - 0.15 * b.diff - (pauseBefore(a.idx) - 0.15 * a.diff));
+      }
       wordsNearStart.sort((a, b) => a.diff - b.diff);
-      let bestItem = wordsNearStart[0];
+      let bestItem = startPauses.length > 0 ? startPauses[0] : wordsNearStart[0];
       if (
         SENTENCE_END_REGEX.test(bestItem.word.word.trim()) &&
         bestItem.idx < sortedWords.length - 1
@@ -209,9 +219,22 @@ export function snapAndValidateClips(
           chosenEndIdx = sentenceEndCandidates[0].idx;
         }
       } else {
-        // Nearest word end in range
-        wordsNearEnd.sort((a, b) => a.diff - b.diff);
-        chosenEndIdx = wordsNearEnd[0].idx;
+        // No punctuation nearby (Whisper sometimes drops it for a whole
+        // stretch): end where the speaker actually pauses, and never on a
+        // word that leaves the thought hanging ("…before actually we" was
+        // seen in testing). Falls back to the nearest word end.
+        const pauseAfter = (idx: number) =>
+          idx < sortedWords.length - 1 ? sortedWords[idx + 1].start - sortedWords[idx].end : 1;
+        const usable = wordsNearEnd.filter((it) => !DANGLING_WORD.test(cleanWord(it.word.word)));
+        const pauses = usable.filter((it) => pauseAfter(it.idx) >= 0.3);
+        if (pauses.length > 0) {
+          pauses.sort((a, b) => pauseAfter(b.idx) - 0.15 * b.diff - (pauseAfter(a.idx) - 0.15 * a.diff));
+          chosenEndIdx = pauses[0].idx;
+        } else {
+          const pool = usable.length > 0 ? usable : wordsNearEnd;
+          pool.sort((a, b) => a.diff - b.diff);
+          chosenEndIdx = pool[0].idx;
+        }
       }
     }
 
