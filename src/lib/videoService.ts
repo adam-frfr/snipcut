@@ -1536,3 +1536,74 @@ export async function applyPostEffects(opts: PostFxOptions): Promise<void> {
     }
   }
 }
+
+/**
+ * Silence removal: cut `ranges` (seconds relative to the start of
+ * `inputPath`) out of an already-rendered clip and join them in ONE
+ * frame-exact trim/concat pass. Rendering the whole clip first and cutting
+ * afterwards means the tracker, split layout and captions all run over one
+ * continuous timeline — tracking each kept piece separately restarted the
+ * camera at every join (a short piece could open on an empty background).
+ * Range edges snap to the frame grid so audio and video stay the same
+ * length across many joins. Returns the joined duration in seconds.
+ */
+export async function cutKeepRanges(
+  inputPath: string,
+  outputPath: string,
+  ranges: { start: number; end: number }[]
+): Promise<number> {
+  const { stdout } = await execFileP(getFfprobeBinary(), [
+    "-v", "error", "-show_entries", "stream=codec_type,r_frame_rate:format=duration", "-of", "json", inputPath,
+  ]);
+  const info = JSON.parse(stdout || "{}");
+  const streams: { codec_type?: string; r_frame_rate?: string }[] = info.streams || [];
+  const v = streams.find((s) => s.codec_type === "video");
+  const hasAudio = streams.some((s) => s.codec_type === "audio");
+  const [num, den] = String(v?.r_frame_rate || "30/1").split("/").map(Number);
+  const fps = num > 0 && den > 0 ? num / den : 30;
+  const total = Number(info.format?.duration) || Infinity;
+
+  // Snap to frames, clamp to the file, merge overlaps (filler cuts can
+  // leave neighbouring ranges touching), drop slivers.
+  const snapped = ranges
+    .map((r) => ({
+      start: Math.max(0, Math.round(r.start * fps) / fps),
+      end: Math.min(total, Math.round(r.end * fps) / fps),
+    }))
+    .sort((a, b) => a.start - b.start);
+  const merged: { start: number; end: number }[] = [];
+  for (const r of snapped) {
+    const last = merged[merged.length - 1];
+    if (last && r.start <= last.end + 0.5 / fps) last.end = Math.max(last.end, r.end);
+    else if (r.end - r.start >= 1.5 / fps) merged.push({ ...r });
+  }
+  if (merged.length === 0) throw new Error("Silence removal left nothing to keep");
+
+  const f = (n: number) => n.toFixed(6);
+  const parts: string[] = [];
+  const labels: string[] = [];
+  merged.forEach((r, i) => {
+    parts.push(`[0:v]trim=start=${f(r.start)}:end=${f(r.end)},setpts=PTS-STARTPTS[v${i}]`);
+    labels.push(`[v${i}]`);
+    if (hasAudio) {
+      parts.push(`[0:a]atrim=start=${f(r.start)}:end=${f(r.end)},asetpts=PTS-STARTPTS[a${i}]`);
+      labels.push(`[a${i}]`);
+    }
+  });
+  const fc = `${parts.join(";")};${labels.join("")}concat=n=${merged.length}:v=1:a=${hasAudio ? 1 : 0}[v]${hasAudio ? "[a]" : ""}`;
+  const fcPath = path.join(os.tmpdir(), `snipcut-cut-${process.pid}-${Date.now()}.txt`);
+  fs.writeFileSync(fcPath, fc, "utf-8");
+  try {
+    await execFileP(getFfmpegBinary(), [
+      "-hide_banner", "-loglevel", "error", "-y", "-i", inputPath,
+      "-filter_complex_script", fcPath,
+      "-map", "[v]", ...(hasAudio ? ["-map", "[a]"] : []),
+      "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
+      ...(hasAudio ? ["-c:a", "aac", "-b:a", "192k"] : []),
+      "-movflags", "+faststart", outputPath,
+    ], { maxBuffer: 64 * 1024 * 1024 });
+  } finally {
+    try { fs.unlinkSync(fcPath); } catch {}
+  }
+  return merged.reduce((s, r) => s + (r.end - r.start), 0);
+}

@@ -12,6 +12,7 @@ import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import {
   renderSegmentedClip,
+  cutKeepRanges,
   getFfmpegBinary,
   getFfprobeBinary,
 } from "../src/lib/videoService";
@@ -110,6 +111,26 @@ async function main() {
     check(Math.abs(v - duration) < 0.05, `segmented video length ${v.toFixed(3)}s ≈ ${duration}s`);
     check(Math.abs(a - v) < 0.05, `segmented audio length matches video (${a.toFixed(3)} vs ${v.toFixed(3)})`);
     checkSync("segmented", out, 11);
+  }
+
+  // ---- 2. Silence removal: cut keep-ranges out of one render and join --
+  // (4 pieces, odd edges that are not on the frame grid). Every flash must
+  // still land on its beep after the joins, with no drift, and audio and
+  // video must stay exactly the same length.
+  {
+    const out = path.join(dataDir, "test_cut_tightened.mp4");
+    const joined = await cutKeepRanges(src, out, [
+      { start: 0.83, end: 2.31 },
+      { start: 3.97, end: 5.42 },
+      { start: 6.88, end: 8.61 },
+      { start: 9.96, end: 11.57 },
+    ]);
+    const v = streamDur(out, "v:0");
+    const a = streamDur(out, "a:0");
+    console.log(`tightened: reported=${joined.toFixed(3)}s video=${v.toFixed(3)}s audio=${a.toFixed(3)}s`);
+    check(Math.abs(v - joined) < 0.04, `tightened video length ${v.toFixed(3)}s matches kept time ${joined.toFixed(3)}s`);
+    check(Math.abs(a - v) < 0.03, `tightened audio length matches video (${a.toFixed(3)} vs ${v.toFixed(3)})`);
+    checkSync("tightened", out, 8);
   }
 
   if (failures.length) {

@@ -6,12 +6,9 @@ import { analyzeTranscriptForViralClips, CuratedClipResult } from "./aiService";
 import { snapAndValidateClips, SnappedClipResult } from "./wordSnapping";
 import { buildSentences, planBroll, fetchBrollAssets } from "./brollService";
 import { applyPostEffects, dropCuesOverlappingSplits, probeVideoFormat } from "./videoService";
-import { renderVideoClip, resolveSafeFilePath, extractAudioForWhisper, getFfmpegBinary, generatePreviewClip, generatePosterImage } from "./videoService";
+import { renderVideoClip, cutKeepRanges, resolveSafeFilePath, extractAudioForWhisper, generatePreviewClip, generatePosterImage } from "./videoService";
 import { downloadYoutubeVideo, normalizeUploadedVideo } from "./mediaPrep";
-import { execFile } from "child_process";
-import { promisify } from "util";
 
-const execFileAsync = promisify(execFile);
 
 const FILLER_WORDS = new Set([
   "um", "umm", "uh", "uhh", "er", "erm", "hmm", "mm", "mhm", "uhm", "eh",
@@ -672,45 +669,40 @@ class JobQueueManager {
           (keepRanges.length > 1 || keptDuration < exactDuration * 0.92 || keep.fillersRemoved > 0);
 
         if (tightening) {
-          const partPaths: string[] = [];
+          // Render the whole span ONCE (one tracking pass, one continuous
+          // camera path and layout), then cut the keep-ranges out of it.
+          // Captions only get words inside a keep-range, so cut fillers
+          // never flash on screen.
+          const spanStart = keepRanges[0].start;
+          const spanEnd = keepRanges[keepRanges.length - 1].end;
+          const keptWords = transcriptWords.filter((w: { start: number; end: number }) => {
+            const mid = (w.start + w.end) / 2;
+            return keepRanges.some((r) => mid >= r.start && mid <= r.end);
+          });
+          const fullPath = path.join(outputDir, `full-${Date.now()}-${i + 1}.mp4`);
           try {
-            for (let pi = 0; pi < keepRanges.length; pi++) {
-              const range = keepRanges[pi];
-              const partPath = path.join(outputDir, `part-${Date.now()}-${i + 1}-${pi}.mp4`);
-              const partRes = await renderVideoClip({
-                inputPath: resolvedVideoPath,
-                outputPath: partPath,
-                startTime: range.start,
-                duration: Number((range.end - range.start).toFixed(2)),
-                aspectRatio,
-                reframeMode,
-                transcript: transcriptWords,
-                headline: clip.hookHeadline || clip.title,
-                captionStyle,
-              });
-              if (!renderRes) renderRes = partRes;
-              partPaths.push(partPath);
-            }
-            const listPath = path.join(outputDir, `concat-${Date.now()}-${i + 1}.txt`);
-            fs.writeFileSync(
-              listPath,
-              partPaths.map((p) => `file '${p.replace(/'/g, "'\\''")}'`).join("\n"),
-              "utf-8"
+            renderRes = await renderVideoClip({
+              inputPath: resolvedVideoPath,
+              outputPath: fullPath,
+              startTime: spanStart,
+              duration: Number((spanEnd - spanStart).toFixed(3)),
+              aspectRatio,
+              reframeMode,
+              transcript: keptWords,
+              headline: clip.hookHeadline || clip.title,
+              captionStyle,
+            });
+            const joined = await cutKeepRanges(
+              fullPath,
+              outputPath,
+              keepRanges.map((r) => ({ start: r.start - spanStart, end: r.end - spanStart }))
             );
-            await execFileAsync(getFfmpegBinary(), [
-              "-y", "-f", "concat", "-safe", "0", "-i", listPath,
-              "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
-              "-c:a", "aac", "-movflags", "+faststart", outputPath,
-            ], { maxBuffer: 64 * 1024 * 1024 });
-            try { fs.unlinkSync(listPath); } catch {}
-            finalDuration = Number(keptDuration.toFixed(2));
+            finalDuration = Number(joined.toFixed(2));
             console.log(
-              `[Stage: Silence Removal] Clip "${clip.title}": ${exactDuration}s -> ${finalDuration}s across ${keepRanges.length} keep-range(s)`
+              `[Stage: Silence Removal] Clip "${clip.title}": ${exactDuration}s -> ${finalDuration}s across ${keepRanges.length} keep-range(s), tracked once`
             );
           } finally {
-            for (const p of partPaths) {
-              try { fs.unlinkSync(p); } catch {}
-            }
+            try { fs.unlinkSync(fullPath); } catch {}
           }
         }
 

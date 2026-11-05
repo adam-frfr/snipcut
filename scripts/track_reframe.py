@@ -167,6 +167,11 @@ def mouth_energy(prev_face, face):
         return 0.0
 
 
+def _frame_hist(small_gray):
+    hist = cv2.calcHist([small_gray], [0], None, [32], [0, 256])
+    return cv2.normalize(hist, hist).flatten()
+
+
 def detect_faces(detector, frame, min_face=18):
     _, faces = detector.detect(frame)
     out = []
@@ -294,6 +299,8 @@ def run_tracking(video_path, start_time, duration, mode="auto-tracker", ai_shots
     observations = []  # per sample: {t, faces, cut, motion_centroid, motion_energy}
     prev_gray_small = None
     prev_hist = None
+    last_frame_hist = None
+    seg_min_corr, seg_cut_t = 1.0, None
 
     for i in range(num_samples):
         ret, frame = cap.read()
@@ -309,13 +316,22 @@ def run_tracking(video_path, start_time, duration, mode="auto-tracker", ai_shots
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         small = cv2.resize(gray, (96, 54))
-        hist = cv2.calcHist([small], [0], None, [32], [0, 256])
-        hist = cv2.normalize(hist, hist).flatten()
+        hist = _frame_hist(small)
         cut = False
         if prev_hist is not None:
             corr = float(np.corrcoef(prev_hist, hist)[0, 1])
             cut = corr < 0.55
         prev_hist = hist
+        # Exact frame of the biggest visual change since the last sample
+        # (every in-between frame is checked), so a camera snap lands on the
+        # real cut frame instead of up to one sample interval late.
+        if last_frame_hist is not None:
+            c = float(np.corrcoef(last_frame_hist, hist)[0, 1])
+            if c < seg_min_corr:
+                seg_min_corr, seg_cut_t = c, t
+        last_frame_hist = hist
+        change_t, change_corr = seg_cut_t, seg_min_corr
+        seg_min_corr, seg_cut_t = 1.0, None
 
         motion_centroid, motion_energy = None, 0.0
         if prev_gray_small is not None:
@@ -395,11 +411,23 @@ def run_tracking(video_path, start_time, duration, mode="auto-tracker", ai_shots
                 tracks.sort(key=lambda tr: (tr.last_t, len(tr.samples)), reverse=True)
                 tracks = tracks[:16]
 
-        observations.append({"t": round(t, 2), "cut": cut, "motion_centroid": motion_centroid, "motion_energy": motion_energy})
+        observations.append({
+            "t": round(t, 2), "cut": cut, "motion_centroid": motion_centroid, "motion_energy": motion_energy,
+            "change_t": round(change_t, 3) if change_t is not None else None, "change_corr": change_corr,
+        })
 
-        for _ in range(frame_step - 1):
+        for k in range(frame_step - 1):
             if not cap.grab():
                 break
+            ok, mid = cap.retrieve()
+            if not ok:
+                continue
+            mid_hist = _frame_hist(cv2.resize(cv2.cvtColor(mid, cv2.COLOR_BGR2GRAY), (96, 54)))
+            if last_frame_hist is not None:
+                c = float(np.corrcoef(last_frame_hist, mid_hist)[0, 1])
+                if c < seg_min_corr:
+                    seg_min_corr, seg_cut_t = c, t + (k + 1) / fps
+            last_frame_hist = mid_hist
 
     cap.release()
 
@@ -685,6 +713,14 @@ def run_tracking(video_path, start_time, duration, mode="auto-tracker", ai_shots
 
     # --- run the virtual camera ---------------------------------------------
     cut_times = {obs["t"] for obs in observations if obs["cut"]}
+    # Exact frame of the shot change that led into each sample (when there
+    # was a real visual jump), used to place snaps on the cut frame itself.
+    change_at = {
+        obs["t"]: obs["change_t"]
+        for obs in observations
+        if obs.get("change_t") is not None and obs.get("change_corr", 1.0) < 0.9
+    }
+    half_frame = 0.5 / max(1.0, fps)
     start_cx = focus[0][1] if focus else width / 2.0
     cam = VirtualCamera(np.clip(start_cx - crop_w / 2.0, 0, max_x), max_x, crop_w)
     cam_y = VirtualCamera(np.clip((focus[0][2] if focus else height / 2.0) - crop_h * 0.38, 0, max_y), max_y, crop_h) if max_y > 0 else None
@@ -712,15 +748,29 @@ def run_tracking(video_path, start_time, duration, mode="auto-tracker", ai_shots
         # The crop path is linear between keyframes, so a snap between two
         # samples played as a 0.25s slide that started BEFORE the cut (the
         # old shot drifted onto empty background). Hold the old position
-        # until just before the snap so the move is a hard cut.
+        # until the exact cut frame (found by checking every frame since the
+        # last sample) and jump there, so the move is a hard cut ON the cut —
+        # not up to a sample late, which showed the new shot through the old
+        # crop (empty background) for a few frames.
+        ct = change_at.get(t) if snap else None
+        if ct is not None and keyframes and not (keyframes[-1][0] < ct - half_frame < t):
+            ct = None
         if snap and keyframes and abs(x - prev_x) > 1.0:
-            keyframes.append((round(t - 0.02, 3), prev_x))
+            if ct is not None:
+                keyframes.append((round(ct - half_frame, 4), prev_x))
+                keyframes.append((round(ct - half_frame + 0.001, 4), x))
+            else:
+                keyframes.append((round(t - 0.02, 3), prev_x))
         keyframes.append((t, x))
         if cam_y is not None:
             desired_y = np.clip(cy - crop_h * 0.38, 0, max_y)
             y = cam_y.step(desired_y, SAMPLE_DT, panning=(t <= pan_until), snap=snap)
             if snap and keyframes_y and abs(y - prev_y) > 1.0:
-                keyframes_y.append((round(t - 0.02, 3), prev_y))
+                if ct is not None:
+                    keyframes_y.append((round(ct - half_frame, 4), prev_y))
+                    keyframes_y.append((round(ct - half_frame + 0.001, 4), y))
+                else:
+                    keyframes_y.append((round(t - 0.02, 3), prev_y))
             keyframes_y.append((t, y))
 
     # Thin keyframes: keep points where direction/value changes meaningfully

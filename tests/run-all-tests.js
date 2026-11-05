@@ -22,7 +22,7 @@ const tests = [
     args: ["tsx", path.join(__dirname, "test-caption-styles.ts")],
   },
   {
-    name: "Cut Accuracy & A/V Sync Across Layout Joins",
+    name: "Cut Accuracy & A/V Sync Across Layout and Silence-Removal Joins",
     cmd: "npx",
     args: ["tsx", path.join(__dirname, "test-cut-accuracy.ts")],
   },
