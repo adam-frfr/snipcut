@@ -155,6 +155,7 @@ export default function StyleControls({
   onFont,
   onCaptionStyle,
   dense = false,
+  musicOn,
 }: {
   style: ClipStyle;
   onChange: (patch: Partial<ClipStyle>) => void;
@@ -162,6 +163,8 @@ export default function StyleControls({
   onFont: (f: string) => void;
   onCaptionStyle?: (s: string) => void;
   dense?: boolean;
+  /** Whether "Music bed" is on (music settings do nothing without it). */
+  musicOn?: boolean;
 }) {
   const [tracks, setTracks] = useState<Track[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -239,7 +242,7 @@ export default function StyleControls({
             type="button"
             onClick={() => {
               setActivePack("");
-              onChange({ ...DEFAULT_CLIP_STYLE });
+              onChange({ ...DEFAULT_CLIP_STYLE, drawings: style.drawings });
               onFont("default");
             }}
             className="px-2.5 py-1.5 border-2 border-black text-[10px] font-black uppercase cursor-pointer bg-white hover:bg-[#FFE5E5]"
@@ -267,8 +270,13 @@ export default function StyleControls({
         </div>
       </details>
 
-      <details className={groupCls}>
+      <details className={groupCls} onToggle={(e) => (e.currentTarget as HTMLDetailsElement).open && loadTracks()}>
         <summary className={summaryCls}>Sound &amp; music</summary>
+        {musicOn === false && (
+          <p className="mx-3 mb-2 px-2 py-1.5 bg-[#FFF3C4] border-2 border-black text-[10px] font-bold">
+            &quot;Music bed&quot; is off, so mood, track, volume and fades won&apos;t be used. Turn it on to add music.
+          </p>
+        )}
         <div className={`grid ${cols} gap-2 px-3 pb-2`}>
           <Select label="Music mood" value={style.musicMood} options={opts(MUSIC_MOODS, MOOD_LABELS)} onPick={(v) => onChange({ musicMood: v as ClipStyle["musicMood"] })} />
           <Select
@@ -332,7 +340,7 @@ export default function StyleControls({
       <details className={groupCls}>
         <summary className={summaryCls}>Moments &amp; overlays</summary>
         <div className="flex flex-wrap gap-x-5 gap-y-2 px-3 pb-2">
-          <Toggle style={style} onChange={onChange} k="hypeMoments" label="AI hype moments" hint="biggest moment: zoom + boom + flash" />
+          <Toggle style={style} onChange={onChange} k="hypeMoments" label="AI hype moments" hint="biggest moment: zoom + boom + flash + 🔥" />
           <Toggle style={style} onChange={onChange} k="freezeFrame" label="Freeze-frame" hint="record scratch on the big moment" />
           <Toggle style={style} onChange={onChange} k="coldOpen" label="Cold-open teaser" hint="big moment first: “wait for it”" />
           <Toggle style={style} onChange={onChange} k="endCard" label="End card" hint="animated follow card" />
@@ -343,6 +351,9 @@ export default function StyleControls({
           <Text label="Lower third: title" value={style.lowerThirdTitle} placeholder="e.g. Founder, Acquisition.com" max={50} onText={(v) => onChange({ lowerThirdTitle: v })} />
           <Select label="Face-cam bubble" value={style.faceBubble} options={opts(FACE_BUBBLES, FACE_BUBBLE_LABELS)} onPick={(v) => onChange({ faceBubble: v as ClipStyle["faceBubble"] })} />
         </div>
+        <p className="px-3 pb-3 -mt-1 text-[10px] font-medium text-neutral-500">
+          Face-cam bubble works on 9:16 screen recordings: pick the corner your webcam is in. Freeze-frame, cold open and hype need a clip with a clear loud moment.
+        </p>
       </details>
 
       <details className={groupCls}>

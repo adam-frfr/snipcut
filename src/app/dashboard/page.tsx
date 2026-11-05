@@ -80,6 +80,7 @@ export interface RealClip {
   sourceWords?: { start: number; end: number; text: string; deleted?: boolean }[];
   /** Kept source ranges of the rendered video (silence removal / deletions). */
   keepRanges?: { start: number; end: number }[];
+  timeKnots?: [number, number][];
   keyPhrases?: string[];
   /** Effects the clip was made with — editor re-renders keep them. */
   fx?: { removeSilences: boolean; broll: boolean; musicBed: boolean; hookTitle: boolean; keywordHighlights: boolean; clipStyle?: ClipStyle; captionFont?: string };
@@ -159,6 +160,7 @@ function buildClipsFromJob(job: any): RealClip[] {
         .filter((w: any) => w.end > c.startTime - 30 && w.start < c.endTime + 30)
         .map((w: any) => ({ start: Number(w.start), end: Number(w.end), text: String(w.word ?? w.text ?? "") })),
       keepRanges: rendered?.keepRanges,
+      timeKnots: rendered?.timeKnots,
       ...(rendered?.duration ? { duration: rendered.duration } : {}),
       keyPhrases: Array.isArray(c.keyPhrases) ? c.keyPhrases : [],
       fx: {
@@ -391,7 +393,8 @@ function DashboardContent() {
   useEffect(() => {
     try {
       const raw = localStorage.getItem("snipcut_clip_style");
-      if (raw) setClipStyleState(normalizeClipStyle(JSON.parse(raw)));
+      // The look is remembered; per-video text (lower third) and drawings are not.
+      if (raw) setClipStyleState({ ...normalizeClipStyle(JSON.parse(raw)), lowerThirdName: "", lowerThirdTitle: "", drawings: [] });
       const f = localStorage.getItem("snipcut_caption_font");
       if (f && CAPTION_FONT_OPTIONS.some((o) => o.id === f)) setCaptionFontState(f);
     } catch {}
@@ -400,7 +403,7 @@ function DashboardContent() {
     setClipStyleState((prev) => {
       const next = { ...prev, ...patch };
       try {
-        localStorage.setItem("snipcut_clip_style", JSON.stringify(next));
+        localStorage.setItem("snipcut_clip_style", JSON.stringify({ ...next, lowerThirdName: "", lowerThirdTitle: "", drawings: [] }));
       } catch {}
       return next;
     });
@@ -1057,6 +1060,7 @@ function DashboardContent() {
               videoUrl: data.downloadUrl,
               renderedVideoUrl: data.downloadUrl,
               keepRanges: data.keepRanges || c.keepRanges,
+              timeKnots: data.keepRanges ? data.timeKnots : c.timeKnots,
               ...(data.duration ? { duration: data.duration } : {}),
               previewUrl: data.previewDownloadUrl || (c as any).previewUrl,
               posterUrl: data.posterUrl || (c as any).posterUrl,
@@ -2128,9 +2132,9 @@ function DashboardContent() {
                     onChange={(e) => setMusicBedEnabled(e.target.checked)}
                     className="w-4 h-4 accent-black cursor-pointer"
                   />
-                  <span className="text-xs font-black uppercase tracking-wider text-black">Music bed + punch-in zooms</span>
+                  <span className="text-xs font-black uppercase tracking-wider text-black">Music bed</span>
                   <span className="text-[10px] font-medium text-neutral-500 normal-case tracking-normal">
-                    Quiet background pad that ducks under speech (skipped when the video already has music), plus zoom punches on big words
+                    Background music that ducks under speech (skipped when the video already has music). Pick the mood or your own track, and the zoom style, in Look &amp; Sound below
                   </span>
                 </label>
                 <label className="flex items-center gap-2.5 cursor-pointer select-none">
@@ -2167,6 +2171,7 @@ function DashboardContent() {
                   font={captionFont}
                   onFont={setCaptionFont}
                   onCaptionStyle={(st) => setJobCaptionStyle(st as CaptionStyleName)}
+                  musicOn={musicBedEnabled}
                 />
               </div>
 

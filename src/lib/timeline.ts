@@ -156,3 +156,42 @@ export function wordsOnOutput<W extends TimelineWord>(words: W[], ranges: Range[
   }
   return out;
 }
+
+/**
+ * Effects that change the clip's clock (speed-up, freeze-frame, voiceover
+ * intro, cold-open teaser) are described by knots: [cutTime, finalTime]
+ * pairs, increasing. Between knots time is linear; two knots with the same
+ * cutTime are a hold (the picture is frozen / the teaser plays).
+ * Empty or missing = the final clip plays the cut clip 1:1.
+ */
+export type TimeKnots = [number, number][];
+
+/** Cut-clip time -> final clip time. */
+export function knotsForward(knots: TimeKnots | undefined | null, t: number): number {
+  if (!knots || knots.length < 2) return t;
+  for (let i = knots.length - 1; i >= 0; i--) {
+    const [c, f] = knots[i];
+    if (t >= c - 1e-6) {
+      const next = knots[i + 1];
+      if (!next) return f + (t - c);
+      const span = next[0] - c;
+      return span > 1e-6 ? f + ((t - c) * (next[1] - f)) / span : f;
+    }
+  }
+  return knots[0][1] + (t - knots[0][0]);
+}
+
+/** Final clip time -> cut-clip time (inside a hold: the held moment). */
+export function knotsInverse(knots: TimeKnots | undefined | null, T: number): number {
+  if (!knots || knots.length < 2) return T;
+  for (let i = knots.length - 1; i >= 0; i--) {
+    const [c, f] = knots[i];
+    if (T >= f - 1e-6) {
+      const next = knots[i + 1];
+      if (!next) return c + (T - f);
+      const span = next[1] - f;
+      return span > 1e-6 ? c + ((T - f) * (next[0] - c)) / span : c;
+    }
+  }
+  return knots[0][0];
+}

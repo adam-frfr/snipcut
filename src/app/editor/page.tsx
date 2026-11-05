@@ -27,7 +27,7 @@ import confetti from "canvas-confetti";
 import type { CaptionStyleName } from "@/lib/videoService";
 import { ClipStyle, DEFAULT_CLIP_STYLE, normalizeClipStyle, Drawing } from "@/lib/clipStyleOptions";
 import StyleControls from "@/components/StyleControls";
-import { computeKeepRanges, keptDuration, toOutputTime, toSourceTime, Range } from "@/lib/timeline";
+import { computeKeepRanges, keptDuration, toOutputTime, toSourceTime, knotsForward, knotsInverse, Range, TimeKnots } from "@/lib/timeline";
 
 /**
  * Studio Editor — fully wired to the real pipeline.
@@ -219,7 +219,10 @@ function EditorContent() {
   const renderedFrom = renderedRanges.length ? renderedRanges[0].start : 0;
   const renderedTo = renderedRanges.length ? renderedRanges[renderedRanges.length - 1].end : 0;
   const inRendered = (t: number) => renderedRanges.some((r) => t >= r.start - 0.05 && t <= r.end + 0.05);
-  const outOf = (srcT: number) => toOutputTime(renderedRanges, Math.max(renderedFrom, Math.min(renderedTo, srcT)));
+  // Speed-up / freeze / intro / teaser change the rendered clip's clock.
+  const knots: TimeKnots | undefined = !previewIsSource && Array.isArray(clip?.timeKnots) ? clip.timeKnots : undefined;
+  const outOf = (srcT: number) =>
+    knotsForward(knots, toOutputTime(renderedRanges, Math.max(renderedFrom, Math.min(renderedTo, srcT))));
 
   // Editable window: the clip plus the surrounding source words.
   const winStart = Math.min(clipStart, words.length ? words[0].start : clipStart);
@@ -323,7 +326,7 @@ function EditorContent() {
     if (videoRef.current) videoRef.current.playbackRate = playbackSpeed;
   }, [playbackSpeed, previewUrl]);
 
-  const srcNow = renderedRanges.length ? toSourceTime(renderedRanges, currentTime) : 0;
+  const srcNow = renderedRanges.length ? toSourceTime(renderedRanges, knotsInverse(knots, currentTime)) : 0;
   const activeWordIdx = words.findIndex(
     (w, i) => !w.deleted && inRendered(w.start) && srcNow >= w.start && (i === words.length - 1 || srcNow < words[i + 1].start)
   );
@@ -584,6 +587,7 @@ function EditorContent() {
         endTime: end,
         duration: Number(data.duration) || Number((end - start).toFixed(2)),
         keepRanges: Array.isArray(data.keepRanges) ? data.keepRanges : undefined,
+        timeKnots: Array.isArray(data.timeKnots) ? data.timeKnots : undefined,
         videoUrl: data.downloadUrl,
         renderedVideoUrl: data.downloadUrl,
         previewUrl: data.previewDownloadUrl || undefined,
@@ -1200,7 +1204,7 @@ function EditorContent() {
                 { key: "hookTitle", label: "Hook title (headline card)" },
                 { key: "keywordHighlights", label: "AI keyword highlights" },
                 { key: "broll", label: "AI B-roll cutaways" },
-                { key: "musicBed", label: "Music bed + punch-in zooms" },
+                { key: "musicBed", label: "Music bed" },
               ] as { key: "removeSilences" | "hookTitle" | "keywordHighlights" | "broll" | "musicBed"; label: string }[]
             ).map((o) => (
               <label key={o.key} className="flex items-center gap-2 text-[11px] font-black uppercase cursor-pointer select-none">
@@ -1222,6 +1226,7 @@ function EditorContent() {
           <div className="mb-5">
             <StyleControls
               dense
+              musicOn={fx.musicBed}
               style={fx.clipStyle || DEFAULT_CLIP_STYLE}
               onChange={updateStyle}
               font={fx.captionFont || "default"}

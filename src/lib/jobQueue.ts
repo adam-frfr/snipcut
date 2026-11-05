@@ -48,6 +48,8 @@ export interface RenderedClipItem {
   /** Kept parts of the source (source seconds) — the editor maps its word
    *  timeline onto the tightened video with these. */
   keepRanges?: { start: number; end: number }[];
+  /** Clock changes from speed-up / freeze / intro / teaser (timeline.ts knots). */
+  timeKnots?: [number, number][];
 }
 
 export interface JobOutput {
@@ -761,6 +763,7 @@ class JobQueueManager {
               .filter(Boolean)
               .join(" · ") || undefined,
           keepRanges: produced.keepRanges,
+          timeKnots: produced.timeKnots,
           hookStrength: clip.hookStrength,
           engagementScore: clip.engagementScore,
           trendMatch: clip.trendMatch,

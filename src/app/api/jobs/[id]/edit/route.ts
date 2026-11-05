@@ -74,6 +74,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       captionStyle: str(c.captionStyle, 20),
       aspectRatio: ["9:16", "1:1", "16:9"].includes(c.aspectRatio) ? c.aspectRatio : undefined,
       keepRanges: ranges,
+      timeKnots: Array.isArray(c.timeKnots)
+        ? c.timeKnots
+            .slice(0, 20)
+            .filter((k: any) => Array.isArray(k) && k.length === 2 && k.every((v: any) => typeof v === "number" && Number.isFinite(v)))
+        : undefined,
       sourceWords: words,
       fx,
     }).filter(([, v]) => v !== undefined)

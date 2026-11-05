@@ -128,6 +128,7 @@ async function performRender(
       tracking: produced.tracking,
       duration: produced.duration,
       keepRanges: produced.keepRanges,
+      timeKnots: produced.timeKnots,
       fillersRemoved: produced.fillersRemoved,
       deletedRemoved: produced.deletedRemoved,
       timingMs: elapsedMs,
