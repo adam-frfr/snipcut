@@ -66,6 +66,8 @@ function fmt(t: number): string {
   return `${m}:${s.toFixed(1).padStart(4, "0")}`;
 }
 
+const draftKey = (id: string) => `snipcut_editor_draft_${id}`;
+
 /** Source-absolute words for a stored clip (older clips only carry clip-relative ones). */
 function sourceWordsOf(c: any): EditorWord[] {
   if (Array.isArray(c?.sourceWords) && c.sourceWords.length) {
@@ -234,7 +236,46 @@ function EditorContent() {
     setDirty(false);
     setRenderError("");
     setRenderNote("");
+    // Unsaved edits from an earlier visit (refresh, closed tab) come back.
+    try {
+      const raw = localStorage.getItem(draftKey(c.id));
+      const d = raw ? JSON.parse(raw) : null;
+      if (d && Array.isArray(d.words) && d.words.length) {
+        setWords(d.words);
+        if (Number.isFinite(d.trimStart)) setTrimStart(d.trimStart);
+        if (Number.isFinite(d.trimEnd)) setTrimEnd(d.trimEnd);
+        if (d.fx) setFx(d.fx);
+        if (d.captionStyle) setCaptionStyle(d.captionStyle);
+        if (d.aspectRatio) setAspectRatio(d.aspectRatio);
+        if (d.layoutMode) setLayoutMode(d.layoutMode);
+        if (typeof d.headline === "string") setHeadline(d.headline);
+        if (d.captionPosY === null || Number.isFinite(d.captionPosY)) setCaptionPosY(d.captionPosY);
+        setDirty(true);
+        setRenderNote("Restored your unsaved edits from last time — re-render to apply them.");
+      }
+    } catch {}
   }, []);
+
+  // Autosave unsaved edits per clip, and warn before leaving the page with
+  // them (they used to vanish on a refresh or a closed tab).
+  useEffect(() => {
+    if (!clip || !dirty) return;
+    try {
+      localStorage.setItem(
+        draftKey(clip.id),
+        JSON.stringify({ words, trimStart, trimEnd, fx, captionStyle, aspectRatio, layoutMode, headline, captionPosY, savedAt: Date.now() })
+      );
+    } catch {}
+  }, [clip, dirty, words, trimStart, trimEnd, fx, captionStyle, aspectRatio, layoutMode, headline, captionPosY]);
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
 
   // Load the user's clips (dashboard writes them to snipcut_user_clips)
   useEffect(() => {
@@ -449,6 +490,7 @@ function EditorContent() {
         }
       } catch {}
 
+      try { localStorage.removeItem(draftKey(clip.id)); } catch {}
       applyClip(updated);
       setPreviewUrl(data.previewDownloadUrl || data.downloadUrl);
       setMasterUrl(data.downloadUrl);
