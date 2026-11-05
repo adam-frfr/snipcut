@@ -222,69 +222,9 @@ export function listRecentProjects(limit = 12): ProjectSummary[] {
   return out.sort((a, b) => b.createdAt - a.createdAt).slice(0, limit);
 }
 
-/** How long uploads, downloads and rendered clips are kept (FILE_RETENTION_HOURS, default 24h). */
-export const retentionHours = () => Math.max(1, Number(process.env.FILE_RETENTION_HOURS) || 24);
-
-/**
- * Cleanup: Deletes uploads, downloads, rendered clips, and extracted audio older than retentionHours (default 24h)
- */
-export function cleanupExpiredFiles(retentionHours = 24): { deletedFiles: number; freedBytes: number } {
-  const maxAgeMs = retentionHours * 3600 * 1000;
-  const now = Date.now();
-  let deletedFiles = 0;
-  let freedBytes = 0;
-
-  const targetDirs = [
-    path.join(process.cwd(), "public", "uploads"),
-    path.join(process.cwd(), "public", "rendered_clips"),
-    path.join(process.cwd(), "public", "downloads"),
-    path.join(process.cwd(), "data", "audio"),
-  ];
-
-  for (const dir of targetDirs) {
-    if (!fs.existsSync(dir)) continue;
-    try {
-      const entries = fs.readdirSync(dir);
-      for (const entry of entries) {
-        // Skip .gitkeep or special files
-        if (entry.startsWith(".")) continue;
-        const fullPath = path.join(dir, entry);
-        try {
-          const stat = fs.statSync(fullPath);
-          if (stat.isFile() && now - stat.mtimeMs > maxAgeMs) {
-            freedBytes += stat.size;
-            fs.unlinkSync(fullPath);
-            deletedFiles++;
-          }
-        } catch {}
-      }
-    } catch {}
-  }
-
-  // Abandoned chunked-upload dirs (per-upload subdirectories of .part files)
-  const chunkRoot = path.join(process.cwd(), "data", "chunk-uploads");
-  if (fs.existsSync(chunkRoot)) {
-    try {
-      for (const entry of fs.readdirSync(chunkRoot)) {
-        const fullPath = path.join(chunkRoot, entry);
-        try {
-          const stat = fs.statSync(fullPath);
-          if (stat.isDirectory() && now - stat.mtimeMs > maxAgeMs) {
-            fs.rmSync(fullPath, { recursive: true, force: true });
-            deletedFiles++;
-          }
-        } catch {}
-      }
-    } catch {}
-  }
-
-  if (deletedFiles > 0) {
-    console.log(
-      `[Stage: Cleanup] Deleted ${deletedFiles} files older than ${retentionHours}h, freeing ${(freedBytes / (1024 * 1024)).toFixed(2)} MB`
-    );
-  }
-  return { deletedFiles, freedBytes };
-}
+// Disk cleanup lives in cleanup.ts (also runs hourly from instrumentation.ts).
+import { cleanupExpiredFiles, retentionHours } from "./cleanup";
+export { cleanupExpiredFiles, retentionHours };
 
 // -------------------------------------------------------------
 // In-Process Queue Manager with Concurrency 1

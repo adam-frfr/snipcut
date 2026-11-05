@@ -52,6 +52,11 @@ const tests = [
     args: ["tsx", path.join(__dirname, "test-clip-style.ts")],
   },
   {
+    name: "Disk Cleanup: Retention, B-roll, Temp Files, Hourly Timer",
+    cmd: "npx",
+    args: ["tsx", path.join(__dirname, "test-cleanup.ts")],
+  },
+  {
     name: "Cut Accuracy & A/V Sync Across Layout and Silence-Removal Joins",
     cmd: "npx",
     args: ["tsx", path.join(__dirname, "test-cut-accuracy.ts")],
