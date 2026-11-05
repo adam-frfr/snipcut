@@ -320,6 +320,10 @@ export interface RenderOptions {
   // Render picture only; captions are burned later by applyPostEffects so
   // they can sit ON TOP of B-roll cutaways instead of underneath them.
   skipCaptions?: boolean;
+  /** AI key phrases to colour in the captions. */
+  keywords?: string[];
+  /** Hook title shown in the upper third for the opening seconds. */
+  hookTitle?: string;
 }
 
 export interface FocusShot {
@@ -417,21 +421,86 @@ export function preventCaptionOverlaps(dialogues: string[]): string[] {
  * re-renders the whole phrase with a different word highlighted, so there
  * is never a flicker or a lonely single word on screen.
  */
+export interface CaptionOptions {
+  /** AI key phrases; their words (and any number) get a highlight colour. */
+  keywords?: string[];
+  /** Clip-relative spans where captions sit mid-screen (split-screen seam). */
+  centerSpans?: { start: number; end: number }[];
+  /** Hook title drawn in the upper third for the opening seconds. */
+  hook?: { text: string; until?: number };
+  /** Caption height was chosen by the user: every style honours marginV. */
+  customMarginV?: boolean;
+}
+
+const KEYWORD_STOPWORDS = new Set(
+  "the a an and or but of to in on at for with from by is are was were be been being it its this that these those you your we our they their he she his her i me my mine us them as so if not no do does did have has had just very really than then there here what which who whom how why when where can could would should will shall may might must about into over under more most less much many some any all".split(" ")
+);
+
+const normWord = (t: string) => t.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+/** Words (normalised) that make up the clip's key phrases. */
+export function keywordSet(phrases?: string[]): Set<string> {
+  const out = new Set<string>();
+  for (const p of phrases || []) {
+    for (const raw of String(p || "").split(/\s+/)) {
+      const w = normWord(raw);
+      if (w.length >= 3 && !KEYWORD_STOPWORDS.has(w)) out.add(w);
+    }
+  }
+  return out;
+}
+
+/** Hard-wrap a title into lines of at most `max` characters (libass WrapStyle 2 never wraps). */
+export function wrapTitle(text: string, max: number): string[] {
+  const words = text.split(/\s+/).filter(Boolean);
+  const lines: string[] = [];
+  let cur = "";
+  for (const w of words) {
+    if (cur && (cur + " " + w).length > max) {
+      lines.push(cur);
+      cur = w;
+    } else {
+      cur = cur ? `${cur} ${w}` : w;
+    }
+  }
+  if (cur) lines.push(cur);
+  return lines.slice(0, 3);
+}
+
+export function stripEmoji(text: string): string {
+  return text
+    .replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{2B00}-\u{2BFF}\u{200D}]/gu, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export function buildKaraokeAss(
   words: KaraokeWord[],
   captionStyle: "hormozi" | "neon" | "beast" | "clean" | "kinetic" | "snipcut",
   marginV: number,
-  playRes: { x: number; y: number } = { x: 1080, y: 1920 }
+  playRes: { x: number; y: number } = { x: 1080, y: 1920 },
+  options: CaptionOptions = {}
 ): string {
-  // ASS colours are &HAABBGGRR.
+  // ASS colours are &HAABBGGRR. `kw` = keyword highlight colour (differs
+  // from the spoken-word accent so both read at once).
   const palettes = {
-    hormozi: { base: "&H00FFFFFF", accent: "&H0000FFFF", size: 56, outline: 6 },
-    neon: { base: "&H00FFFFFF", accent: "&H0000FF00", size: 56, outline: 6 },
-    beast: { base: "&H00FFFFFF", accent: "&H0000FFFF", size: 62, outline: 8 },
-    clean: { base: "&H00FFFFFF", accent: "&H00FFFFFF", size: 46, outline: 3 },
-    kinetic: { base: "&H00FFFFFF", accent: "&H0000FFFF", size: 98, outline: 9 },
-    snipcut: { base: "&H00FFFFFF", accent: "&H0000FFFF", size: 74, outline: 10 },
+    hormozi: { base: "&H00FFFFFF", accent: "&H0000FFFF", kw: "&H006BE322", size: 56, outline: 6 },
+    neon: { base: "&H00FFFFFF", accent: "&H0000FF00", kw: "&H0000E5FF", size: 56, outline: 6 },
+    beast: { base: "&H00FFFFFF", accent: "&H0000FFFF", kw: "&H00303BFF", size: 62, outline: 8 },
+    clean: { base: "&H00FFFFFF", accent: "&H00FFFFFF", kw: "&H00FFFFFF", size: 46, outline: 3 },
+    kinetic: { base: "&H00FFFFFF", accent: "&H0000FFFF", kw: "&H006BE322", size: 98, outline: 9 },
+    snipcut: { base: "&H00FFFFFF", accent: "&H0000FFFF", kw: "&H006BE322", size: 74, outline: 10 },
   } as const;
+  const kwSet = keywordSet(options.keywords);
+  const isKeyword = (t: string) => {
+    if (captionStyle === "clean") return false;
+    const n = normWord(t);
+    return n.length > 0 && (kwSet.has(n) || /\d/.test(n));
+  };
+  const centerSpans = options.centerSpans || [];
+  // Split-screen: captions on the seam between the two panels, never over a face.
+  const posTag = (t: number) =>
+    centerSpans.some((s) => t >= s.start - 0.05 && t < s.end) ? "{\\an5}" : "";
   const pal = palettes[captionStyle] || palettes.hormozi;
   // Font size is authored against a 1920px-tall canvas; scale it to the
   // actual PlayRes so 16:9 / 1:1 renders don't get oversized captions.
@@ -440,6 +509,26 @@ export function buildKaraokeAss(
   // height/1920 shrank 16:9 captions to 56% — unreadable on a phone).
   const captionScale = Math.min(playRes.x, playRes.y) / 1080;
   const fontSize = Math.max(20, Math.round(pal.size * captionScale));
+  const snipcutMarginV = options.customMarginV ? marginV : Math.round(playRes.y * 0.16);
+  const hookSize = Math.max(20, Math.round(68 * captionScale));
+
+  // Hook title: short white card with black text in the upper third
+  // (clear of the platform UI) for the opening seconds, like pro edits.
+  const hookEvents: string[] = [];
+  const hookText = options.hook?.text ? stripEmoji(options.hook.text) : "";
+  if (hookText) {
+    const lastWordEnd = words.length ? words[words.length - 1].end : 3.2;
+    const until = Math.max(1.2, Math.min(options.hook?.until ?? 3.2, lastWordEnd));
+    const maxChars = Math.max(10, Math.floor((playRes.x - 180) / (0.62 * hookSize)));
+    const lines = wrapTitle(hookText, maxChars).map((l) =>
+      l.replace(/\\/g, "\\\\").replace(/\{/g, "\\{").replace(/\}/g, "\\}")
+    );
+    if (lines.length) {
+      hookEvents.push(
+        `Dialogue: 1,${formatAssTime(0)},${formatAssTime(until)},Hook,,0,0,0,,{\\fad(120,220)\\fscx88\\fscy88\\t(0,160,1,\\fscx100\\fscy100)}${lines.join("\\N")}`
+      );
+    }
+  }
 
   const header = `[Script Info]
 Title: Snipcut Karaoke Captions
@@ -453,11 +542,13 @@ ScaledBorderAndShadow: yes
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Karaoke,Arial,${fontSize},${pal.base},${pal.base},&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,${pal.outline},2,2,60,60,${marginV},1
 Style: Kinetic,Arial,${fontSize},${pal.base},${pal.base},&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,${pal.outline},3,5,40,40,0,1
-Style: Snipcut,Arial,${Math.max(20, Math.round(74 * captionScale))},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,10,2,2,50,50,${Math.round(playRes.y * 0.16)},1
+Style: Snipcut,Arial,${Math.max(20, Math.round(74 * captionScale))},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,10,2,2,50,50,${snipcutMarginV},1
+Style: Hook,Arial,${hookSize},&H00111111,&H00111111,&H00FFFFFF,&H00000000,-1,0,0,0,100,100,0,0,3,${Math.max(6, Math.round(20 * captionScale))},0,8,80,80,${Math.round(playRes.y * 0.11)},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 `;
+  const finish = (evts: string[]) => header + [...preventCaptionOverlaps(evts), ...hookEvents].join("\n") + "\n";
 
   const escapeAssText = (t: string) => t.replace(/\\/g, "\\\\").replace(/\{/g, "\\{").replace(/\}/g, "\\}");
 
@@ -510,14 +601,16 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
           if (j === i) {
             return `{\\c${pal.accent}\\fs${Math.round(snipcutFont * fit * 1.16)}\\fscx116\\fscy116\\t(0,90,1,\\fscx100\\fscy100)}${txt}{\\r}`;
           }
-          return fit < 1 ? `{\\fs${Math.round(snipcutFont * fit)}}${txt}{\\r}` : txt;
+          const kw = isKeyword(pw.text) ? `\\c${pal.kw}` : "";
+          if (fit < 1 || kw) return `{${kw}${fit < 1 ? `\\fs${Math.round(snipcutFont * fit)}` : ""}}${txt}{\\r}`;
+          return txt;
         });
         evts.push(
-          `Dialogue: 0,${formatAssTime(w.start)},${formatAssTime(evEnd)},Snipcut,,0,0,0,,${parts.join(" ")}`
+          `Dialogue: 0,${formatAssTime(w.start)},${formatAssTime(evEnd)},Snipcut,,0,0,0,,${posTag(w.start)}${parts.join(" ")}`
         );
       }
     }
-    return header + preventCaptionOverlaps(evts).join("\n") + "\n";
+    return finish(evts);
   }
 
   if (captionStyle === "kinetic") {
@@ -550,6 +643,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
       chunk.forEach((w, i) => {
         if (/\d/.test(w.text) || w.text.replace(/[^A-Za-z]/g, "").length >= chunk[emph].text.replace(/[^A-Za-z]/g, "").length) emph = i;
       });
+      // An AI key phrase word beats the length heuristic.
+      const kwIdx = chunk.findIndex((w) => isKeyword(w.text));
+      if (kwIdx >= 0) emph = kwIdx;
       // Auto-fit: Arial Bold uppercase averages ~0.68em per glyph; if the
       // chunk would overflow the canvas, shrink the whole event uniformly.
       const avail = playRes.x - 96;
@@ -560,14 +656,16 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
       const fitScale = estWidth > avail ? Math.max(0.55, avail / estWidth) : 1;
       const parts = chunk.map((w, i) => {
         const txt = escapeAssText(w.text.toUpperCase());
-        return i === emph && chunk.length > 1
-          ? `{\\c${pal.accent}\\fs${Math.round(fontSize * fitScale * 1.14)}}${txt}{\\r}`
-          : txt;
+        if (i === emph && chunk.length > 1) {
+          const col = isKeyword(w.text) ? pal.kw : pal.accent;
+          return `{\\c${col}\\fs${Math.round(fontSize * fitScale * 1.14)}}${txt}{\\r}`;
+        }
+        return txt;
       });
       const anim = `{\\fad(45,60)${fitScale < 1 ? `\\fs${Math.round(fontSize * fitScale)}` : ""}\\fscx115\\fscy115\\t(0,110,1,\\fscx100\\fscy100)}`;
       evts.push(`Dialogue: 0,${formatAssTime(start)},${formatAssTime(end)},Kinetic,,0,0,0,,${anim}${parts.join(" ")}`);
     });
-    return header + preventCaptionOverlaps(evts).join("\n") + "\n";
+    return finish(evts);
   }
 
   // Group words into phrases: max 4 words, break on sentence punctuation
@@ -600,15 +698,36 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         if (captionStyle === "clean") {
           return j === i ? `{\\b1}${txt}{\\b0}` : txt;
         }
-        if (j === i) return `{\\c${pal.accent}\\fs${Math.round(pal.size * 1.12)}}${txt}{\\r}`;
+        if (j === i) return `{\\c${pal.accent}\\fs${Math.round(fontSize * 1.12)}}${txt}{\\r}`;
+        if (isKeyword(pw.text)) return `{\\c${pal.kw}}${txt}{\\r}`;
         return txt;
       });
       events.push(
-        `Dialogue: 0,${formatAssTime(evStart)},${formatAssTime(evEnd)},Karaoke,,0,0,0,,${parts.join(" ")}`
+        `Dialogue: 0,${formatAssTime(evStart)},${formatAssTime(evEnd)},Karaoke,,0,0,0,,${posTag(evStart)}${parts.join(" ")}`
       );
     }
   }
-  return header + preventCaptionOverlaps(events).join("\n") + "\n";
+  return finish(events);
+}
+
+/**
+ * Clip-relative spans where captions should sit mid-screen: the whole clip
+ * for a split-screen render, or each split layout segment of a mixed
+ * (crop / fit / split) render. Bottom captions there cover the lower
+ * speaker's face; the seam between the panels is free.
+ */
+export function captionCenterSpans(
+  tracking: TrackingResult | null | undefined,
+  duration: number,
+  aspectRatio: string
+): { start: number; end: number }[] {
+  if (!tracking || aspectRatio !== "9:16") return [];
+  if (tracking.mode === "split-screen" && tracking.filter_type === "filter_complex") {
+    return [{ start: 0, end: duration }];
+  }
+  return (tracking.layoutSegments || [])
+    .filter((s) => s.layout === "split")
+    .map((s) => ({ start: s.start, end: s.end }));
 }
 
 /**
@@ -736,6 +855,8 @@ export async function renderVideoClip({
   headline,
   captionStyle = "hormozi",
   skipCaptions = false,
+  keywords,
+  hookTitle,
 }: RenderOptions): Promise<{ outputPath: string; tracking: TrackingResult }> {
   // Resolve input and output paths safely strictly within allowed directories
   const resolvedInput = resolveSafeFilePath(inputPath);
@@ -919,11 +1040,21 @@ export async function renderVideoClip({
       if (captionPositionY !== undefined) {
         marginV = Math.max(60, Math.min(playRes.y - 120, Math.round(playRes.y * (1 - captionPositionY / 100))));
       }
+      const fromWords = Boolean(transcript && transcript.length > 0);
       const assContent = buildKaraokeAss(
         srtEntries.map((e) => ({ start: e.start, end: e.end, text: e.text })),
         captionStyle,
         marginV,
-        playRes
+        playRes,
+        {
+          keywords,
+          centerSpans:
+            effectiveMode === "auto-tracker" || effectiveMode === "split-screen"
+              ? captionCenterSpans(trackingResult, duration, aspectRatio)
+              : [],
+          hook: fromWords && hookTitle ? { text: hookTitle } : undefined,
+          customMarginV: captionPositionY !== undefined,
+        }
       );
 
       tempSrtPath = path.join(dir, `sub-${Date.now()}-${Math.floor(Math.random() * 1000)}.ass`);
@@ -1200,6 +1331,9 @@ export interface PostFxOptions {
   broll: BrollCue[];
   punches: { start: number; end: number }[]; // clip-relative
   musicBed: boolean;
+  /** Same caption extras as renderVideoClip (times clip-relative). */
+  captionOptions?: CaptionOptions;
+  captionPositionY?: number;
 }
 
 function punchZoomExpr(punches: { start: number; end: number }[], fps = 30): string {
@@ -1493,11 +1627,16 @@ export async function applyPostEffects(opts: PostFxOptions): Promise<void> {
   if (opts.words.length > 0) {
     const playRes =
       opts.aspectRatio === "16:9" ? { x: 1920, y: 1080 } : opts.aspectRatio === "1:1" ? { x: 1080, y: 1080 } : { x: 1080, y: 1920 };
+    const marginV =
+      opts.captionPositionY !== undefined
+        ? Math.max(60, Math.min(playRes.y - 120, Math.round(playRes.y * (1 - opts.captionPositionY / 100))))
+        : Math.round(playRes.y * 0.27);
     const assContent = buildKaraokeAss(
       opts.words.map((w) => ({ start: w.start, end: w.end, text: w.text })),
       opts.captionStyle,
-      Math.round(playRes.y * 0.27),
-      playRes
+      marginV,
+      playRes,
+      { ...(opts.captionOptions || {}), customMarginV: opts.captionPositionY !== undefined }
     );
     const fxDir = path.join(process.cwd(), "data", "postfx");
     fs.mkdirSync(fxDir, { recursive: true });

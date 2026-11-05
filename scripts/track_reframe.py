@@ -438,8 +438,19 @@ def run_tracking(video_path, start_time, duration, mode="auto-tracker", ai_shots
             )
         sys.stderr.write(f"observations={len(observations)} faces_seen={sum(1 for o in observations)}\n")
 
-    # Discard one-frame wonders unless they're all we have
-    solid = [tr for tr in tracks if len(tr.samples) >= max(3, num_samples * 0.12)]
+    # Discard one-frame wonders unless they're all we have. A SHORT track
+    # with a big face is real, though: a 1-2s reaction / question shot of the
+    # other person (seen in testing: a 1.2s shot of the host was dropped as
+    # noise, so the camera sat on the empty spot where the guest had been).
+    # False detections are tiny or flicker for a sample or two.
+    long_enough = max(3, num_samples * 0.12)
+    solid = [tr for tr in tracks if len(tr.samples) >= long_enough]
+    big_area = max((tr.mean_area for tr in solid), default=0.0)
+    for tr in tracks:
+        if tr in solid or len(tr.samples) < 2:
+            continue
+        if big_area > 0 and tr.mean_area >= 0.45 * big_area:
+            solid.append(tr)
     if not solid and tracks:
         solid = [max(tracks, key=lambda tr: len(tr.samples))]
     tracks = solid
@@ -836,6 +847,10 @@ def run_tracking(video_path, start_time, duration, mode="auto-tracker", ai_shots
                 last_dir = s
         sys.stderr.write(f"camera: keys={len(keys_x)} travelled={travelled:.0f} reversals={rev} range={min(k[1] for k in keys_x):.0f}..{max(k[1] for k in keys_x):.0f} max_x={max_x}\n")
         sys.stderr.write("path: " + " ".join(f"{k[0]:.0f}:{k[1]:.0f}" for k in keys_x[::6]) + "\n")
+        if os.environ.get("TRACK_DEBUG") == "2":
+            for (t, cx, cy, tid), (rt, rcx, _, rtid) in zip(focus, raw_focus):
+                sys.stderr.write(f"  t={t:6.2f} raw=({rcx:6.0f},{rtid}) focus=({cx:6.0f},{tid}) snap={'Y' if focus.index((t, cx, cy, tid)) in focus_snap else '-'}\n")
+            sys.stderr.write("keys: " + " ".join(f"{k[0]:.2f}:{k[1]:.0f}" for k in keys_x) + "\n")
     summary = (
         f"Premium tracking v2: {len(tracks)} subject(s), {len(shots)} focus segment(s), "
         f"camera travelled {int(travelled)}px with eased pans"

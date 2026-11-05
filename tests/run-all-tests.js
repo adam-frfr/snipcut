@@ -17,6 +17,16 @@ const tests = [
     args: ["tsx", path.join(__dirname, "test-clip-boundaries.ts")],
   },
   {
+    name: "Job Lock: One Worker Per Job",
+    cmd: "npx",
+    args: ["tsx", path.join(__dirname, "test-job-lock.ts")],
+  },
+  {
+    name: "Editor Timeline, Word Deletes & Pro Caption Features",
+    cmd: "npx",
+    args: ["tsx", path.join(__dirname, "test-editor-timeline.ts")],
+  },
+  {
     name: "Caption Presets Reference Defined Styles",
     cmd: "npx",
     args: ["tsx", path.join(__dirname, "test-caption-styles.ts")],

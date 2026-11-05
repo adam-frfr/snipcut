@@ -1,16 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  renderVideoClip,
-  generatePreviewClip,
-  generatePosterImage,
-  applyPostEffects,
-  pickPunchZooms,
-  dropCuesOverlappingSplits,
-} from "@/lib/videoService";
-import { buildSentences, planBroll, fetchBrollAssets } from "@/lib/brollService";
+import { generatePreviewClip, generatePosterImage } from "@/lib/videoService";
+import { produceClip } from "@/lib/clipProducer";
 import path from "path";
 import fs from "fs";
-import os from "os";
 import { verifyAuthAndRateLimit } from "@/lib/authRateLimit";
 import crypto from "crypto";
 
@@ -33,6 +25,9 @@ async function performRender(
       captionStyle,
       broll,
       music,
+      removeSilences,
+      hookTitle,
+      keywords,
       pexelsKey,
       pixabayKey,
       groqKey,
@@ -57,132 +52,45 @@ async function performRender(
     const outputFilename = `clip-${Date.now()}.mp4`;
     const outputPath = path.join(outputDir, outputFilename);
 
-    console.log(
-      `[Stage: Render Clip API] Rendering clip from ${startTime}s (${duration}s) -> ${outputFilename}`
-    );
-
     const start2 = Number(Number(startTime).toFixed(2));
     const dur2 = Number(Number(duration).toFixed(2));
-    const clipEnd = start2 + dur2;
-    const renderOpts = {
+    console.log(`[Stage: Render Clip API] Rendering clip from ${start2}s (${dur2}s) -> ${outputFilename}`);
+
+    // Source-absolute words; `deleted` words (editor) are cut from the
+    // video and captions, edited text is burned as typed.
+    const absWords = Array.isArray(transcript)
+      ? transcript
+          .map((w: any) => ({
+            text: String(w?.text ?? w?.word ?? ""),
+            start: Number(w?.start),
+            end: Number(w?.end),
+            deleted: w?.deleted === true,
+          }))
+          .filter((w: any) => w.text.trim() && Number.isFinite(w.start) && Number.isFinite(w.end))
+      : [];
+
+    // Same engine as job renders (dashboard downloads and editor re-renders
+    // used to skip B-roll / zooms / music / silence removal).
+    const produced = await produceClip({
       inputPath,
+      outputPath,
       startTime: start2,
-      duration: dur2,
+      endTime: start2 + dur2,
+      words: absWords,
       aspectRatio: aspectRatio || "9:16",
       reframeMode: reframeMode || "auto-tracker",
       splitScreen: Boolean(splitScreen),
       splitScreenOptions,
-      captionPositionY,
-      transcript,
-      headline,
-      captionStyle,
-    };
-
-    // Reference FX on downloads too (previously only job renders got
-    // them, so a clip downloaded from the dashboard was a plain crop +
-    // captions while the same clip auto-rendered by a job had B-roll,
-    // punch zooms and music). Opt-in per request: the dashboard sends
-    // its B-Roll / Music toggles; the editor does not, so editor
-    // re-renders stay plain. Any FX failure falls back to the standard
-    // captioned render — a download must never fail because of FX.
-    const absWords: { text: string; start: number; end: number }[] = Array.isArray(transcript)
-      ? transcript
-          .map((w: any) => ({
-            text: String(w?.text || w?.word || ""),
-            start: Number(w?.start),
-            end: Number(w?.end),
-          }))
-          .filter((w: any) => w.text && Number.isFinite(w.start) && Number.isFinite(w.end))
-      : [];
-    const wantFx = Boolean(broll || music) && absWords.length >= 3;
-    let renderResult: Awaited<ReturnType<typeof renderVideoClip>> | null = null;
-    let fxApplied = false;
-
-    if (wantFx) {
-      const baseFilename = `clip-${Date.now()}-fxbase.mp4`;
-      const basePath = path.join(outputDir, baseFilename);
-      try {
-        const base = await renderVideoClip({
-          ...renderOpts,
-          outputPath: basePath,
-          skipCaptions: true,
-        } as any);
-        const relWords = absWords
-          .filter((w) => w.start >= start2 && w.end <= clipEnd)
-          .map((w) => ({
-            text: w.text,
-            start: Math.max(0, Number((w.start - start2).toFixed(2))),
-            end: Math.max(0.05, Number((w.end - start2).toFixed(2))),
-          }));
-        let cues: { start: number; end: number; assetPath: string; kind: "image" | "video" }[] = [];
-        if (broll) {
-          // Sentence-ish segments from the word stream for the planner.
-          const pseudoSegments: { start: number; end: number; text: string }[] = [];
-          let cur: typeof absWords = [];
-          const flush = () => {
-            if (cur.length) {
-              pseudoSegments.push({
-                start: cur[0].start,
-                end: cur[cur.length - 1].end,
-                text: cur.map((w) => w.text).join(" "),
-              });
-              cur = [];
-            }
-          };
-          for (const w of absWords) {
-            if (cur.length && (w.start - cur[cur.length - 1].end > 0.8 || w.start - cur[0].start > 7)) flush();
-            cur.push(w);
-            if (/[.!?]$/.test(w.text)) flush();
-          }
-          flush();
-          const sentences = buildSentences(pseudoSegments, start2, clipEnd);
-          if (sentences.length) {
-            const plan = await planBroll(sentences, {
-              groqKey: groqKey || process.env.GROQ_API_KEY,
-              openaiKey: openaiKey,
-              claudeKey: claudeKey,
-            });
-            if (plan.length) {
-              const assets = await fetchBrollAssets(plan, {
-                pexelsKey: pexelsKey || process.env.PEXELS_API_KEY,
-                pixabayKey: pixabayKey || process.env.PIXABAY_API_KEY,
-                destDir: path.join(process.cwd(), "data", "broll"),
-                tag: `broll-dl-${Date.now().toString(36)}`,
-              });
-              cues = assets.map((a) => ({ start: a.start, end: a.end, assetPath: a.assetPath, kind: a.kind }));
-            }
-          }
-        }
-        cues = dropCuesOverlappingSplits(cues, (base as any)?.tracking?.layoutSegments);
-        await applyPostEffects({
-          basePath,
-          outputPath,
-          duration: dur2,
-          aspectRatio: (aspectRatio || "9:16") as any,
-          words: relWords,
-          captionStyle: (captionStyle || "kinetic") as any,
-          broll: cues,
-          punches: pickPunchZooms(relWords),
-          musicBed: Boolean(music),
-        });
-        renderResult = { outputPath, tracking: (base as any).tracking };
-        fxApplied = true;
-        console.log(
-          `[Stage: Render Clip API] FX download render: ${cues.length} B-roll cue(s), music=${Boolean(music)}`
-        );
-      } catch (fxErr) {
-        console.warn("[Stage: Render Clip API] FX path failed; standard render instead:", fxErr);
-        renderResult = null;
-      } finally {
-        try {
-          if (fs.existsSync(basePath)) fs.unlinkSync(basePath);
-        } catch {}
-      }
-    }
-
-    if (!renderResult) {
-      renderResult = await renderVideoClip({ ...renderOpts, outputPath });
-    }
+      captionPositionY: typeof captionPositionY === "number" ? captionPositionY : undefined,
+      captionStyle: captionStyle || "hormozi",
+      headline: typeof headline === "string" ? headline : undefined,
+      hookTitle: hookTitle === true,
+      keywords: Array.isArray(keywords) ? keywords.map(String).slice(0, 30) : null,
+      removeSilences: removeSilences === true,
+      broll: broll === true,
+      musicBed: music === true,
+      keys: { groqKey, openaiKey, claudeKey, pexelsKey, pixabayKey },
+    });
 
     // Lightweight preview rendition for smooth in-browser playback (never fatal)
     const previewName = await generatePreviewClip(outputPath).catch(() => null);
@@ -209,9 +117,14 @@ async function performRender(
         : undefined,
       fileSize,
       previewFileSize,
-      fxApplied,
+      fxApplied: Boolean(produced.fxSummary),
+      fxSummary: produced.fxSummary,
       filename: outputFilename,
-      tracking: renderResult.tracking,
+      tracking: produced.tracking,
+      duration: produced.duration,
+      keepRanges: produced.keepRanges,
+      fillersRemoved: produced.fillersRemoved,
+      deletedRemoved: produced.deletedRemoved,
       timingMs: elapsedMs,
     } };
   } catch (error: any) {
@@ -250,21 +163,16 @@ function sweepRenders() {
 }
 
 function renderKeyFor(body: any): string {
-  const stable = JSON.stringify({
-    inputPath: body.inputPath,
-    startTime: body.startTime,
-    duration: body.duration,
-    aspectRatio: body.aspectRatio || "9:16",
-    reframeMode: body.reframeMode || "auto-tracker",
-    splitScreen: Boolean(body.splitScreen),
-    splitScreenOptions: body.splitScreenOptions,
-    captionPositionY: body.captionPositionY,
-    headline: body.headline,
-    captionStyle: body.captionStyle || "kinetic",
-    broll: Boolean(body.broll),
-    music: Boolean(body.music),
-    transcript: Array.isArray(body.transcript) ? body.transcript : undefined,
-  });
+  // Everything that changes the output (API keys and cookies excluded).
+  const { groqKey, openaiKey, claudeKey, pexelsKey, pixabayKey, ...rest } = body || {};
+  void groqKey; void openaiKey; void claudeKey; void pexelsKey; void pixabayKey;
+  const sortKeys = (v: any): any =>
+    Array.isArray(v)
+      ? v.map(sortKeys)
+      : v && typeof v === "object"
+        ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, sortKeys(v[k])]))
+        : v;
+  const stable = JSON.stringify(sortKeys(rest));
   return "r_" + crypto.createHash("sha256").update(stable).digest("hex").slice(0, 32);
 }
 

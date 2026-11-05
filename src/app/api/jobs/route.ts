@@ -60,6 +60,8 @@ export async function POST(req: NextRequest) {
         preferredModel,
         broll,
         musicBed,
+        hookTitle,
+        keywordHighlights,
         pexelsKey,
         pixabayKey,
       } = body;
@@ -83,6 +85,8 @@ export async function POST(req: NextRequest) {
         preferredModel: (preferredModel || "").trim?.() || undefined,
         broll: broll === true,
         musicBed: musicBed === true,
+        hookTitle: hookTitle !== false,
+        keywordHighlights: keywordHighlights !== false,
         pexelsKey: (pexelsKey || "").trim?.() || undefined,
         pixabayKey: (pixabayKey || "").trim?.() || undefined,
       };

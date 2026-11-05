@@ -103,7 +103,23 @@ export async function downloadYoutubeVideo(opts: {
   // 640x360). The forced set is kept as a fallback for when the default
   // clients hit a bot check.
   const clientStrategies: string[][] = [[], ["--extractor-args", "youtube:player_client=android,ios,web"]];
-  const hasOutput = () => fs.readdirSync(downloadDir).some((f) => f.startsWith(filePrefix) && /\.(mp4|mkv|webm|mov)$/i.test(f));
+  // Only a FINISHED file counts. yt-dlp downloads video and audio as
+  // separate "<name>.f137.mp4" / ".f140.m4a" pieces and merges them; if the
+  // merge fails or is interrupted, the video-only piece is left behind, and
+  // treating it as the download gave clips with no sound.
+  const isFinished = (f: string) =>
+    f.startsWith(filePrefix) &&
+    /\.(mp4|mkv|webm|mov)$/i.test(f) &&
+    !/\.f\d+[a-z0-9-]*\.\w+$/i.test(f) &&
+    !/\.part$|\.temp\./i.test(f);
+  const hasOutput = () => fs.readdirSync(downloadDir).some(isFinished);
+  const cleanupPieces = () => {
+    for (const f of fs.readdirSync(downloadDir)) {
+      if (f.startsWith(filePrefix) && !isFinished(f)) {
+        try { fs.unlinkSync(path.join(downloadDir, f)); } catch {}
+      }
+    }
+  };
 
   let lastErr = "";
   try {
@@ -132,6 +148,7 @@ export async function downloadYoutubeVideo(opts: {
       if (hasOutput()) break;
     }
   } finally {
+    cleanupPieces();
     if (tempCookie) {
       try { fs.unlinkSync(tempCookie); } catch {}
     }
@@ -140,9 +157,7 @@ export async function downloadYoutubeVideo(opts: {
 
   const target = path.join(downloadDir, `${filePrefix}.mp4`);
   if (fs.existsSync(target)) return { filePath: target, fileId: `downloads/${filePrefix}.mp4` };
-  const found = fs
-    .readdirSync(downloadDir)
-    .find((f) => f.startsWith(filePrefix) && /\.(mp4|mkv|webm|mov)$/i.test(f));
+  const found = fs.readdirSync(downloadDir).find(isFinished);
   if (!found) throw new Error("Failed to download YouTube video");
   return { filePath: path.join(downloadDir, found), fileId: `downloads/${found}` };
 }

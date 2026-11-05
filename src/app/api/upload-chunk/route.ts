@@ -127,6 +127,8 @@ export async function POST(req: NextRequest) {
       preferredModel: (body.preferredModel || "").trim?.() || undefined,
       broll: body.broll === true,
       musicBed: body.musicBed === true,
+      hookTitle: body.hookTitle !== false,
+      keywordHighlights: body.keywordHighlights !== false,
       pexelsKey: (body.pexelsKey || "").trim?.() || undefined,
       pixabayKey: (body.pixabayKey || "").trim?.() || undefined,
     };
