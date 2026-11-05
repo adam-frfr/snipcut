@@ -17,6 +17,11 @@ const tests = [
     args: ["tsx", path.join(__dirname, "test-clip-boundaries.ts")],
   },
   {
+    name: "Bring-Your-Own AI Keys: Fallback to the Base Key",
+    cmd: "npx",
+    args: ["tsx", path.join(__dirname, "test-byo-keys.ts")],
+  },
+  {
     name: "Adaptive Effects: Music, B-roll & Zooms Follow the Video",
     cmd: "npx",
     args: ["tsx", path.join(__dirname, "test-adaptive-fx.ts")],

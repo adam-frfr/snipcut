@@ -189,7 +189,7 @@ export async function produceClip(o: ProduceClipOptions): Promise<ProduceClipRes
               : "B-roll skipped: split-screen clip"
           );
         } else if (o.broll && !hasBrollSource(brollKeys)) {
-          notes.push("B-roll skipped: add an OpenAI key (AI-generated B-roll) in API Keys");
+          notes.push("B-roll skipped: add an OpenAI key (AI-made B-roll) or a Pexels / Pixabay key in API Keys");
         } else if (o.broll) {
           const sentences = buildSentences(pseudoSegments(keptWords), spanStart, spanEnd);
           if (sentences.length) {

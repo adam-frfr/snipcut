@@ -141,8 +141,16 @@ export async function computeFileSha256(filePath: string): Promise<string> {
 /**
  * Persist job state to data/jobs/<id>.json
  */
+const USER_KEY_FIELDS = ["groqKey", "openaiKey", "claudeKey", "pexelsKey", "pixabayKey"] as const;
+
 export function saveJobRecord(job: JobRecord): void {
   job.updatedAt = Date.now();
+  // Users' own API keys are needed only while their job runs: never leave
+  // them on the server's disk once it has finished or failed (a retry then
+  // runs on the built-in key).
+  if (job.status === "done" || job.status === "failed") {
+    for (const k of USER_KEY_FIELDS) delete job.options[k];
+  }
   const filePath = path.join(JOBS_DIR, `${job.id}.json`);
   fs.writeFileSync(filePath, JSON.stringify(job, null, 2), "utf-8");
 }
@@ -264,8 +272,7 @@ class JobQueueManager {
             releaseJobLock(job.id);
             job.status = "failed";
             job.error = "Server restarted during processing. Click retry to resume from the last completed stage.";
-            job.updatedAt = Date.now();
-            fs.writeFileSync(filePath, JSON.stringify(job, null, 2), "utf-8");
+            saveJobRecord(job);
             recoveredCount++;
           }
         } catch {}
