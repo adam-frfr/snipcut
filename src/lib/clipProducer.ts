@@ -9,10 +9,19 @@ import {
   captionCenterSpans,
   SplitScreenCustomOptions,
   TrackingResult,
+  probeVideoFormat,
 } from "./videoService";
 import type { CaptionStyleName } from "./videoService";
 import { buildSentences, planBroll, fetchBrollAssets, hasBrollSource } from "./brollService";
-import { normalizeClipStyle, styleNeedsFx, pickMood, ClipStyle } from "./clipStyle";
+import {
+  normalizeClipStyle,
+  styleNeedsFx,
+  pickMood,
+  ClipStyle,
+  translateLines,
+  generateVoiceover,
+  userMusicPath,
+} from "./clipStyle";
 import { measureBackgroundAudio, shotMap, coverage, inside, overlaps, Span } from "./adaptiveFx";
 import { computeKeepRanges, toOutputTime, wordsOnOutput, keptDuration, inSpokenOrder, Range, TimelineWord } from "./timeline";
 
@@ -64,6 +73,8 @@ export interface ProduceClipResult {
   tracking: TrackingResult | null;
   /** Final clip length (seconds). */
   duration: number;
+  /** Big moments found by the effects pass (final clip seconds). */
+  hypeMoments?: number[];
   /** Kept parts of the source (source seconds); one range = no cuts. */
   keepRanges: Range[];
   fillersRemoved: number;
@@ -152,6 +163,8 @@ export async function produceClip(o: ProduceClipOptions): Promise<ProduceClipRes
       keywords,
       hookTitle: hookText,
       captionFont: o.captionFont,
+      fitBackground: style.fitBackground,
+      brandHex: style.brand?.primary,
     });
 
   try {
@@ -257,7 +270,45 @@ export async function produceClip(o: ProduceClipOptions): Promise<ProduceClipRes
         }
         // A slow push-in suits a talking head, not a screen recording.
         const clipStyle = { ...style, pushIn: style.pushIn && talkingHead >= 0.4 };
-        await applyPostEffects({
+
+        // Speaker colours: the tracker follows whoever talks; left / right
+        // framing tells the two speakers apart.
+        let speakerSpans: { start: number; end: number; speaker: number }[] | undefined;
+        if (style.speakerColors && (base.tracking?.speakers || 0) >= 2 && Array.isArray(base.tracking?.shots)) {
+          speakerSpans = base.tracking!.shots!
+            .filter((sh) => sh.position === "left" || sh.position === "right")
+            .map((sh) => ({ start: mapRel(sh.start), end: mapRel(sh.end), speaker: sh.position === "right" ? 1 : 0 }))
+            .filter((sp) => sp.end - sp.start > 0.05);
+          if (speakerSpans.some((sp) => sp.speaker === 1)) notes.push("speaker colours");
+        }
+
+        // Second-language captions.
+        let translations: { start: number; end: number; text: string }[] | undefined;
+        if (style.bilingual !== "off" && outputWords.length) {
+          const lines = captionLines(outputWords);
+          const tr = await translateLines(lines, style.bilingual, { groqKey: o.keys?.groqKey, openaiKey: o.keys?.openaiKey });
+          if (tr) {
+            translations = tr;
+            notes.push(`${style.bilingual} captions`);
+          } else notes.push("bilingual captions skipped: needs a Groq or OpenAI key");
+        }
+
+        // AI voiceover reading the hook over a frozen first frame.
+        let voiceover: { path: string; duration: number } | null = null;
+        if (style.voiceoverIntro) {
+          const line = o.headline || hookText || "";
+          voiceover = line ? await generateVoiceover(line, o.keys?.openaiKey) : null;
+          if (!voiceover) notes.push("voiceover skipped: needs an OpenAI key and a headline");
+        }
+        let sourceAspect =
+          base.tracking?.video_w && base.tracking?.video_h ? base.tracking.video_w / base.tracking.video_h : undefined;
+        if (!sourceAspect && style.faceBubble !== "off") {
+          const info = await probeVideoFormat(o.inputPath).catch(() => null);
+          if (info?.width && info?.height) sourceAspect = info.width / info.height;
+        }
+        const musicPath = style.customMusic ? userMusicPath(style.customMusic) : null;
+        if (style.customMusic && !musicPath) notes.push("your music track was not found; used mood music");
+        const res = await applyPostEffects({
           basePath,
           outputPath: o.outputPath,
           duration: finalDur,
@@ -271,17 +322,30 @@ export async function produceClip(o: ProduceClipOptions): Promise<ProduceClipRes
           style: clipStyle,
           transitionTimes: joins,
           captionPositionY: o.captionPositionY,
-          captionOptions: { keywords, centerSpans, hook: hookText ? { text: hookText } : undefined, font: o.captionFont },
+          captionOptions: {
+            keywords,
+            centerSpans,
+            hook: hookText ? { text: hookText } : undefined,
+            font: o.captionFont,
+            speakerSpans,
+            translations,
+          },
+          voiceover,
+          musicPath,
+          fitSpans: shots.fit,
+          sourceAspect,
         });
-        if (music) notes.push(`${mood} music`);
+        notes.push(...res.notes);
+        if (music) notes.push(musicPath ? "your music" : `${mood} music`);
         if (style.grade !== "none") notes.push(`${style.grade} grade`);
         return {
           tracking: base.tracking,
-          duration: Number(finalDur.toFixed(2)),
+          duration: Number(res.duration.toFixed(2)),
           keepRanges: ranges,
           fillersRemoved,
           deletedRemoved,
-          outputWords,
+          outputWords: outputWords.map((w) => ({ ...w, start: res.mapTime(w.start), end: res.mapTime(w.end) })),
+          hypeMoments: res.hype,
           fxSummary:
             `🎬 ${cues.length} B-roll cutaway${cues.length === 1 ? "" : "s"}, ${punches.length} punch zoom${punches.length === 1 ? "" : "s"}${music ? ", music bed" : ""}` +
             (notes.length ? ` (${notes.join("; ")})` : ""),
@@ -333,4 +397,23 @@ function pseudoSegments(words: { start: number; end: number; text: string }[]) {
   }
   flush();
   return segs;
+}
+
+/** Caption-sized lines (pauses / punctuation / ~6 words) for translation. */
+function captionLines(words: { start: number; end: number; text: string }[]) {
+  const out: { start: number; end: number; text: string }[] = [];
+  let cur: typeof words = [];
+  const flush = () => {
+    if (cur.length) {
+      out.push({ start: cur[0].start, end: cur[cur.length - 1].end, text: cur.map((w) => w.text).join(" ") });
+      cur = [];
+    }
+  };
+  for (const w of words) {
+    if (cur.length && (cur.length >= 6 || w.start - cur[cur.length - 1].end > 0.5)) flush();
+    cur.push(w);
+    if (/[.!?]$/.test(w.text)) flush();
+  }
+  flush();
+  return out.slice(0, 80);
 }

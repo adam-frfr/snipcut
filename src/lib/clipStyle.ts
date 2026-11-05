@@ -16,7 +16,7 @@ const execFileP = util.promisify(execFile);
 const ffmpegBin = () => getFfmpegBinary();
 
 export * from "./clipStyleOptions";
-import { ClipStyle, MusicMood, ColorGrade, CutTransition } from "./clipStyleOptions";
+import { ClipStyle, MusicMood, ColorGrade, CutTransition, FilmLook, FitBackground } from "./clipStyleOptions";
 
 // ---- mood picking ----------------------------------------------------------
 
@@ -168,11 +168,15 @@ export async function ensureMoodTrack(mood: Exclude<MusicMood, "auto">): Promise
 
 // ---- generated sound effects ---------------------------------------------
 
-export type SfxKind = "whoosh" | "pop" | "ding" | "riser";
+export type SfxKind = "whoosh" | "pop" | "ding" | "riser" | "scratch" | "boom" | "beep" | "rewind";
 const SFX_SPECS: Record<SfxKind, { expr: string; d: number; af: string }> = {
   whoosh: { expr: "(random(0)*2-1)*pow(sin(PI*t/0.5)\\,2)*0.9", d: 0.5, af: "highpass=f=500,lowpass=f=4500" },
   pop: { expr: "sin(2*PI*(420*t+110*(1-exp(-35*t))))*exp(-28*t)*0.9", d: 0.14, af: "highpass=f=150" },
   ding: { expr: "(0.6*sin(2*PI*1318.5*t)*exp(-5*t)+0.25*sin(2*PI*2637*t)*exp(-8*t))", d: 0.9, af: "highpass=f=300" },
+  scratch: { expr: "(random(0)*2-1)*sin(PI*t/0.55)*(0.55+0.45*sin(2*PI*16*t))*0.9", d: 0.55, af: "bandpass=f=1900:width_type=h:w=1700,volume=2" },
+  boom: { expr: "sin(2*PI*(48*t+60*(1-exp(-14*t))/14))*exp(-3.2*t)*0.95", d: 1.3, af: "lowpass=f=420" },
+  beep: { expr: "0.6*sin(2*PI*1000*t)", d: 2.5, af: "anull" },
+  rewind: { expr: "((random(0)*2-1)*0.3+0.5*sin(2*PI*(1400*t-500*t*t)))*sin(PI*t/0.7)", d: 0.7, af: "highpass=f=300,lowpass=f=5000" },
   riser: { expr: "((random(0)*2-1)*0.35+0.45*sin(2*PI*(220*t+260*t*t)))*pow(t/1.4\\,2)", d: 1.4, af: "highpass=f=250,lowpass=f=6000" },
 };
 
@@ -299,3 +303,242 @@ export function transitionFilter(kind: CutTransition, at: number[]): string {
 
 export const STUDIO_VOICE_CHAIN = "highpass=f=75,afftdn=nf=-25,acompressor=threshold=0.125:ratio=3:attack=12:release=250:makeup=1.6";
 export const LOUDNESS_CHAIN = "loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000";
+
+// ---- film looks / fit backgrounds -----------------------------------------
+
+/** ffmpeg chain for a film look ("" for none). */
+export function filmLookFilter(look: FilmLook): string {
+  switch (look) {
+    case "grain":
+      return "noise=alls=13:allf=t+u";
+    case "vignette":
+      return "vignette=PI/4.6";
+    case "letterbox":
+      return "drawbox=x=0:y=0:w=iw:h=ih*0.085:color=black:t=fill,drawbox=x=0:y=ih-ih*0.085:w=iw:h=ih*0.085:color=black:t=fill";
+    case "vhs":
+      return "rgbashift=rh=5:bh=-5,eq=saturation=1.35:contrast=1.06,noise=alls=11:allf=t,gblur=sigma=0.7,vignette=PI/5";
+    case "silent":
+      return "hue=s=0,eq=contrast=1.25:brightness='0.03*sin(t*37)':eval=frame,noise=alls=24:allf=t,vignette=PI/4";
+    default:
+      return "";
+  }
+}
+
+/** Background chain for fitted (screen / wide) shots, applied to a full-frame scaled copy. */
+export function fitBackgroundChain(kind: FitBackground | undefined, brandHex?: string): string {
+  if (kind === "dark") return "gblur=sigma=30,eq=brightness=-0.2:saturation=0.6";
+  if (kind === "brand") {
+    const c = /^#[0-9a-fA-F]{6}$/.test(brandHex || "") ? `0x${brandHex!.slice(1)}` : "0xFACC15";
+    return `gblur=sigma=34,eq=brightness=-0.12,drawbox=x=0:y=0:w=iw:h=ih:color=${c}@0.55:t=fill`;
+  }
+  return "gblur=sigma=24";
+}
+
+/** #RRGGBB -> ASS &H00BBGGRR. */
+export function hexToAss(hex: string): string {
+  const h = hex.replace("#", "");
+  return `&H00${h.slice(4, 6)}${h.slice(2, 4)}${h.slice(0, 2)}`.toUpperCase();
+}
+
+// ---- profanity bleep ---------------------------------------------------------
+
+const PROFANITY = /^(fuck\w*|motherfuck\w*|shit\w*|bullshit|bitch\w*|asshole\w*|bastard\w*|dick|dickhead|pussy|cunt\w*|damn|goddamn|crap|piss\w*|whore\w*|slut\w*|fag\w*|nigg\w*|retard\w*)$/i;
+
+export function isProfane(word: string): boolean {
+  return PROFANITY.test(word.replace(/[^A-Za-z]/g, ""));
+}
+
+/** "fucking" -> "f******"-style mask that keeps punctuation. */
+export function maskProfanity(word: string): string {
+  return word.replace(/[A-Za-z]+/, (m) => (m.length <= 2 ? "*".repeat(m.length) : m[0] + "*".repeat(m.length - 1)));
+}
+
+// ---- number counters -----------------------------------------------------
+
+/** "$599", "50%", "10,000", "3x", "2.5k" -> parts for a count-up, or null. */
+export function parseCounter(word: string): { prefix: string; value: number; decimals: number; suffix: string } | null {
+  const w = word.trim().replace(/^["“(]+/, "").replace(/[.,!?;:"”)]+$/, "");
+  const m = /^([$€£]?)(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)(%|x|k|m|b|K|M|B)?$/.exec(w);
+  if (!m) return null;
+  const value = Number(m[2].replace(/,/g, ""));
+  if (!Number.isFinite(value) || value < 3) return null;
+  if (!m[1] && !m[3] && value >= 1900 && value <= 2100 && !m[2].includes(".")) return null; // a year
+  const decimals = m[2].includes(".") ? m[2].split(".")[1].length : 0;
+  return { prefix: m[1], value, decimals, suffix: m[3] || "" };
+}
+
+export function formatCounter(c: { prefix: string; decimals: number; suffix: string }, v: number): string {
+  const n = c.decimals ? v.toFixed(c.decimals) : Math.round(v).toLocaleString("en-US");
+  return `${c.prefix}${n}${c.suffix}`;
+}
+
+// ---- hype moments ----------------------------------------------------------
+
+/**
+ * The clip's most energetic moments: momentary loudness (EBU R128, 400ms)
+ * peaks well above the clip's typical level, away from the opening hook
+ * and the very end. Returns clip-relative times, strongest first.
+ */
+export async function detectHypeMoments(file: string, duration: number, max = 2): Promise<number[]> {
+  try {
+    const res: any = await execFileP(
+      ffmpegBin(),
+      ["-hide_banner", "-nostats", "-i", file, "-vn", "-af", "ebur128=framelog=info", "-f", "null", "-"],
+      { maxBuffer: 64 * 1024 * 1024, timeout: 120000 }
+    );
+    const pts: { t: number; m: number }[] = [];
+    const re = /t:\s*([\d.]+)\s+TARGET:[^M]*M:\s*(-?[\d.]+|-inf)/g;
+    let mm: RegExpExecArray | null;
+    const log = String(res.stderr || "");
+    while ((mm = re.exec(log))) {
+      const m = mm[2] === "-inf" ? -70 : Number(mm[2]);
+      pts.push({ t: Number(mm[1]), m: Math.max(-70, m) });
+    }
+    if (pts.length < 10) return [];
+    // 1s moving average (frames are 0.1s) so a single loud syllable doesn't win.
+    const smooth = pts.map((p, i) => {
+      const win = pts.slice(Math.max(0, i - 5), i + 5);
+      return { t: p.t, m: win.reduce((s, x) => s + x.m, 0) / win.length };
+    });
+    const voiced = smooth.filter((p) => p.m > -45).map((p) => p.m).sort((a, b) => a - b);
+    if (!voiced.length) return [];
+    const median = voiced[Math.floor(voiced.length / 2)];
+    const cand = smooth
+      .filter((p) => p.t > 3.4 && p.t < duration - 2.5 && p.m > median + 2)
+      .sort((a, b) => b.m - a.m);
+    const out: number[] = [];
+    for (const c of cand) {
+      if (out.every((t) => Math.abs(t - c.t) > 5)) out.push(Number(Math.max(0, c.t - 0.3).toFixed(2)));
+      if (out.length >= max) break;
+    }
+    return out;
+  } catch (e) {
+    console.warn("[ClipStyle] Hype detection failed:", e);
+    return [];
+  }
+}
+
+// ---- LLM helper (translation) ------------------------------------------------
+
+async function chatText(prompt: string, keys: { groqKey?: string; openaiKey?: string }): Promise<string | null> {
+  const openai = (keys.openaiKey || process.env.OPENAI_API_KEY || "").trim();
+  if (openai) {
+    try {
+      const res = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${openai}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ model: process.env.OPENAI_TRANSLATE_MODEL || "gpt-4.1-mini", messages: [{ role: "user", content: prompt }] }),
+        signal: AbortSignal.timeout(45000),
+      });
+      if (res.ok) {
+        const data: any = await res.json();
+        const text = data.choices?.[0]?.message?.content;
+        if (text) return text;
+      }
+    } catch {}
+  }
+  const groq = (keys.groqKey || process.env.GROQ_API_KEY || "").trim();
+  if (groq) {
+    for (const model of ["openai/gpt-oss-120b", "openai/gpt-oss-20b"]) {
+      try {
+        const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${groq}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ model, messages: [{ role: "user", content: prompt }], temperature: 0.2 }),
+          signal: AbortSignal.timeout(45000),
+        });
+        if (res.ok) {
+          const data: any = await res.json();
+          const text = data.choices?.[0]?.message?.content;
+          if (text) return text;
+        }
+      } catch {}
+    }
+  }
+  return null;
+}
+
+const LANG_NAMES: Record<string, string> = {
+  es: "Spanish", fr: "French", de: "German", pt: "Portuguese", it: "Italian", hi: "Hindi", ar: "Arabic",
+  tr: "Turkish", ru: "Russian", ja: "Japanese", ko: "Korean", zh: "Simplified Chinese", id: "Indonesian",
+};
+
+/** Caption lines (same timing) translated into `lang`; null without an AI key or on failure. */
+export async function translateLines(
+  lines: { start: number; end: number; text: string }[],
+  lang: string,
+  keys: { groqKey?: string; openaiKey?: string }
+): Promise<{ start: number; end: number; text: string }[] | null> {
+  const name = LANG_NAMES[lang];
+  if (!name || !lines.length) return null;
+  const prompt =
+    `Translate each caption line into natural, short spoken ${name}. Keep the meaning, no explanations.\n` +
+    `Return ONLY a JSON array of strings, the same length and order as the input.\n\n` +
+    JSON.stringify(lines.map((l) => l.text));
+  const text = await chatText(prompt, keys);
+  if (!text) return null;
+  try {
+    const m = /\[[\s\S]*\]/.exec(text);
+    const arr = m ? JSON.parse(m[0]) : null;
+    if (!Array.isArray(arr) || arr.length !== lines.length) return null;
+    return lines.map((l, i) => ({ ...l, text: String(arr[i] || "").replace(/[{}\\\r\n]/g, " ").trim().slice(0, 120) }));
+  } catch {
+    return null;
+  }
+}
+
+// ---- AI voiceover ------------------------------------------------------------
+
+/** Narrator reading `text` (OpenAI text-to-speech). Returns {path, duration} or null. */
+export async function generateVoiceover(text: string, openaiKey?: string): Promise<{ path: string; duration: number } | null> {
+  const key = (openaiKey || process.env.OPENAI_API_KEY || "").trim();
+  const line = text.replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, "").trim().slice(0, 200);
+  if (!key || !line) return null;
+  const dir = path.join(DATA(), "voiceover");
+  fs.mkdirSync(dir, { recursive: true });
+  const out = path.join(dir, `vo-${Date.now()}-${Math.floor(Math.random() * 1e4)}.mp3`);
+  for (const model of ["gpt-4o-mini-tts", "tts-1"]) {
+    try {
+      const res = await fetch("https://api.openai.com/v1/audio/speech", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model,
+          voice: "onyx",
+          input: line,
+          ...(model === "gpt-4o-mini-tts" ? { instructions: "Energetic, punchy social-media narrator. Fast but clear." } : {}),
+        }),
+        signal: AbortSignal.timeout(45000),
+      });
+      if (!res.ok) continue;
+      fs.writeFileSync(out, Buffer.from(await res.arrayBuffer()));
+      const dur = await probeDuration(out);
+      if (dur > 0.3) return { path: out, duration: Math.min(dur, 8) };
+    } catch {}
+  }
+  return null;
+}
+
+export async function probeDuration(file: string): Promise<number> {
+  const res: any = await execFileP(ffmpegBin(), ["-hide_banner", "-i", file], { timeout: 30000 }).catch((e: any) => e);
+  const m = /Duration:\s*(\d+):(\d+):([\d.]+)/.exec(String(res?.stderr || ""));
+  return m ? Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]) : 0;
+}
+
+// ---- uploaded music ----------------------------------------------------------
+
+export const USER_MUSIC_DIR = () => path.join(DATA(), "music", "user");
+
+export function userMusicPath(id: string): string | null {
+  if (!/^[a-z0-9-]{1,60}\.(mp3|wav|m4a|aac|ogg)$/.test(id)) return null;
+  const p = path.join(USER_MUSIC_DIR(), id);
+  return fs.existsSync(p) ? p : null;
+}
+
+// ---- emoji images ------------------------------------------------------------
+
+export function emojiImage(code: string): string | null {
+  if (!/^[0-9a-f]{4,6}$/.test(code)) return null;
+  const p = path.join(process.cwd(), "assets", "emoji", `${code}.png`);
+  return fs.existsSync(p) ? p : null;
+}

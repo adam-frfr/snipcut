@@ -25,21 +25,8 @@ import {
 } from "lucide-react";
 import confetti from "canvas-confetti";
 import type { CaptionStyleName } from "@/lib/videoService";
-import {
-  ClipStyle,
-  MusicMood,
-  ColorGrade,
-  CutTransition,
-  DEFAULT_CLIP_STYLE,
-  normalizeClipStyle,
-  MUSIC_MOODS,
-  COLOR_GRADES,
-  TRANSITIONS,
-  MOOD_LABELS,
-  GRADE_LABELS,
-  TRANSITION_LABELS,
-  CAPTION_FONT_OPTIONS,
-} from "@/lib/clipStyleOptions";
+import { ClipStyle, DEFAULT_CLIP_STYLE, normalizeClipStyle, Drawing } from "@/lib/clipStyleOptions";
+import StyleControls from "@/components/StyleControls";
 import { computeKeepRanges, keptDuration, toOutputTime, toSourceTime, Range } from "@/lib/timeline";
 
 /**
@@ -410,6 +397,22 @@ function EditorContent() {
   const [historyTick, setHistoryTick] = useState(0);
   void historyTick;
   /** Record the current state before an edit (call at the start of each edit). */
+  const updateStyle = (patch: Partial<ClipStyle>) => {
+    snapshot();
+    setFx((x) => ({ ...x, clipStyle: { ...(x.clipStyle || DEFAULT_CLIP_STYLE), ...patch } }));
+    setDirty(true);
+  };
+  const [drawMode, setDrawMode] = useState<null | "circle" | "arrow">(null);
+  const drawings: Drawing[] = (fx.clipStyle || DEFAULT_CLIP_STYLE).drawings || [];
+  const addDrawing = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!drawMode) return;
+    const r = e.currentTarget.getBoundingClientRect();
+    const x = Math.round(((e.clientX - r.left) / r.width) * 1000) / 10;
+    const y = Math.round(((e.clientY - r.top) / r.height) * 1000) / 10;
+    updateStyle({ drawings: [...drawings, { t: Number(currentTime.toFixed(2)), x, y, kind: drawMode }].slice(-30) });
+    setDrawMode(null);
+  };
+
   const snapshot = () => {
     const top = pastRef.current[pastRef.current.length - 1];
     if (top && top.words === words && top.trimStart === trimStart && top.trimEnd === trimEnd) return;
@@ -868,7 +871,66 @@ function EditorContent() {
               onPause={() => setIsPlaying(false)}
               onEnded={() => setIsPlaying(false)}
             />
+            {/* Telestrator marks (preview) + click-to-place layer */}
+            {!previewIsSource &&
+              drawings
+                .filter((d) => currentTime >= d.t && currentTime < d.t + 1.8)
+                .map((d, i) =>
+                  d.kind === "circle" ? (
+                    <div
+                      key={i}
+                      className="absolute pointer-events-none rounded-full border-4"
+                      style={{ left: `${d.x}%`, top: `${d.y}%`, width: "17%", aspectRatio: "1", transform: "translate(-50%,-50%)", borderColor: "#FFC700" }}
+                    />
+                  ) : (
+                    <div
+                      key={i}
+                      className="absolute pointer-events-none text-[#FFC700] font-black text-3xl leading-none"
+                      style={{ left: `${d.x}%`, top: `${d.y}%`, transform: "translate(-50%,-100%)", textShadow: "0 0 3px #000" }}
+                    >
+                      ↓
+                    </div>
+                  )
+                )}
+            {drawMode && (
+              <div
+                onClick={addDrawing}
+                className="absolute inset-0 cursor-crosshair bg-[#FFC700]/10 border-4 border-dashed border-[#FFC700] flex items-start justify-center"
+              >
+                <span className="mt-2 px-2 py-1 bg-black text-white text-[10px] font-black uppercase">
+                  Click where the {drawMode} goes
+                </span>
+              </div>
+            )}
           </div>
+
+          {!previewIsSource && (
+            <div className="mt-3 flex items-center gap-1.5 flex-wrap">
+              <span className="text-[10px] font-black uppercase mr-1">Draw at {fmt(currentTime)}:</span>
+              {(["circle", "arrow"] as const).map((k) => (
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() => setDrawMode(drawMode === k ? null : k)}
+                  className={`px-2.5 py-1 border-2 border-black text-[10px] font-black uppercase cursor-pointer ${
+                    drawMode === k ? "bg-black text-white" : "bg-white hover:bg-[#FFC700]"
+                  }`}
+                >
+                  {k === "circle" ? "○ Circle" : "↓ Arrow"}
+                </button>
+              ))}
+              {drawings.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => updateStyle({ drawings: [] })}
+                  className="px-2.5 py-1 border-2 border-black text-[10px] font-black uppercase cursor-pointer bg-white hover:bg-[#FFE5E5]"
+                >
+                  Clear {drawings.length}
+                </button>
+              )}
+              <span className="text-[10px] font-medium text-neutral-500">Pause on a moment, pick a mark, click the video. Re-render to burn it in.</span>
+            </div>
+          )}
 
           {previewIsSource && (
             <div className="mt-3 p-2.5 bg-[#FFF3C4] border-2 border-black text-[11px] font-bold text-black">
@@ -1157,59 +1219,22 @@ function EditorContent() {
           </div>
 
           <label className="block text-[10px] font-black uppercase mb-1.5">Look &amp; sound</label>
-          <div className="grid grid-cols-2 gap-1.5 mb-2">
-            {(
-              [
-                { label: "Font", value: fx.captionFont || "default", patch: (v: string) => ({ captionFont: v }), options: CAPTION_FONT_OPTIONS.map((o) => [o.id, o.label]) },
-                { label: "Music mood", value: (fx.clipStyle || DEFAULT_CLIP_STYLE).musicMood, patch: (v: string) => ({ clipStyle: { ...(fx.clipStyle || DEFAULT_CLIP_STYLE), musicMood: v as MusicMood } }), options: MUSIC_MOODS.map((m) => [m, MOOD_LABELS[m]]) },
-                { label: "Colour grade", value: (fx.clipStyle || DEFAULT_CLIP_STYLE).grade, patch: (v: string) => ({ clipStyle: { ...(fx.clipStyle || DEFAULT_CLIP_STYLE), grade: v as ColorGrade } }), options: COLOR_GRADES.map((g) => [g, GRADE_LABELS[g]]) },
-                { label: "Transition", value: (fx.clipStyle || DEFAULT_CLIP_STYLE).transition, patch: (v: string) => ({ clipStyle: { ...(fx.clipStyle || DEFAULT_CLIP_STYLE), transition: v as CutTransition } }), options: TRANSITIONS.map((t) => [t, TRANSITION_LABELS[t]]) },
-              ] as { label: string; value: string; patch: (v: string) => Partial<ClipFx>; options: string[][] }[]
-            ).map((f) => (
-              <label key={f.label} className="flex flex-col gap-0.5">
-                <span className="text-[9px] font-black uppercase text-neutral-500">{f.label}</span>
-                <select
-                  value={f.value}
-                  onChange={(e) => {
-                    snapshot();
-                    const p = f.patch(e.target.value);
-                    setFx((x) => ({ ...x, ...p }));
-                    setDirty(true);
-                  }}
-                  className="bg-[#F8F7F4] text-[11px] font-bold px-1.5 py-1 border-2 border-black cursor-pointer focus:outline-none"
-                >
-                  {f.options.map(([id, label]) => (
-                    <option key={id} value={id}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ))}
-          </div>
-          <div className="flex flex-col gap-1.5 mb-5">
-            {(
-              [
-                { key: "sfx", label: "Sound effects" },
-                { key: "voiceEnhance", label: "Studio voice" },
-                { key: "pushIn", label: "Slow push-in" },
-              ] as { key: "sfx" | "voiceEnhance" | "pushIn"; label: string }[]
-            ).map((o) => (
-              <label key={o.key} className="flex items-center gap-2 text-[11px] font-black uppercase cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={(fx.clipStyle || DEFAULT_CLIP_STYLE)[o.key]}
-                  onChange={(e) => {
-                    snapshot();
-                    const v = e.target.checked;
-                    setFx((x) => ({ ...x, clipStyle: { ...(x.clipStyle || DEFAULT_CLIP_STYLE), [o.key]: v } }));
-                    setDirty(true);
-                  }}
-                  className="w-4 h-4 accent-black cursor-pointer"
-                />
-                {o.label}
-              </label>
-            ))}
+          <div className="mb-5">
+            <StyleControls
+              dense
+              style={fx.clipStyle || DEFAULT_CLIP_STYLE}
+              onChange={updateStyle}
+              font={fx.captionFont || "default"}
+              onFont={(f) => {
+                snapshot();
+                setFx((x) => ({ ...x, captionFont: f }));
+                setDirty(true);
+              }}
+              onCaptionStyle={(st) => {
+                setCaptionStyle(st as CaptionStyle);
+                setDirty(true);
+              }}
+            />
           </div>
 
           {renderError && (
