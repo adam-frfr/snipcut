@@ -19,6 +19,9 @@ import {
   Scissors as TrimIcon,
   Pencil,
   RotateCcw,
+  Undo2,
+  Redo2,
+  Copy,
 } from "lucide-react";
 import confetti from "canvas-confetti";
 import { computeKeepRanges, keptDuration, toOutputTime, toSourceTime, Range } from "@/lib/timeline";
@@ -115,6 +118,8 @@ function EditorContent() {
   const [selB, setSelB] = useState<number | null>(null);
   const [editText, setEditText] = useState("");
   const [dirty, setDirty] = useState(false);
+  // null = not saved to a server project (yet); true/false = last save result.
+  const [projectSaved, setProjectSaved] = useState<boolean | null>(null);
 
   // Render settings
   const [layoutMode, setLayoutMode] = useState<LayoutMode>("auto-tracker");
@@ -124,6 +129,9 @@ function EditorContent() {
   const [botCropX, setBotCropX] = useState(75);
   const [captionStyle, setCaptionStyle] = useState<CaptionStyle>("hormozi");
   const [headline, setHeadline] = useState("");
+  // Ready-to-post caption (+ hashtags) for this clip; editable, copyable.
+  const [postCaption, setPostCaption] = useState("");
+  const [captionCopied, setCaptionCopied] = useState(false);
   // null = the style's own default height (same as the generated clip).
   const [captionPosY, setCaptionPosY] = useState<number | null>(null);
   const [fx, setFx] = useState<ClipFx>({
@@ -224,6 +232,8 @@ function EditorContent() {
     setTrimStart(s0);
     setTrimEnd(Number(c.endTime) || s0 + (Number(c.duration) || 0));
     setHeadline(c.hookHeadline || c.title || "");
+    setPostCaption(String(c.description || ""));
+    setCaptionCopied(false);
     if (c.captionStyle) setCaptionStyle(c.captionStyle);
     if (c.aspectRatio) setAspectRatio(c.aspectRatio);
     setFx({
@@ -238,6 +248,9 @@ function EditorContent() {
     setSelB(null);
     setEditText("");
     setDirty(false);
+    setProjectSaved(null);
+    pastRef.current = [];
+    futureRef.current = [];
     setRenderError("");
     setRenderNote("");
     // Unsaved edits from an earlier visit (refresh, closed tab) come back.
@@ -370,9 +383,68 @@ function EditorContent() {
     if (w && inRendered(w.start)) seekTo(outOf(w.start) + 0.01);
   };
 
+  // ---- Undo / redo of word fixes, deletions and trims -------------------
+  type Snap = { words: EditorWord[]; trimStart: number; trimEnd: number };
+  const pastRef = useRef<Snap[]>([]);
+  const futureRef = useRef<Snap[]>([]);
+  const [historyTick, setHistoryTick] = useState(0);
+  void historyTick;
+  /** Record the current state before an edit (call at the start of each edit). */
+  const snapshot = () => {
+    const top = pastRef.current[pastRef.current.length - 1];
+    if (top && top.words === words && top.trimStart === trimStart && top.trimEnd === trimEnd) return;
+    pastRef.current = [...pastRef.current.slice(-99), { words, trimStart, trimEnd }];
+    futureRef.current = [];
+    setHistoryTick((n) => n + 1);
+  };
+  const restoreSnap = (sn: Snap) => {
+    setWords(sn.words);
+    setTrimStart(sn.trimStart);
+    setTrimEnd(sn.trimEnd);
+    setDirty(true);
+  };
+  const undo = () => {
+    const prev = pastRef.current[pastRef.current.length - 1];
+    if (!prev) return;
+    pastRef.current = pastRef.current.slice(0, -1);
+    futureRef.current = [...futureRef.current, { words, trimStart, trimEnd }];
+    restoreSnap(prev);
+    setHistoryTick((n) => n + 1);
+  };
+  const redo = () => {
+    const next = futureRef.current[futureRef.current.length - 1];
+    if (!next) return;
+    futureRef.current = futureRef.current.slice(0, -1);
+    pastRef.current = [...pastRef.current, { words, trimStart, trimEnd }];
+    restoreSnap(next);
+    setHistoryTick((n) => n + 1);
+  };
+  const canUndo = pastRef.current.length > 0;
+  const canRedo = futureRef.current.length > 0;
+  // Ctrl/Cmd+Z undo, Ctrl/Cmd+Shift+Z or Ctrl+Y redo — except while typing
+  // in a text box, where the browser's own text undo applies.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el && (el.tagName === "INPUT" && (el as HTMLInputElement).type === "text" || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const k = e.key.toLowerCase();
+      if (k === "z" && !e.shiftKey) {
+        e.preventDefault();
+        undo();
+      } else if ((k === "z" && e.shiftKey) || k === "y") {
+        e.preventDefault();
+        redo();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
   const setTrimStartAtWord = (idx: number) => {
     const w = words[idx];
     if (!w) return;
+    snapshot();
     setTrimStart(Number(Math.max(winStart, Math.min(w.start, trimEnd - 0.5)).toFixed(2)));
     setDirty(true);
   };
@@ -380,6 +452,7 @@ function EditorContent() {
   const setTrimEndAtWord = (idx: number) => {
     const w = words[idx];
     if (!w) return;
+    snapshot();
     setTrimEnd(Number(Math.min(winEnd, Math.max(w.end, trimStart + 0.5)).toFixed(2)));
     setDirty(true);
   };
@@ -387,6 +460,7 @@ function EditorContent() {
   const toggleDeleteSelection = () => {
     if (selLo === null || selHi === null) return;
     const restore = selectionAllDeleted;
+    snapshot();
     setWords((ws) => ws.map((w, i) => (i >= selLo && i <= selHi ? { ...w, deleted: !restore } : w)));
     setDirty(true);
   };
@@ -395,8 +469,33 @@ function EditorContent() {
     if (selLo === null || selLo !== selHi) return;
     const t = editText.trim();
     if (!t) return;
+    snapshot();
     setWords((ws) => ws.map((w, i) => (i === selLo ? { ...w, text: t } : w)));
     setDirty(true);
+  };
+
+  /** Keep an edited post caption: in this browser and in the server project (no re-render needed). */
+  const savePostCaption = () => {
+    if (!clip || postCaption === String(clip.description || "")) return;
+    const updated = { ...clip, description: postCaption };
+    setClip(updated);
+    try {
+      const saved = localStorage.getItem("snipcut_user_clips");
+      const arr = saved ? JSON.parse(saved) : [];
+      if (Array.isArray(arr)) {
+        const next = arr.map((c: any) => (c.id === clip.id ? { ...c, description: postCaption } : c));
+        localStorage.setItem("snipcut_user_clips", JSON.stringify(next));
+        setAllClips(next);
+      }
+    } catch {}
+    const m = /^(job_[A-Za-z0-9-]+)_c(\d+)$/.exec(String(clip.id));
+    if (m && clip.renderedVideoUrl) {
+      fetch(`/api/jobs/${m[1]}/edit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ index: Number(m[2]), clip: updated }),
+      }).catch(() => {});
+    }
   };
 
   const handleRender = async () => {
@@ -467,6 +566,7 @@ function EditorContent() {
         fileSize: data.fileSize,
         previewFileSize: data.previewFileSize,
         hookHeadline: headline.trim() || clip.hookHeadline,
+        description: postCaption,
         // The dashboard keeps edited clips when a job is still rendering.
         editedAt: Date.now(),
         captionStyle,
@@ -498,6 +598,18 @@ function EditorContent() {
 
       try { localStorage.removeItem(draftKey(clip.id)); } catch {}
       applyClip(updated);
+      // Save the edit into the project on the server too, so reopening the
+      // project (any device) shows this version. Never blocks the editor.
+      const m = /^(job_[A-Za-z0-9-]+)_c(\d+)$/.exec(String(clip.id));
+      if (m) {
+        fetch(`/api/jobs/${m[1]}/edit`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+          body: JSON.stringify({ index: Number(m[2]), clip: updated }),
+        })
+          .then((r) => (r.ok ? setProjectSaved(true) : setProjectSaved(false)))
+          .catch(() => setProjectSaved(false));
+      }
       setPreviewUrl(data.previewDownloadUrl || data.downloadUrl);
       setMasterUrl(data.downloadUrl);
       const cuts = [
@@ -634,6 +746,26 @@ function EditorContent() {
               {selectionAllDeleted
                 ? `Restore${selection.length > 1 ? ` ${selection.length} words` : ""}`
                 : `Delete${selection.length > 1 ? ` ${selection.length} words` : ""}`}
+            </button>
+            <button
+              type="button"
+              disabled={!canUndo}
+              onClick={undo}
+              title="Undo (Ctrl+Z)"
+              aria-label="Undo"
+              className="px-2.5 py-1.5 text-[10px] font-black uppercase border-2 border-black bg-white disabled:opacity-40 shadow-[2px_2px_0px_#000000] flex items-center gap-1"
+            >
+              <Undo2 className="w-3.5 h-3.5" /> Undo
+            </button>
+            <button
+              type="button"
+              disabled={!canRedo}
+              onClick={redo}
+              title="Redo (Ctrl+Shift+Z)"
+              aria-label="Redo"
+              className="px-2.5 py-1.5 text-[10px] font-black uppercase border-2 border-black bg-white disabled:opacity-40 shadow-[2px_2px_0px_#000000] flex items-center gap-1"
+            >
+              <Redo2 className="w-3.5 h-3.5" /> Redo
             </button>
           </div>
           {selLo !== null && selLo === selHi && (
@@ -788,6 +920,8 @@ function EditorContent() {
                     max={Math.max(winStart + 0.1, winEnd)}
                     step={0.1}
                     value={trimStart}
+                    onPointerDown={snapshot}
+                    onKeyDown={snapshot}
                     onChange={(e) => {
                       setTrimStart(Math.min(Number(e.target.value), trimEnd - 0.5));
                       setDirty(true);
@@ -803,6 +937,8 @@ function EditorContent() {
                     max={Math.max(winStart + 0.1, winEnd)}
                     step={0.1}
                     value={trimEnd}
+                    onPointerDown={snapshot}
+                    onKeyDown={snapshot}
                     onChange={(e) => {
                       setTrimEnd(Math.max(Number(e.target.value), trimStart + 0.5));
                       setDirty(true);
@@ -815,6 +951,7 @@ function EditorContent() {
                 <button
                   type="button"
                   onClick={() => {
+                    snapshot();
                     setTrimStart(clipStart);
                     setTrimEnd(clipEnd);
                   }}
@@ -822,7 +959,9 @@ function EditorContent() {
                 >
                   Reset trim
                 </button>
-                {(trimStart < renderedFrom - 0.05 || trimEnd > renderedTo + 0.05) && (
+                {/* Compare with the clip's own edges: silence removal trims the
+                    kept video slightly inside them, which isn't "extended". */}
+                {!previewIsSource && (trimStart < clipStart - 0.05 || trimEnd > clipEnd + 0.05) && (
                   <span className="text-[10px] font-bold text-neutral-500">Extended parts appear after you re-render</span>
                 )}
               </div>
@@ -912,6 +1051,33 @@ function EditorContent() {
             ))}
           </div>
 
+          <label className="text-[10px] font-black uppercase mb-1.5 flex items-center justify-between">
+            <span>Post caption</span>
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(postCaption);
+                  setCaptionCopied(true);
+                  setTimeout(() => setCaptionCopied(false), 1800);
+                } catch {}
+              }}
+              disabled={!postCaption.trim()}
+              className="px-2 py-0.5 border-2 border-black bg-white hover:bg-[#FFC700] text-[10px] font-black uppercase disabled:opacity-40 cursor-pointer flex items-center gap-1"
+            >
+              {captionCopied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+              {captionCopied ? "Copied" : "Copy"}
+            </button>
+          </label>
+          <textarea
+            value={postCaption}
+            onChange={(e) => setPostCaption(e.target.value)}
+            onBlur={() => savePostCaption()}
+            rows={3}
+            placeholder="Caption + hashtags to paste when you post the clip"
+            className="w-full neo-input py-2 px-2.5 text-base sm:text-xs font-medium mb-4 resize-y"
+          />
+
           <label className="block text-[10px] font-black uppercase mb-1.5">Headline (top text)</label>
           <input
             type="text"
@@ -979,6 +1145,13 @@ function EditorContent() {
               <Check className="w-4 h-4 shrink-0 text-green-700" />
               <span>{renderNote}</span>
             </div>
+          )}
+          {projectSaved !== null && (
+            <p className={`mb-3 text-[10px] font-bold ${projectSaved ? "text-green-700" : "text-neutral-500"}`}>
+              {projectSaved
+                ? "Saved to your project — it opens like this on any device."
+                : "Saved in this browser (couldn't update the project on the server)."}
+            </p>
           )}
 
           <button

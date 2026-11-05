@@ -67,6 +67,8 @@ export interface JobOutput {
   };
   curatedClips?: SnappedClipResult[];
   renderedClips?: RenderedClipItem[];
+  /** Editor re-renders saved into the project, by clip index. */
+  editedClips?: Record<string, Record<string, unknown> & { editedAt: number }>;
 }
 
 export interface JobOptions {

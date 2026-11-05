@@ -166,7 +166,9 @@ function buildClipsFromJob(job: any): RealClip[] {
       },
     };
   });
-  return generatedClips;
+  // Editor re-renders saved into the project win over the originals.
+  const edited = job.output?.editedClips || {};
+  return generatedClips.map((c, i) => (edited[String(i)] ? ({ ...c, ...edited[String(i)] } as RealClip) : c));
 }
 
 function DashboardContent() {
@@ -231,6 +233,9 @@ function DashboardContent() {
   const storeToken = (token: string) => {
     localStorage.setItem("app_access_token", token);
     document.cookie = `app_access_token=${encodeURIComponent(token)}; path=/; max-age=31536000; SameSite=Lax`;
+    // The project list loads on page open; on a new device that happens
+    // before the passcode exists and gets a 401 — load it again now.
+    loadProjects();
   };
 
   const clearStoredToken = () => {
@@ -1309,6 +1314,21 @@ function DashboardContent() {
                 </div>
               </div>
             )}
+            {clips.length > 0 && currentProjectId.startsWith("job_") && (
+              <div className="mb-4 flex items-center justify-between gap-3 flex-wrap">
+                <span className="text-[11px] font-bold text-neutral-600">
+                  {clips.filter((c: any) => c.renderedVideoUrl).length} of {clips.length} clips ready
+                </span>
+                <a
+                  href={`/api/jobs/${currentProjectId}/zip`}
+                  download
+                  className="px-3 py-2 bg-[#FFC700] hover:bg-black hover:text-white text-black border-2 border-black font-black text-xs uppercase flex items-center gap-1.5 shadow-[2px_2px_0px_#000000] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all"
+                  title="Every finished clip plus captions.txt with each post caption"
+                >
+                  <Download className="w-3.5 h-3.5" /> Download all (ZIP)
+                </a>
+              </div>
+            )}
             {clips.length === 0 ? (
               /* Clean Empty State */
               <div className="bg-white border-2 border-black shadow-[6px_6px_0px_#000000] p-8 sm:p-12 text-center max-w-xl mx-auto">
@@ -2090,6 +2110,13 @@ function DashboardContent() {
                 type="password"
                 value={inputToken}
                 onChange={(e) => { setInputToken(e.target.value); setTokenError(""); }}
+                onKeyDown={(e) => {
+                  // Enter submits, like any login box.
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    (document.getElementById("save-token-btn") as HTMLButtonElement | null)?.click();
+                  }
+                }}
                 placeholder="Enter access token..."
                 className="w-full bg-white border-2 border-black px-4 py-2.5 text-base sm:text-sm text-black mb-2 focus:outline-none focus:shadow-[3px_3px_0px_#000000]"
               />
@@ -2110,6 +2137,7 @@ function DashboardContent() {
                   Cancel
                 </button>
                 <button
+                  id="save-token-btn"
                   type="button"
                   disabled={tokenChecking}
                   onClick={async () => {
