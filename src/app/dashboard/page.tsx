@@ -31,6 +31,22 @@ import {
 } from "lucide-react";
 import ApiSettingsModal from "@/components/ApiSettingsModal";
 import confetti from "canvas-confetti";
+import type { CaptionStyleName } from "@/lib/videoService";
+import {
+  ClipStyle,
+  MusicMood,
+  ColorGrade,
+  CutTransition,
+  DEFAULT_CLIP_STYLE,
+  normalizeClipStyle,
+  MUSIC_MOODS,
+  COLOR_GRADES,
+  TRANSITIONS,
+  MOOD_LABELS,
+  GRADE_LABELS,
+  TRANSITION_LABELS,
+  CAPTION_FONT_OPTIONS,
+} from "@/lib/clipStyleOptions";
 
 
 // Poster thumbnails: the server drops poster-<clip>.jpg next to every
@@ -71,14 +87,14 @@ export interface RealClip {
     emoji?: string;
   }[];
   aspectRatio: "9:16" | "1:1" | "16:9";
-  captionStyle: "hormozi" | "neon" | "beast" | "clean" | "kinetic" | "snipcut";
+  captionStyle: CaptionStyleName;
   /** Source-absolute words around the clip (editor: extend trims, edit, delete). */
   sourceWords?: { start: number; end: number; text: string; deleted?: boolean }[];
   /** Kept source ranges of the rendered video (silence removal / deletions). */
   keepRanges?: { start: number; end: number }[];
   keyPhrases?: string[];
   /** Effects the clip was made with — editor re-renders keep them. */
-  fx?: { removeSilences: boolean; broll: boolean; musicBed: boolean; hookTitle: boolean; keywordHighlights: boolean };
+  fx?: { removeSilences: boolean; broll: boolean; musicBed: boolean; hookTitle: boolean; keywordHighlights: boolean; clipStyle?: ClipStyle; captionFont?: string };
 }
 
 /** Dashboard clips for a job (rendered ones carry their video). */
@@ -163,6 +179,8 @@ function buildClipsFromJob(job: any): RealClip[] {
         musicBed: Boolean(job.options?.musicBed),
         hookTitle: job.options?.hookTitle !== false,
         keywordHighlights: job.options?.keywordHighlights !== false,
+        clipStyle: job.options?.clipStyle ? normalizeClipStyle(job.options.clipStyle) : undefined,
+        captionFont: job.options?.captionFont || undefined,
       },
     };
   });
@@ -312,7 +330,7 @@ function DashboardContent() {
 
   const [reframeMode, setReframeMode] = useState<"auto-tracker" | "split-screen" | "blurred-fit" | "center">("auto-tracker");
   const [removeSilences, setRemoveSilences] = useState(false);
-  const [jobCaptionStyle, setJobCaptionStyle] = useState<"hormozi" | "neon" | "beast" | "clean" | "kinetic" | "snipcut">("snipcut");
+  const [jobCaptionStyle, setJobCaptionStyle] = useState<CaptionStyleName>("snipcut");
   // B-roll is opt-in: it needs a stock (Pexels / Pixabay) or OpenAI key —
   // the server's own, or one the user brings in API Keys.
   const [brollEnabled, setBrollEnabled] = useState(false);
@@ -346,6 +364,33 @@ function DashboardContent() {
   // player panel, out of sight below the list on narrow screens).
   const [renderingClipId, setRenderingClipId] = useState<string | null>(null);
   const [keywordHighlightsEnabled, setKeywordHighlightsEnabled] = useState(true);
+  // Look & sound: music mood, sound effects, voice, grade, transitions,
+  // push-in, caption font. Remembered per browser.
+  const [clipStyle, setClipStyleState] = useState<ClipStyle>(DEFAULT_CLIP_STYLE);
+  const [captionFont, setCaptionFontState] = useState("default");
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("snipcut_clip_style");
+      if (raw) setClipStyleState(normalizeClipStyle(JSON.parse(raw)));
+      const f = localStorage.getItem("snipcut_caption_font");
+      if (f && CAPTION_FONT_OPTIONS.some((o) => o.id === f)) setCaptionFontState(f);
+    } catch {}
+  }, []);
+  const setClipStyle = (patch: Partial<ClipStyle>) => {
+    setClipStyleState((prev) => {
+      const next = { ...prev, ...patch };
+      try {
+        localStorage.setItem("snipcut_clip_style", JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  };
+  const setCaptionFont = (f: string) => {
+    setCaptionFontState(f);
+    try {
+      localStorage.setItem("snipcut_caption_font", f);
+    } catch {}
+  };
   const [lastTrackingSummary, setLastTrackingSummary] = useState<string>("");
   const [sourceWarning, setSourceWarning] = useState<string>("");
   const [dynamicShots, setDynamicShots] = useState<
@@ -805,6 +850,8 @@ function DashboardContent() {
             musicBed: musicBedEnabled,
             hookTitle: hookTitleEnabled,
             keywordHighlights: keywordHighlightsEnabled,
+            clipStyle,
+            captionFont,
             ...storedApiKeys,
           }),
         });
@@ -827,6 +874,8 @@ function DashboardContent() {
             musicBed: musicBedEnabled,
             hookTitle: hookTitleEnabled,
             keywordHighlights: keywordHighlightsEnabled,
+            clipStyle,
+            captionFont,
             cookies: storedCookies,
             proxy: storedProxy,
             ...storedApiKeys,
@@ -849,6 +898,8 @@ function DashboardContent() {
             musicBed: musicBedEnabled,
             hookTitle: hookTitleEnabled,
             keywordHighlights: keywordHighlightsEnabled,
+            clipStyle,
+            captionFont,
             ...storedApiKeys,
           }),
         });
@@ -964,6 +1015,8 @@ function DashboardContent() {
           removeSilences: clip.fx ? clip.fx.removeSilences : removeSilences,
           hookTitle: clip.fx ? clip.fx.hookTitle : hookTitleEnabled,
           keywords: (clip.fx ? clip.fx.keywordHighlights : keywordHighlightsEnabled) ? clip.keyPhrases || [] : null,
+          clipStyle: clip.fx?.clipStyle || clipStyle,
+          captionFont: clip.fx?.captionFont || captionFont,
           pexelsKey: localStorage.getItem("snipcut_pexels_key") || undefined,
           pixabayKey: localStorage.getItem("snipcut_pixabay_key") || undefined,
           openaiKey: localStorage.getItem("snipcut_openai_key") || undefined,
@@ -1990,7 +2043,7 @@ function DashboardContent() {
                   Caption Style
                 </label>
                 <div className="flex flex-wrap gap-1.5">
-                  {(["snipcut", "kinetic", "hormozi", "neon", "beast", "clean"] as const).map((st) => (
+                  {(["snipcut", "boxed", "bounce", "kinetic", "typewriter", "slide", "glow", "hormozi", "neon", "beast", "clean"] as const).map((st) => (
                     <button
                       key={st}
                       type="button"
@@ -2069,6 +2122,55 @@ function DashboardContent() {
                     Key words and numbers pop in a second colour inside the captions
                   </span>
                 </label>
+              </div>
+
+              <div>
+                <label className="block text-xs font-black uppercase tracking-wider text-black mb-1.5">Look &amp; Sound</label>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-2">
+                  {(
+                    [
+                      { label: "Caption font", value: captionFont, set: (v: string) => setCaptionFont(v), options: CAPTION_FONT_OPTIONS.map((o) => [o.id, o.label]) },
+                      { label: "Music mood", value: clipStyle.musicMood, set: (v: string) => setClipStyle({ musicMood: v as MusicMood }), options: MUSIC_MOODS.map((m) => [m, MOOD_LABELS[m]]) },
+                      { label: "Colour grade", value: clipStyle.grade, set: (v: string) => setClipStyle({ grade: v as ColorGrade }), options: COLOR_GRADES.map((g) => [g, GRADE_LABELS[g]]) },
+                      { label: "Cut transition", value: clipStyle.transition, set: (v: string) => setClipStyle({ transition: v as CutTransition }), options: TRANSITIONS.map((t) => [t, TRANSITION_LABELS[t]]) },
+                    ] as { label: string; value: string; set: (v: string) => void; options: string[][] }[]
+                  ).map((f) => (
+                    <label key={f.label} className="flex flex-col gap-1">
+                      <span className="text-[10px] font-black uppercase text-neutral-600">{f.label}</span>
+                      <select
+                        value={f.value}
+                        onChange={(e) => f.set(e.target.value)}
+                        className="bg-[#F8F7F4] text-black text-xs font-bold px-2 py-1.5 border-2 border-black focus:outline-none focus:bg-white cursor-pointer"
+                      >
+                        {f.options.map(([id, label]) => (
+                          <option key={id} value={id}>
+                            {label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ))}
+                </div>
+                <div className="flex flex-wrap gap-x-5 gap-y-1.5">
+                  {(
+                    [
+                      { key: "sfx", label: "Sound effects", hint: "whoosh, pop, ding" },
+                      { key: "voiceEnhance", label: "Studio voice", hint: "clean, loud, clear" },
+                      { key: "pushIn", label: "Slow push-in", hint: "camera drifts in" },
+                    ] as { key: "sfx" | "voiceEnhance" | "pushIn"; label: string; hint: string }[]
+                  ).map((t) => (
+                    <label key={t.key} className="flex items-center gap-2 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={clipStyle[t.key]}
+                        onChange={(e) => setClipStyle({ [t.key]: e.target.checked } as Partial<ClipStyle>)}
+                        className="w-4 h-4 accent-black cursor-pointer"
+                      />
+                      <span className="text-xs font-black uppercase tracking-wider text-black">{t.label}</span>
+                      <span className="text-[10px] font-medium text-neutral-500">{t.hint}</span>
+                    </label>
+                  ))}
+                </div>
               </div>
 
               <div>

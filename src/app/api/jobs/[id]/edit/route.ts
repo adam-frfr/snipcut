@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyAuthAndRateLimit } from "@/lib/authRateLimit";
 import { getJobRecord, saveJobRecord } from "@/lib/jobQueue";
+import { normalizeClipStyle } from "@/lib/clipStyleOptions";
+import { CAPTION_FONTS } from "@/lib/videoService";
 
 /**
  * Save an editor re-render into its project, so reopening the project (on
@@ -53,6 +55,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         ["removeSilences", "broll", "musicBed", "hookTitle", "keywordHighlights"].map((k) => [k, c.fx[k] === true])
       )
     : undefined;
+  if (fx && c.fx.clipStyle && typeof c.fx.clipStyle === "object") (fx as any).clipStyle = normalizeClipStyle(c.fx.clipStyle);
+  if (fx && typeof c.fx.captionFont === "string" && CAPTION_FONTS[c.fx.captionFont]) (fx as any).captionFont = c.fx.captionFont;
   const edited = Object.fromEntries(
     Object.entries({
       startTime: num(c.startTime),

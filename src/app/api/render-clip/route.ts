@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { generatePreviewClip, generatePosterImage } from "@/lib/videoService";
+import { generatePreviewClip, generatePosterImage, CAPTION_FONTS } from "@/lib/videoService";
+import { normalizeClipStyle } from "@/lib/clipStyle";
 import { produceClip } from "@/lib/clipProducer";
 import path from "path";
 import fs from "fs";
@@ -28,6 +29,8 @@ async function performRender(
       removeSilences,
       hookTitle,
       keywords,
+      clipStyle,
+      captionFont,
       pexelsKey,
       pixabayKey,
       groqKey,
@@ -90,6 +93,8 @@ async function performRender(
       broll: broll === true,
       musicBed: music === true,
       keys: { groqKey, openaiKey, claudeKey, pexelsKey, pixabayKey },
+      style: normalizeClipStyle(clipStyle),
+      captionFont: typeof captionFont === "string" && CAPTION_FONTS[captionFont] ? captionFont : undefined,
     });
 
     // Lightweight preview rendition for smooth in-browser playback (never fatal)

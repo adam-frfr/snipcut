@@ -6,6 +6,8 @@ import { verifyAuthAndRateLimit } from "@/lib/authRateLimit";
 import { jobQueue, saveJobRecord, JobRecord, JobOptions, listRecentProjects, retentionHours } from "@/lib/jobQueue";
 import { normalizeCookiesToNetscape } from "@/lib/youtubeCookies";
 import { normalizeYoutubeUrl, normalizeProxy } from "@/lib/mediaPrep";
+import { normalizeClipStyle } from "@/lib/clipStyle";
+import { CAPTION_FONTS } from "@/lib/videoService";
 
 
 export async function POST(req: NextRequest) {
@@ -62,6 +64,8 @@ export async function POST(req: NextRequest) {
         musicBed,
         hookTitle,
         keywordHighlights,
+        clipStyle,
+        captionFont,
         pexelsKey,
         pixabayKey,
       } = body;
@@ -87,6 +91,8 @@ export async function POST(req: NextRequest) {
         musicBed: musicBed === true,
         hookTitle: hookTitle !== false,
         keywordHighlights: keywordHighlights !== false,
+        clipStyle: normalizeClipStyle(clipStyle),
+        captionFont: typeof captionFont === "string" && CAPTION_FONTS[captionFont] ? captionFont : undefined,
         pexelsKey: (pexelsKey || "").trim?.() || undefined,
         pixabayKey: (pixabayKey || "").trim?.() || undefined,
       };

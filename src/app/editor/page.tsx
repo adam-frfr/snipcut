@@ -24,6 +24,22 @@ import {
   Copy,
 } from "lucide-react";
 import confetti from "canvas-confetti";
+import type { CaptionStyleName } from "@/lib/videoService";
+import {
+  ClipStyle,
+  MusicMood,
+  ColorGrade,
+  CutTransition,
+  DEFAULT_CLIP_STYLE,
+  normalizeClipStyle,
+  MUSIC_MOODS,
+  COLOR_GRADES,
+  TRANSITIONS,
+  MOOD_LABELS,
+  GRADE_LABELS,
+  TRANSITION_LABELS,
+  CAPTION_FONT_OPTIONS,
+} from "@/lib/clipStyleOptions";
 import { computeKeepRanges, keptDuration, toOutputTime, toSourceTime, Range } from "@/lib/timeline";
 
 /**
@@ -43,7 +59,7 @@ import { computeKeepRanges, keptDuration, toOutputTime, toSourceTime, Range } fr
  */
 
 type LayoutMode = "auto-tracker" | "split-screen" | "blurred-fit" | "center";
-type CaptionStyle = "hormozi" | "neon" | "beast" | "clean" | "kinetic" | "snipcut";
+type CaptionStyle = CaptionStyleName;
 type Aspect = "9:16" | "1:1" | "16:9";
 
 /** A word on the SOURCE clock (seconds into the original video). */
@@ -60,6 +76,8 @@ interface ClipFx {
   musicBed: boolean;
   hookTitle: boolean;
   keywordHighlights: boolean;
+  clipStyle?: ClipStyle;
+  captionFont?: string;
 }
 
 function fmt(t: number): string {
@@ -242,6 +260,8 @@ function EditorContent() {
       musicBed: Boolean(c.fx?.musicBed),
       hookTitle: c.fx ? c.fx.hookTitle !== false : true,
       keywordHighlights: c.fx ? c.fx.keywordHighlights !== false : true,
+      clipStyle: normalizeClipStyle(c.fx?.clipStyle || DEFAULT_CLIP_STYLE),
+      captionFont: c.fx?.captionFont || "default",
     });
     setCurrentTime(0);
     setSelA(null);
@@ -546,6 +566,8 @@ function EditorContent() {
         music: fx.musicBed,
         hookTitle: fx.hookTitle,
         keywords: fx.keywordHighlights ? clip.keyPhrases || [] : null,
+        clipStyle: fx.clipStyle,
+        captionFont: fx.captionFont,
         pexelsKey: localStorage.getItem("snipcut_pexels_key") || undefined,
         pixabayKey: localStorage.getItem("snipcut_pixabay_key") || undefined,
         openaiKey: localStorage.getItem("snipcut_openai_key") || undefined,
@@ -1037,7 +1059,7 @@ function EditorContent() {
 
           <label className="block text-[10px] font-black uppercase mb-1.5">Caption style</label>
           <div className="grid grid-cols-3 gap-1.5 mb-4">
-            {(["snipcut", "kinetic", "hormozi", "neon", "beast", "clean"] as CaptionStyle[]).map((s) => (
+            {(["snipcut", "boxed", "bounce", "kinetic", "typewriter", "slide", "glow", "hormozi", "neon", "beast", "clean"] as CaptionStyle[]).map((s) => (
               <button
                 key={s}
                 type="button"
@@ -1117,7 +1139,7 @@ function EditorContent() {
                 { key: "keywordHighlights", label: "AI keyword highlights" },
                 { key: "broll", label: "AI B-roll cutaways" },
                 { key: "musicBed", label: "Music bed + punch-in zooms" },
-              ] as { key: keyof ClipFx; label: string }[]
+              ] as { key: "removeSilences" | "hookTitle" | "keywordHighlights" | "broll" | "musicBed"; label: string }[]
             ).map((o) => (
               <label key={o.key} className="flex items-center gap-2 text-[11px] font-black uppercase cursor-pointer select-none">
                 <input
@@ -1125,6 +1147,62 @@ function EditorContent() {
                   checked={fx[o.key]}
                   onChange={(e) => {
                     setFx((f) => ({ ...f, [o.key]: e.target.checked }));
+                    setDirty(true);
+                  }}
+                  className="w-4 h-4 accent-black cursor-pointer"
+                />
+                {o.label}
+              </label>
+            ))}
+          </div>
+
+          <label className="block text-[10px] font-black uppercase mb-1.5">Look &amp; sound</label>
+          <div className="grid grid-cols-2 gap-1.5 mb-2">
+            {(
+              [
+                { label: "Font", value: fx.captionFont || "default", patch: (v: string) => ({ captionFont: v }), options: CAPTION_FONT_OPTIONS.map((o) => [o.id, o.label]) },
+                { label: "Music mood", value: (fx.clipStyle || DEFAULT_CLIP_STYLE).musicMood, patch: (v: string) => ({ clipStyle: { ...(fx.clipStyle || DEFAULT_CLIP_STYLE), musicMood: v as MusicMood } }), options: MUSIC_MOODS.map((m) => [m, MOOD_LABELS[m]]) },
+                { label: "Colour grade", value: (fx.clipStyle || DEFAULT_CLIP_STYLE).grade, patch: (v: string) => ({ clipStyle: { ...(fx.clipStyle || DEFAULT_CLIP_STYLE), grade: v as ColorGrade } }), options: COLOR_GRADES.map((g) => [g, GRADE_LABELS[g]]) },
+                { label: "Transition", value: (fx.clipStyle || DEFAULT_CLIP_STYLE).transition, patch: (v: string) => ({ clipStyle: { ...(fx.clipStyle || DEFAULT_CLIP_STYLE), transition: v as CutTransition } }), options: TRANSITIONS.map((t) => [t, TRANSITION_LABELS[t]]) },
+              ] as { label: string; value: string; patch: (v: string) => Partial<ClipFx>; options: string[][] }[]
+            ).map((f) => (
+              <label key={f.label} className="flex flex-col gap-0.5">
+                <span className="text-[9px] font-black uppercase text-neutral-500">{f.label}</span>
+                <select
+                  value={f.value}
+                  onChange={(e) => {
+                    snapshot();
+                    const p = f.patch(e.target.value);
+                    setFx((x) => ({ ...x, ...p }));
+                    setDirty(true);
+                  }}
+                  className="bg-[#F8F7F4] text-[11px] font-bold px-1.5 py-1 border-2 border-black cursor-pointer focus:outline-none"
+                >
+                  {f.options.map(([id, label]) => (
+                    <option key={id} value={id}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ))}
+          </div>
+          <div className="flex flex-col gap-1.5 mb-5">
+            {(
+              [
+                { key: "sfx", label: "Sound effects" },
+                { key: "voiceEnhance", label: "Studio voice" },
+                { key: "pushIn", label: "Slow push-in" },
+              ] as { key: "sfx" | "voiceEnhance" | "pushIn"; label: string }[]
+            ).map((o) => (
+              <label key={o.key} className="flex items-center gap-2 text-[11px] font-black uppercase cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={(fx.clipStyle || DEFAULT_CLIP_STYLE)[o.key]}
+                  onChange={(e) => {
+                    snapshot();
+                    const v = e.target.checked;
+                    setFx((x) => ({ ...x, clipStyle: { ...(x.clipStyle || DEFAULT_CLIP_STYLE), [o.key]: v } }));
                     setDirty(true);
                   }}
                   className="w-4 h-4 accent-black cursor-pointer"
