@@ -27,6 +27,7 @@ import {
   Zap,
   Mic,
   Lock,
+  Loader2,
 } from "lucide-react";
 import ApiSettingsModal from "@/components/ApiSettingsModal";
 import confetti from "canvas-confetti";
@@ -248,6 +249,9 @@ function DashboardContent() {
   const brollKeyMissing = brollEnabled && !serverBroll && !userBrollKey;
   const [musicBedEnabled, setMusicBedEnabled] = useState(true);
   const [hookTitleEnabled, setHookTitleEnabled] = useState(true);
+  // Which clip's Download is rendering (the status text lives in the
+  // player panel, out of sight below the list on narrow screens).
+  const [renderingClipId, setRenderingClipId] = useState<string | null>(null);
   const [keywordHighlightsEnabled, setKeywordHighlightsEnabled] = useState(true);
   const [lastTrackingSummary, setLastTrackingSummary] = useState<string>("");
   const [sourceWarning, setSourceWarning] = useState<string>("");
@@ -520,7 +524,7 @@ function DashboardContent() {
               videoUrl: initialVideoUrl,
               renderedVideoUrl: rendered ? rendered.downloadUrl : undefined,
               previewUrl: rendered?.previewDownloadUrl || undefined,
-              posterUrl: rendered?.posterUrl || undefined,
+              posterUrl: rendered?.posterUrl || c.posterUrl || undefined,
               fileSize: rendered?.fileSize || undefined,
               previewFileSize: rendered?.previewFileSize || undefined,
               title: c.title || `Viral Short #${index + 1}`,
@@ -844,6 +848,7 @@ function DashboardContent() {
   // Real FFmpeg Render & Download
   const handleRenderAndDownload = async (clip: RealClip) => {
     setIsRendering(true);
+    setRenderingClipId(clip.id);
     let pendingDownload: { url: string; filename: string; size?: number } | null = null;
     try {
       const data = await renderClipWithPolling({
@@ -927,6 +932,7 @@ function DashboardContent() {
       alert(`Render Error: ${err.message}`);
     } finally {
       setIsRendering(false);
+      setRenderingClipId(null);
     }
     if (pendingDownload) {
       await downloadWithProgress(pendingDownload.url, pendingDownload.filename, pendingDownload.size);
@@ -1224,7 +1230,7 @@ function DashboardContent() {
                           <video
                             src={(clip as any).previewUrl ? `${(clip as any).previewUrl}#t=0.1` : `${clip.videoUrl}#t=${clip.startTime || 0.1}`}
                             poster={derivePosterUrl(clip)}
-                            className="w-full h-full object-cover pointer-events-none"
+                            className="w-full h-full object-cover object-[50%_22%] pointer-events-none"
                             preload="none"
                             playsInline
                             muted
@@ -1270,10 +1276,15 @@ function DashboardContent() {
                             }}
                             disabled={isRendering}
                             className="flex-1 sm:flex-none p-2.5 bg-[#FFC700] hover:bg-[#FF5500] hover:text-white text-black border-2 border-black font-black text-xs uppercase flex items-center justify-center gap-1.5 transition-all shadow-[2px_2px_0px_#000000] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none disabled:opacity-50 cursor-pointer"
-                            title="Render real 9:16 MP4 with FFmpeg"
+                            title={renderingClipId === clip.id ? "Rendering your clip…" : "Render real 9:16 MP4 with FFmpeg"}
+                            aria-busy={renderingClipId === clip.id}
                           >
-                            <Download className="w-3.5 h-3.5" />
-                            <span className="sm:hidden font-black">Download</span>
+                            {renderingClipId === clip.id ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <Download className="w-3.5 h-3.5" />
+                            )}
+                            <span className="sm:hidden font-black">{renderingClipId === clip.id ? "Rendering…" : "Download"}</span>
                           </button>
 
                           <Link

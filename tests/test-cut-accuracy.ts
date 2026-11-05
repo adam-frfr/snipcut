@@ -13,6 +13,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import {
   renderSegmentedClip,
   cutKeepRanges,
+  applyPostEffects,
   getFfmpegBinary,
   getFfprobeBinary,
 } from "../src/lib/videoService";
@@ -131,6 +132,39 @@ async function main() {
     check(Math.abs(v - joined) < 0.04, `tightened video length ${v.toFixed(3)}s matches kept time ${joined.toFixed(3)}s`);
     check(Math.abs(a - v) < 0.03, `tightened audio length matches video (${a.toFixed(3)} vs ${v.toFixed(3)})`);
     checkSync("tightened", out, 8);
+  }
+
+  // ---- 3. Effects pass (zoom-ins + music) on 25 / 24 fps footage --------
+  // The zoom filter re-stamps frames at 30fps; without converting first, a
+  // 25fps clip's picture ended 6s before its sound (seen on a real podcast).
+  for (const rate of [25, 24]) {
+    const base = path.join(dataDir, `test_fx_base_${rate}.mp4`);
+    const out = path.join(dataDir, `test_fx_out_${rate}.mp4`);
+    execFileSync(ff, [
+      "-hide_banner", "-loglevel", "error", "-y",
+      "-f", "lavfi", "-i", `testsrc=s=1080x1920:r=${rate}:d=8`,
+      "-f", "lavfi", "-i", "sine=f=440:d=8",
+      "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", base,
+    ]);
+    await applyPostEffects({
+      basePath: base,
+      outputPath: out,
+      duration: 8,
+      aspectRatio: "9:16",
+      words: [{ text: "Unbelievable", start: 2, end: 2.6 }, { text: "results", start: 5, end: 5.5 }],
+      captionStyle: "snipcut",
+      broll: [],
+      punches: [{ start: 1.95, end: 2.8 }, { start: 4.95, end: 5.8 }],
+      musicBed: true,
+    });
+    const v = streamDur(out, "v:0");
+    const a = streamDur(out, "a:0");
+    console.log(`fx ${rate}fps: video=${v.toFixed(3)}s audio=${a.toFixed(3)}s`);
+    check(Math.abs(v - 8) < 0.1, `effects on ${rate}fps footage keep the full 8s of picture (${v.toFixed(2)}s)`);
+    check(Math.abs(a - v) < 0.1, `effects on ${rate}fps footage: sound and picture same length`);
+    for (const f of [base, out]) {
+      try { fs.unlinkSync(f); } catch {}
+    }
   }
 
   if (failures.length) {

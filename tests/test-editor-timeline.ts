@@ -127,7 +127,9 @@ const words = texts.map((text, i) => {
     .split("\n")
     .find((l) => l.includes(",Hook,")) || "";
   const shown = lh.replace(/\{[^}]*\}/g, "").split(",,").pop()!.replace(/\\N/g, " ");
-  check(shown.includes("budget phone at all") && (lh.match(/\\N/g) || []).length <= 2, `long hook title kept whole in <=3 lines ("${shown}")`);
+  check(shown.includes("budget phone at all") && (lh.match(/\\N/g) || []).length <= 3, `long hook title kept whole in <=4 readable lines ("${shown}")`);
+  const hfs = Number((/\\fs(\d+)/.exec(lh) || [])[1] || 68);
+  check(hfs >= 68 * 0.75, `long hook title stays readable (font ${hfs})`);
 
   const clean = buildKaraokeAss(cw, "clean", 500, { x: 1080, y: 1920 }, { keywords: ["deep work"] });
   check(!clean.includes("&H006BE322"), "clean style stays minimal (no keyword colour)");

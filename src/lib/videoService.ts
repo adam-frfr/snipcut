@@ -524,7 +524,7 @@ export function buildKaraokeAss(
     const charsFor = (size: number) => Math.max(10, Math.floor((playRes.x - 180) / (0.62 * size)));
     let hookFs = hookSize;
     let raw = wrapTitle(hookText, charsFor(hookFs));
-    while (raw.length > 3 && hookFs > hookSize * 0.62) {
+    while (raw.length > 3 && hookFs > hookSize * 0.8) {
       hookFs = Math.round(hookFs * 0.88);
       raw = wrapTitle(hookText, charsFor(hookFs));
     }
@@ -1244,6 +1244,35 @@ export async function generatePosterImage(masterPath: string): Promise<string | 
   }
 }
 
+/**
+ * Thumbnail for a clip that hasn't been rendered yet: one frame of the
+ * source at the clip's start, centre-cropped to 9:16 (the dashboard showed
+ * black boxes for these). Written to public/rendered_clips; returns the
+ * file name or null. Never fatal.
+ */
+export async function generateSourcePoster(sourcePath: string, atSec: number, name: string): Promise<string | null> {
+  try {
+    const resolved = resolveSafeFilePath(sourcePath);
+    const dir = path.join(process.cwd(), "public", "rendered_clips");
+    fs.mkdirSync(dir, { recursive: true });
+    const posterName = `poster-src-${name.replace(/[^a-zA-Z0-9_-]/g, "_")}.jpg`;
+    const posterPath = path.join(dir, posterName);
+    if (fs.existsSync(/*turbopackIgnore: true*/ posterPath)) return posterName;
+    await execFileP(
+      getFfmpegBinary(),
+      [
+        "-y", "-ss", Math.max(0, atSec).toFixed(2), "-i", resolved, "-frames:v", "1",
+        "-vf", "crop='min(iw,ih*9/16)':ih,scale=360:-2", "-q:v", "4", posterPath,
+      ],
+      { timeout: 60000 }
+    );
+    return fs.existsSync(/*turbopackIgnore: true*/ posterPath) ? posterName : null;
+  } catch (err) {
+    console.error("[Stage: Poster] Source thumbnail failed (non-fatal):", err);
+    return null;
+  }
+}
+
 export async function generatePreviewClip(masterPath: string): Promise<string | null> {
   try {
     const resolved = resolveSafeFilePath(masterPath);
@@ -1603,7 +1632,10 @@ export async function applyPostEffects(opts: PostFxOptions): Promise<void> {
   const filters: string[] = [];
   if (opts.punches.length > 0) {
     filters.push(
-      `[0:v]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},zoompan=z='${punchZoomExpr(opts.punches)}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${W}x${H}:fps=30[base]`
+      // fps=30 FIRST: zoompan with d=1 emits one frame per input frame and
+      // stamps them at its own fps, so a 25fps clip came out 17% short
+      // (picture ended 6s before the sound on a 37s clip).
+      `[0:v]fps=30,scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},zoompan=z='${punchZoomExpr(opts.punches)}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${W}x${H}:fps=30[base]`
     );
   } else {
     filters.push(`[0:v]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},fps=30[base]`);

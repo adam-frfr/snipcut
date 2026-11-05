@@ -7,7 +7,7 @@ import { snapAndValidateClips, SnappedClipResult } from "./wordSnapping";
 import { probeVideoFormat } from "./videoService";
 import { produceClip } from "./clipProducer";
 import { acquireJobLock, releaseJobLock } from "./jobLock";
-import { resolveSafeFilePath, extractAudioForWhisper, generatePreviewClip, generatePosterImage } from "./videoService";
+import { resolveSafeFilePath, extractAudioForWhisper, generatePreviewClip, generatePosterImage, generateSourcePoster } from "./videoService";
 import { downloadYoutubeVideo, normalizeUploadedVideo } from "./mediaPrep";
 
 
@@ -709,6 +709,16 @@ class JobQueueManager {
         console.log(`[Cache: Stored] Cached render output for key: ${renderKey.slice(0, 10)}`);
         saveJobRecord(job);
       }
+
+      // Thumbnails for the clips that weren't auto-rendered (they render on
+      // download): a frame of the source, so the list isn't black boxes.
+      for (let ci = 0; ci < (job.output.curatedClips || []).length; ci++) {
+        const c: any = job.output.curatedClips![ci];
+        if (c.posterUrl || job.output.renderedClips.some((r) => Math.abs(r.startTime - c.startTime) < 0.1)) continue;
+        const name = await generateSourcePoster(resolvedVideoPath, c.startTime + 1, `${job.id.slice(4, 16)}-${ci}`).catch(() => null);
+        if (name) c.posterUrl = `/api/media?file=rendered_clips/${name}`;
+      }
+      saveJobRecord(job);
 
       job.stageTimestamps.rendering.end = Date.now();
 
