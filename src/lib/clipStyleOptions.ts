@@ -10,7 +10,7 @@ export const COLOR_GRADES = ["none", "cinematic", "warm", "punchy", "moody", "bw
 export type ColorGrade = (typeof COLOR_GRADES)[number];
 export const TRANSITIONS = ["none", "flash", "glitch", "zoom"] as const;
 export type CutTransition = (typeof TRANSITIONS)[number];
-export const ZOOM_TYPES = ["punch", "smooth", "shake", "whip"] as const;
+export const ZOOM_TYPES = ["punch", "smooth", "shake", "whip", "none"] as const;
 export type ZoomType = (typeof ZOOM_TYPES)[number];
 export const FILM_LOOKS = ["none", "grain", "vignette", "letterbox", "vhs", "silent"] as const;
 export type FilmLook = (typeof FILM_LOOKS)[number];
@@ -266,7 +266,7 @@ export const GRADE_LABELS: Record<string, string> = {
   none: "Original", cinematic: "Cinematic", warm: "Warm", punchy: "Punchy", moody: "Moody", bw: "Black & white",
 };
 export const TRANSITION_LABELS: Record<string, string> = { none: "Hard cut", flash: "Flash", glitch: "Glitch", zoom: "Zoom punch" };
-export const ZOOM_LABELS: Record<string, string> = { punch: "Punch", smooth: "Smooth", shake: "Shake", whip: "Whip" };
+export const ZOOM_LABELS: Record<string, string> = { punch: "Punch", smooth: "Smooth", shake: "Shake", whip: "Whip", none: "No zooms" };
 export const FILM_LOOK_LABELS: Record<string, string> = {
   none: "None", grain: "Film grain", vignette: "Vignette", letterbox: "Letterbox", vhs: "Retro VHS", silent: "Silent film",
 };

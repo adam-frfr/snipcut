@@ -1949,6 +1949,8 @@ export interface PostFxResult {
   duration: number;
   /** Clip-relative time before the effects pass -> time in the final clip. */
   mapTime: (t: number) => number;
+  /** [cutTime, finalTime] knots (see timeline.ts); [] when the clock is unchanged. */
+  knots: [number, number][];
   /** Big moments found (final clip times). */
   hype: number[];
   notes: string[];
@@ -2060,6 +2062,7 @@ export async function applyPostEffects(opts: PostFxOptions): Promise<PostFxResul
   const stamp = `${Date.now()}-${Math.floor(Math.random() * 10000)}`;
   let basePath = opts.basePath;
   let duration = opts.duration;
+  const cutDuration = opts.duration;
   let words = opts.words.map((w) => ({ ...w }));
   let punchesIn = opts.punches;
   let brollIn = opts.broll;
@@ -2259,6 +2262,8 @@ export async function applyPostEffects(opts: PostFxOptions): Promise<PostFxResul
     filters.push(`[fb1][bub]overlay=x=330:y=${by}:enable='${en}'[fbv]`);
     last = "fbv";
     notes.push("face bubble");
+  } else if (style.faceBubble !== "off") {
+    notes.push("face bubble skipped: it needs a wide screen recording in a 9:16 clip");
   }
 
   broll.forEach((cue, i) => {
@@ -2331,7 +2336,15 @@ export async function applyPostEffects(opts: PostFxOptions): Promise<PostFxResul
   capOpts.hookAnim = style.hookAnim;
   capOpts.counters = style.counters;
   if (style.lowerThirdName) capOpts.lowerThird = { name: style.lowerThirdName, title: style.lowerThirdTitle || undefined };
-  if (style.drawings.length) capOpts.drawings = style.drawings.filter((d) => d.t < duration);
+  // Cold open: the teaser is added in front later. Drawings were placed on
+  // the finished clip's clock, so they move back by the teaser length.
+  const coldOpen = style.coldOpen && hype.length > 0 && duration > 8;
+  const teaserLen = coldOpen ? 2 : 0;
+  if (style.drawings.length) {
+    capOpts.drawings = style.drawings
+      .map((d) => ({ ...d, t: d.t - teaserLen }))
+      .filter((d) => d.t >= 0 && d.t < duration);
+  }
   let assPath: string | null = null;
   const hasCaptionLayer = words.length > 0 || capOpts.endCard || capOpts.lowerThird || capOpts.watermark || capOpts.drawings?.length;
   if (hasCaptionLayer) {
@@ -2393,7 +2406,6 @@ export async function applyPostEffects(opts: PostFxOptions): Promise<PostFxResul
     filters.push(`[vo]anull${loud}[aout]`);
   }
 
-  const coldOpen = style.coldOpen && hype.length > 0 && duration > 8;
   const mainOut = coldOpen ? path.join(fxDir, `main-${stamp}.mp4`) : opts.outputPath;
   args.push("-filter_complex", filters.join(";"), "-map", `[${finalV}]`, "-map", "[aout]");
   args.push(
@@ -2426,9 +2438,22 @@ export async function applyPostEffects(opts: PostFxOptions): Promise<PostFxResul
     }
   }
   const finalDuration = duration + offset;
+  const knots: [number, number][] = [];
+  if (pace !== 1 || inserts.length || offset > 0) {
+    const sorted = [...inserts].sort((a, b) => a.at - b.at);
+    const heldBefore = (a: number) => sorted.filter((i) => i.at < a - 1e-6).reduce((s, i) => s + i.dur, 0);
+    if (offset > 0) knots.push([0, 0]);
+    if (!sorted.some((i) => i.at < 1e-6)) knots.push([0, offset]);
+    for (const i of sorted) {
+      const f = Number((offset + i.at / pace + heldBefore(i.at)).toFixed(3));
+      knots.push([Number(i.at.toFixed(3)), f], [Number(i.at.toFixed(3)), Number((f + i.dur).toFixed(3))]);
+    }
+    knots.push([Number(cutDuration.toFixed(3)), Number((offset + mapT(cutDuration)).toFixed(3))]);
+  }
   return {
     duration: Number(finalDuration.toFixed(3)),
     mapTime: (t: number) => Number((offset + mapT(t)).toFixed(3)),
+    knots,
     hype: hype.map((h) => Number((h + offset).toFixed(2))),
     notes,
   };

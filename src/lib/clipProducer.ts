@@ -75,6 +75,8 @@ export interface ProduceClipResult {
   duration: number;
   /** Big moments found by the effects pass (final clip seconds). */
   hypeMoments?: number[];
+  /** Clock changes (speed-up, freeze, intro, teaser): [cutTime, finalTime] knots. */
+  timeKnots?: [number, number][];
   /** Kept parts of the source (source seconds); one range = no cuts. */
   keepRanges: Range[];
   fillersRemoved: number;
@@ -243,7 +245,7 @@ export async function produceClip(o: ProduceClipOptions): Promise<ProduceClipRes
         }
         // Punch zooms only on a talking head: inside a crop shot and not
         // while a cutaway covers it.
-        const punches = pickPunchZooms(
+        const punches = style.zoomType === "none" ? [] : pickPunchZooms(
           outputWords,
           (s, e) => inside(shots.crop, s, e) && !overlaps(cues, s, e, 0.05) && !overlaps(centerSpans, s, e, 0.05)
         );
@@ -346,8 +348,13 @@ export async function produceClip(o: ProduceClipOptions): Promise<ProduceClipRes
           deletedRemoved,
           outputWords: outputWords.map((w) => ({ ...w, start: res.mapTime(w.start), end: res.mapTime(w.end) })),
           hypeMoments: res.hype,
+          timeKnots: res.knots.length ? res.knots : undefined,
           fxSummary:
-            `🎬 ${cues.length} B-roll cutaway${cues.length === 1 ? "" : "s"}, ${punches.length} punch zoom${punches.length === 1 ? "" : "s"}${music ? ", music bed" : ""}` +
+            `🎬 ${[
+              o.broll ? `${cues.length} B-roll cutaway${cues.length === 1 ? "" : "s"}` : "",
+              punches.length ? `${punches.length} zoom${punches.length === 1 ? "" : "s"}` : "",
+              music ? "music bed" : "",
+            ].filter(Boolean).join(", ") || "effects applied"}` +
             (notes.length ? ` (${notes.join("; ")})` : ""),
           fxDecisions: { music, musicReason: bg?.reason, talkingHead: Number(talkingHead.toFixed(2)), notes },
         };

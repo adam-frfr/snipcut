@@ -8,6 +8,7 @@ import { normalizeClipStyle, STYLE_PACKS, DEFAULT_CLIP_STYLE, styleNeedsFx } fro
 import { parseCounter, formatCounter, isProfane, maskProfanity, hexToAss, filmLookFilter, fitBackgroundChain, emojiImage } from "../src/lib/clipStyle";
 import { emojiFor, EMOJI_CODES } from "../src/lib/emojiMap";
 import { buildKaraokeAss } from "../src/lib/videoService";
+import { knotsForward, knotsInverse } from "../src/lib/timeline";
 
 let failures = 0;
 const check = (ok: boolean, msg: string) => {
@@ -79,6 +80,22 @@ check(lines.some((l) => l.includes("Hello") && !l.includes("HELLO")), "title cas
 check(lines.some((l) => l.includes("&H006633FF")), "brand accent on the spoken word");
 check(lines.some((l) => /Dialogue: 0,0:00:06\.0/.test(l) && l.includes("&H00FFC83C")), "speaker 2's spoken word gets the second colour");
 check(lines.filter((l) => l.includes(",Hook,")).length > 3, "typewriter hook reveals in steps");
+
+// ---- opt-out + clock changes ---------------------------------------------
+check(normalizeClipStyle({ zoomType: "none" }).zoomType === "none", "zooms can be switched off");
+{
+  // 2s teaser, 1.1x pace, 0.9s freeze at cut time 10, cut clip 20s long.
+  const pace = 1.1;
+  const f10 = 2 + 10 / pace;
+  const knots: [number, number][] = [[0, 0], [0, 2], [10, f10], [10, f10 + 0.9], [20, 2 + 20 / pace + 0.9]];
+  const near = (a: number, b: number) => Math.abs(a - b) < 0.01;
+  check(near(knotsForward(knots, 5), 2 + 5 / pace), "time map: speed-up after the teaser");
+  check(near(knotsForward(knots, 15), 2 + 15 / pace + 0.9), "time map: after the freeze");
+  check(near(knotsInverse(knots, 1), 0), "time map: teaser maps to the clip start");
+  check(near(knotsInverse(knots, f10 + 0.4), 10), "time map: inside the freeze = the frozen moment");
+  check(near(knotsInverse(knots, knotsForward(knots, 13.7)), 13.7), "time map: inverse undoes forward");
+  check(knotsForward([], 7) === 7 && knotsInverse(undefined, 7) === 7, "time map: no knots = unchanged clock");
+}
 
 if (failures) {
   console.log(`\n${failures} check(s) FAILED`);
