@@ -2,13 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
 import path from "path";
 import fs from "fs";
-import { execFile } from "child_process";
-import util from "util";
 import { verifyAuthAndRateLimit } from "@/lib/authRateLimit";
 import { jobQueue, saveJobRecord, JobRecord, JobOptions } from "@/lib/jobQueue";
-import { getFfmpegBinary, probeVideoFormat, checkZscaleSupported } from "@/lib/videoService";
-
-const execFilePromise = util.promisify(execFile);
+import { safeUploadName } from "@/lib/mediaPrep";
 
 /**
  * Chunked upload endpoint.
@@ -103,11 +99,7 @@ export async function POST(req: NextRequest) {
     const uploadsDir = path.join(process.cwd(), "public", "uploads");
     fs.mkdirSync(uploadsDir, { recursive: true });
 
-    const rawExt = path.extname(fileName).toLowerCase();
-    const safeExt = /^\.[a-z0-9]{1,8}$/.test(rawExt) ? rawExt : ".mp4";
-    const rawBase = path.basename(fileName, rawExt);
-    const safeBaseName = rawBase.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 60) || "upload";
-    const baseName = `${Date.now()}-${safeBaseName}`;
+    const { baseName, ext: safeExt } = safeUploadName(fileName);
     const rawPath = path.join(uploadsDir, `raw-${baseName}${safeExt}`);
 
     const out = fs.createWriteStream(rawPath);
@@ -116,31 +108,9 @@ export async function POST(req: NextRequest) {
       await new Promise<void>((resolve, reject) => out.write(data, (e) => (e ? reject(e) : resolve())));
     }
     await new Promise<void>((resolve, reject) => out.end((e?: Error | null) => (e ? reject(e) : resolve())));
-    // NOTE: the chunk dir is deleted only after the job is created (below).
-    // Deleting here would force a full re-upload if the transcode failed.
-
-    // Probe + normalize to a web-playable MP4 (mirrors /api/jobs multipart)
-    const webMp4Filename = `${baseName}.mp4`;
-    const webMp4Path = path.join(uploadsDir, webMp4Filename);
-    const ffmpegBin = getFfmpegBinary();
-    const streamInfo = await probeVideoFormat(rawPath);
-    const transcodeNeeded = !streamInfo.isH264Yuv420p8Bit || streamInfo.isHdr || streamInfo.isVfr;
-
-    if (transcodeNeeded) {
-      let vfFilter = "scale='min(1920,iw)':-2";
-      if (streamInfo.isHdr && checkZscaleSupported()) {
-        vfFilter =
-          "scale='min(1920,iw)':-2,zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p";
-      }
-      await execFilePromise(ffmpegBin, [
-        "-y", "-i", rawPath, "-vf", vfFilter, "-r", "30",
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
-        "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k",
-        "-movflags", "+faststart", webMp4Path,
-      ]);
-    } else {
-      await execFilePromise(ffmpegBin, ["-y", "-i", rawPath, "-c", "copy", "-movflags", "+faststart", webMp4Path]);
-    }
+    // Conversion to a web-ready MP4 (probe, HEVC/HDR transcode) happens in
+    // the job worker: on a long phone video it can take minutes, and a
+    // reverse proxy would cut this request off long before it finished.
 
     const options: JobOptions = {
       sourceType: "upload",
@@ -157,6 +127,8 @@ export async function POST(req: NextRequest) {
       preferredModel: (body.preferredModel || "").trim?.() || undefined,
       broll: body.broll === true,
       musicBed: body.musicBed === true,
+      hookTitle: body.hookTitle !== false,
+      keywordHighlights: body.keywordHighlights !== false,
       pexelsKey: (body.pexelsKey || "").trim?.() || undefined,
       pixabayKey: (body.pixabayKey || "").trim?.() || undefined,
     };
@@ -171,7 +143,7 @@ export async function POST(req: NextRequest) {
       createdAt: Date.now(),
       updatedAt: Date.now(),
       options,
-      output: { fileId: `uploads/${webMp4Filename}`, filePath: webMp4Path },
+      output: { rawUploadPath: rawPath, rawBaseName: baseName },
       stageTimestamps: { uploaded: { start: Date.now(), end: Date.now() } },
     };
 

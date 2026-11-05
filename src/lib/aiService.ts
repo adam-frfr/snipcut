@@ -46,7 +46,14 @@ export function getOpenAIClient(apiKey?: string): OpenAI {
 }
 
 export function extractClipsFromJsonString(rawContent: string): CuratedClipResult[] {
-  const cleaned = rawContent.replace(/```json/g, "").replace(/```/g, "").trim();
+  const cleaned = rawContent
+    .replace(/```json/g, "")
+    .replace(/```/g, "")
+    // Models sometimes leak markdown before a key (`*"hookHeadline": ...`)
+    // or leave trailing commas; either makes JSON.parse drop the clip.
+    .replace(/([{,]\s*)[*_]+\s*"/g, '$1"')
+    .replace(/,(\s*[}\]])/g, "$1")
+    .trim();
 
   // 1. Direct JSON parse
   try {
@@ -81,6 +88,53 @@ export function extractClipsFromJsonString(rawContent: string): CuratedClipResul
   }
 
   return [];
+}
+
+export interface SentenceLine {
+  start: number;
+  end: number;
+  text: string;
+}
+
+/**
+ * One line per sentence with exact start/end times, for the curation prompt.
+ * Built from word timestamps when available (a sentence ends at . ? ! or
+ * at a pause over 1.2s; very long run-ons are split at 30 words). Falls back
+ * to transcription segments, which Whisper already cuts near sentence edges.
+ */
+export function buildSentenceLines(
+  words?: { word?: string; text?: string; start: number; end: number }[],
+  segments?: { start: number; end: number; text: string }[]
+): SentenceLine[] {
+  const ws = (words || [])
+    .map((w) => ({ text: String(w.word ?? w.text ?? "").trim(), start: Number(w.start), end: Number(w.end) }))
+    .filter((w) => w.text && Number.isFinite(w.start) && Number.isFinite(w.end) && w.end >= w.start)
+    .sort((a, b) => a.start - b.start);
+
+  const lines: SentenceLine[] = [];
+  if (ws.length > 0) {
+    let cur: typeof ws = [];
+    const flush = () => {
+      if (cur.length) {
+        lines.push({ start: cur[0].start, end: cur[cur.length - 1].end, text: cur.map((w) => w.text).join(" ") });
+        cur = [];
+      }
+    };
+    for (let i = 0; i < ws.length; i++) {
+      const w = ws[i];
+      if (cur.length && w.start - cur[cur.length - 1].end > 1.2) flush();
+      cur.push(w);
+      if (/[.?!…]["')\]]?$/.test(w.text) || cur.length >= 30) flush();
+    }
+    flush();
+    return lines;
+  }
+
+  for (const sg of segments || []) {
+    if (!sg || typeof sg.start !== "number" || typeof sg.end !== "number" || !String(sg.text || "").trim()) continue;
+    lines.push({ start: sg.start, end: sg.end, text: String(sg.text).trim() });
+  }
+  return lines;
 }
 
 /**
@@ -174,12 +228,20 @@ You MUST respond strictly in valid JSON matching this schema:
       let lastErr: unknown = null;
       for (const key of groqKeys) {
         const groq = new OpenAI({ apiKey: key, baseURL: "https://api.groq.com/openai/v1" });
-        for (const groqModel of groqModels) {
+        // Strict JSON mode first; Groq rejects slightly-off JSON with a 400
+        // "Failed to validate JSON", which used to drop the whole transcript
+        // window (minutes of video never considered). Then retry once
+        // without JSON mode — the tolerant clip extractor handles prose.
+        const attempts = [
+          ...groqModels.map((m) => ({ model: m, json: true })),
+          { model: groqModels[0], json: false },
+        ];
+        for (const attempt of attempts) {
           try {
-            console.log(`[Stage: AI Curation] Calling Groq (${groqModel})...`);
+            console.log(`[Stage: AI Curation] Calling Groq (${attempt.model}${attempt.json ? "" : ", plain"})...`);
             const response = await groq.chat.completions.create({
-              model: groqModel,
-              response_format: { type: "json_object" },
+              model: attempt.model,
+              ...(attempt.json ? { response_format: { type: "json_object" as const } } : {}),
               messages: [
                 { role: "system", content: systemPrompt },
                 { role: "user", content: userContent },
@@ -188,7 +250,16 @@ You MUST respond strictly in valid JSON matching this schema:
             return response.choices[0]?.message?.content || "";
           } catch (err) {
             lastErr = err;
-            console.warn(`[Stage: AI Curation] Groq ${groqModel} failed, trying next:`, err);
+            // The rejected output usually holds usable clips — salvage it.
+            const failed = (err as { error?: { failed_generation?: unknown } })?.error?.failed_generation;
+            if (typeof failed === "string" && extractClipsFromJsonString(failed).length > 0) {
+              console.warn(`[Stage: AI Curation] Groq ${attempt.model} JSON was rejected; recovered clips from its output`);
+              return failed;
+            }
+            const status = (err as { status?: number })?.status;
+            console.warn(`[Stage: AI Curation] Groq ${attempt.model} failed (${status ?? "error"}), trying next: ${err instanceof Error ? err.message : err}`);
+            // Free tier is 8000 tokens/min: after a rate limit, wait before retrying.
+            if (status === 429) await sleep(15000);
           }
         }
       }
@@ -227,26 +298,13 @@ You MUST respond strictly in valid JSON matching this schema:
     return response.choices[0]?.message?.content || "{}";
   };
 
-  // ---- Build timestamped transcript blocks from segments ----
+  // ---- Build timestamped transcript lines ----
   // The LLM can only return accurate startTime/endTime if it can SEE the times.
-  // (Previously the job pipeline sent plain text with no timestamps at all.)
-  interface TBlock { start: number; end: number; text: string }
-  const blocks: TBlock[] = [];
-  const segs = (segments || []).filter((sg) => sg && typeof sg.start === "number" && sg.text);
-  if (segs.length > 0) {
-    let cur: TBlock = { start: segs[0].start, end: segs[0].end, text: segs[0].text };
-    for (let idx = 1; idx < segs.length; idx++) {
-      const sg = segs[idx];
-      if (sg.start - cur.start >= 20 && cur.text) {
-        blocks.push(cur);
-        cur = { start: sg.start, end: sg.end, text: sg.text };
-      } else {
-        cur.text += (cur.text ? " " : "") + sg.text;
-        cur.end = sg.end;
-      }
-    }
-    if (cur.text) blocks.push(cur);
-  }
+  // Lines used to be 20-second blocks with one start stamp each, so a hook
+  // that began mid-block could only be guessed — and word snapping only
+  // searches ±3s, so clips started mid-thought and ended mid-sentence. Now
+  // every line is ONE sentence with its exact start AND end time.
+  const blocks = buildSentenceLines(words, segments);
 
   // ---- Split blocks into windows small enough for free-tier token limits ----
   // ~3200 chars of transcript per window (~800 tokens) keeps system+transcript+response
@@ -260,7 +318,7 @@ You MUST respond strictly in valid JSON matching this schema:
     let curEnd = blocks[0].end;
     let curLen = 0;
     for (const b of blocks) {
-      const line = `[${Math.floor(b.start)}s] ${b.text}`;
+      const line = `[${b.start.toFixed(1)}-${b.end.toFixed(1)}] ${b.text}`;
       if (curLen + line.length > WINDOW_CHARS && curLines.length > 0) {
         windows.push({ start: curStart, end: curEnd, body: curLines.join("\n") });
         curLines = [];
@@ -284,13 +342,15 @@ You MUST respond strictly in valid JSON matching this schema:
 
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
   const allClips: CuratedClipResult[] = [];
+  let failedWindows = 0;
+  let lastError: unknown = null;
 
   for (let wi = 0; wi < windows.length; wi++) {
     const w = windows[wi];
     const perWindow = windows.length === 1 ? 4 : 2;
     const userContent =
       blocks.length > 0
-        ? `Here is a section of a video transcript from ${Math.floor(w.start)}s to ${Math.floor(w.end)}s. Each line begins with its start time in seconds, like [123s].\n\n${w.body}\n\nExtract up to ${perWindow} standalone viral clips WHOLLY INSIDE ${Math.floor(w.start)}s-${Math.floor(w.end)}s. startTime and endTime MUST be numbers of seconds copied from the line timestamps, and each clip must be 15-60 seconds long. Respond strictly with JSON containing the "clips" array. If nothing in this section works as a standalone clip, return {"clips": []}.`
+        ? `Here is a section of a video transcript from ${Math.floor(w.start)}s to ${Math.floor(w.end)}s. Each line is one sentence and begins with its start and end time in seconds, like [123.4-128.9].\n\n${w.body}\n\nExtract up to ${perWindow} standalone viral clips WHOLLY INSIDE ${Math.floor(w.start)}s-${Math.floor(w.end)}s. A clip is a run of consecutive lines: startTime MUST be copied exactly from the START time of its first line (the hook sentence), and endTime MUST be copied exactly from the END time of its last line, so the clip opens on a complete sentence and ends after one. Never start on a line that continues a previous thought, and end where the point lands. Each clip must be 15-60 seconds long. Respond strictly with JSON containing the "clips" array. If nothing in this section works as a standalone clip, return {"clips": []}.`
         : `Here is the video transcript:\n\n${w.body}\n\nRespond strictly with JSON containing the "clips" array. Extract up to ${perWindow} top viral short clips.`;
     try {
       const content = await callCuration(userContent);
@@ -302,6 +362,8 @@ You MUST respond strictly in valid JSON matching this schema:
       }
       console.log(`[Stage: AI Curation] Window ${wi + 1}/${windows.length} [${Math.floor(w.start)}s-${Math.floor(w.end)}s] -> ${found.length} candidate(s), ${allClips.length} total`);
     } catch (err) {
+      failedWindows++;
+      lastError = err;
       console.warn(`[Stage: AI Curation] Window ${wi + 1}/${windows.length} failed:`, err);
     }
     // Pace Groq free-tier calls (8000 TPM): ~7s between windows
@@ -310,7 +372,7 @@ You MUST respond strictly in valid JSON matching this schema:
 
   // De-duplicate overlapping candidates, keep highest scores first, cap at 6
   allClips.sort((a, b) => (b.viralityScore || 0) - (a.viralityScore || 0));
-  let clips: CuratedClipResult[] = [];
+  const clips: CuratedClipResult[] = [];
   for (const c of allClips) {
     const overlaps = clips.some(
       (k) => Math.max(k.startTime, c.startTime) < Math.min(k.endTime, c.endTime)
@@ -339,26 +401,18 @@ You MUST respond strictly in valid JSON matching this schema:
     }
   }
 
-  // Safety fallback: If AI didn't return any clips, create an intelligent clip from transcript
+  // No clips is an error, never a made-up clip. This used to return a fake
+  // "Viral Highlight Moment" of seconds 0-20 with a 94 score whenever every
+  // AI call failed (bad/expired key, retired model, rate limit), so users got
+  // the video's first 20 seconds instead of an explanation.
   if (!clips || clips.length === 0) {
-    const firstWords = transcriptText.split(/\s+/).slice(0, 8).join(" ");
-    clips = [
-      {
-        title: "Viral Highlight Moment",
-        hookHeadline: firstWords || "Must-watch moment",
-        startTime: 0,
-        endTime: 20,
-        durationFormatted: "0:20",
-        viralityScore: 94,
-        hookStrength: 95,
-        engagementScore: 92,
-        trendMatch: 94,
-        viralityReason: "Top retention introductory segment with fast emotional delivery.",
-        keyPhrases: ["viral moment", "trending"],
-        suggestedEmojis: [],
-        description: "The moment that hooks you in the first three seconds. #viralmoment #trending",
-      },
-    ];
+    if (failedWindows > 0 && failedWindows === windows.length) {
+      const why = lastError instanceof Error ? lastError.message : String(lastError || "unknown error");
+      throw new Error(`AI clip selection failed: ${why}. Check your API key in Settings and try again.`);
+    }
+    throw new Error(
+      "The AI didn't find any standalone clip-worthy moments in this video. Try a custom prompt describing what to look for."
+    );
   }
 
   return clips;

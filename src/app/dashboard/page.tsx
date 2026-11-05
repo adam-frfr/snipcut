@@ -70,7 +70,14 @@ export interface RealClip {
     emoji?: string;
   }[];
   aspectRatio: "9:16" | "1:1" | "16:9";
-  captionStyle: "hormozi" | "neon" | "beast" | "clean" | "kinetic";
+  captionStyle: "hormozi" | "neon" | "beast" | "clean" | "kinetic" | "snipcut";
+  /** Source-absolute words around the clip (editor: extend trims, edit, delete). */
+  sourceWords?: { start: number; end: number; text: string; deleted?: boolean }[];
+  /** Kept source ranges of the rendered video (silence removal / deletions). */
+  keepRanges?: { start: number; end: number }[];
+  keyPhrases?: string[];
+  /** Effects the clip was made with — editor re-renders keep them. */
+  fx?: { removeSilences: boolean; broll: boolean; musicBed: boolean; hookTitle: boolean; keywordHighlights: boolean };
 }
 
 function DashboardContent() {
@@ -214,6 +221,8 @@ function DashboardContent() {
   const [jobCaptionStyle, setJobCaptionStyle] = useState<"hormozi" | "neon" | "beast" | "clean" | "kinetic" | "snipcut">("snipcut");
   const [brollEnabled, setBrollEnabled] = useState(true);
   const [musicBedEnabled, setMusicBedEnabled] = useState(true);
+  const [hookTitleEnabled, setHookTitleEnabled] = useState(true);
+  const [keywordHighlightsEnabled, setKeywordHighlightsEnabled] = useState(true);
   const [lastTrackingSummary, setLastTrackingSummary] = useState<string>("");
   const [sourceWarning, setSourceWarning] = useState<string>("");
   const [dynamicShots, setDynamicShots] = useState<
@@ -502,6 +511,23 @@ function DashboardContent() {
               aspectRatio: job.options?.aspectRatio || "9:16",
               captionStyle: job.options?.captionStyle || "hormozi",
               transcript: clipWords,
+              // 30s of source words either side so the editor can extend the clip.
+              sourceWords: (Array.isArray(job.output?.transcription?.words) && job.output.transcription.words.length
+                ? job.output.transcription.words
+                : c.snappedWords || []
+              )
+                .filter((w: any) => w.end > c.startTime - 30 && w.start < c.endTime + 30)
+                .map((w: any) => ({ start: Number(w.start), end: Number(w.end), text: String(w.word ?? w.text ?? "") })),
+              keepRanges: rendered?.keepRanges,
+              ...(rendered?.duration ? { duration: rendered.duration } : {}),
+              keyPhrases: Array.isArray(c.keyPhrases) ? c.keyPhrases : [],
+              fx: {
+                removeSilences: Boolean(job.options?.removeSilences),
+                broll: Boolean(job.options?.broll),
+                musicBed: Boolean(job.options?.musicBed),
+                hookTitle: job.options?.hookTitle !== false,
+                keywordHighlights: job.options?.keywordHighlights !== false,
+              },
             };
           });
 
@@ -658,6 +684,8 @@ function DashboardContent() {
             removeSilences,
             broll: brollEnabled,
             musicBed: musicBedEnabled,
+            hookTitle: hookTitleEnabled,
+            keywordHighlights: keywordHighlightsEnabled,
             ...storedApiKeys,
           }),
         });
@@ -678,6 +706,8 @@ function DashboardContent() {
             removeSilences,
             broll: brollEnabled,
             musicBed: musicBedEnabled,
+            hookTitle: hookTitleEnabled,
+            keywordHighlights: keywordHighlightsEnabled,
             cookies: storedCookies,
             proxy: storedProxy,
             ...storedApiKeys,
@@ -698,6 +728,8 @@ function DashboardContent() {
             removeSilences,
             broll: brollEnabled,
             musicBed: musicBedEnabled,
+            hookTitle: hookTitleEnabled,
+            keywordHighlights: keywordHighlightsEnabled,
             ...storedApiKeys,
           }),
         });
@@ -790,24 +822,28 @@ function DashboardContent() {
       const data = await renderClipWithPolling({
           inputPath: clip.videoFilePath,
           startTime: clip.startTime,
-          duration: clip.duration,
+          duration: Number((clip.endTime - clip.startTime).toFixed(2)),
           aspectRatio: clip.aspectRatio || "9:16",
           reframeMode: reframeMode,
           splitScreen: reframeMode === "split-screen",
           // clip.transcript is stored clip-relative (for the editor's
           // display); /api/render-clip expects source-absolute word times,
           // so rebase on send — the same pattern the editor uses.
-          transcript: (clip.transcript || []).map((w) => ({
-            ...w,
-            start: w.start + clip.startTime,
-            end: w.end + clip.startTime,
-          })),
+          transcript: clip.sourceWords?.length
+            ? clip.sourceWords
+            : (clip.transcript || []).map((w) => ({
+                ...w,
+                start: w.start + clip.startTime,
+                end: w.end + clip.startTime,
+              })),
           headline: clip.hookHeadline || clip.title,
           captionStyle: clip.captionStyle || "hormozi",
-          // Downloads get the same reference FX as job renders, driven
-          // by the same toggles (editor re-renders don't send these).
-          broll: brollEnabled,
-          music: musicBedEnabled,
+          // Same engine and effects as job renders (and editor re-renders).
+          broll: clip.fx ? clip.fx.broll : brollEnabled,
+          music: clip.fx ? clip.fx.musicBed : musicBedEnabled,
+          removeSilences: clip.fx ? clip.fx.removeSilences : removeSilences,
+          hookTitle: clip.fx ? clip.fx.hookTitle : hookTitleEnabled,
+          keywords: (clip.fx ? clip.fx.keywordHighlights : keywordHighlightsEnabled) ? clip.keyPhrases || [] : null,
           pexelsKey: localStorage.getItem("snipcut_pexels_key") || undefined,
           pixabayKey: localStorage.getItem("snipcut_pixabay_key") || undefined,
       });
@@ -826,6 +862,8 @@ function DashboardContent() {
               ...c,
               videoUrl: data.downloadUrl,
               renderedVideoUrl: data.downloadUrl,
+              keepRanges: data.keepRanges || c.keepRanges,
+              ...(data.duration ? { duration: data.duration } : {}),
               previewUrl: data.previewDownloadUrl || (c as any).previewUrl,
               posterUrl: data.posterUrl || (c as any).posterUrl,
               fileSize: data.fileSize || (c as any).fileSize,
@@ -1359,7 +1397,11 @@ function DashboardContent() {
                             </div>
                           )}
 
-                          {/* Dynamic Subtitles Overlay */}
+                          {/* Dynamic Subtitles Overlay — only for clips not rendered yet
+                              (a raw source seek has no captions). Rendered clips already
+                              have their real captions burned in; drawing this box on top
+                              duplicated and hid them. */}
+                          {!(selectedClip as any).renderedVideoUrl && (
                           <div className="absolute bottom-12 inset-x-2 z-30 text-center pointer-events-none px-2">
                             <div className="inline-block px-3 py-1.5 bg-black border-2 border-white shadow-[2px_2px_0px_#000000] max-w-[90%]">
                               {selectedClip.transcript && selectedClip.transcript.length > 0 ? (
@@ -1400,6 +1442,7 @@ function DashboardContent() {
                               )}
                             </div>
                           </div>
+                          )}
 
                           {/* Play / Pause overlay */}
                           <button
@@ -1806,6 +1849,30 @@ function DashboardContent() {
                   <span className="text-xs font-black uppercase tracking-wider text-black">Music bed + punch-in zooms</span>
                   <span className="text-[10px] font-medium text-neutral-500 normal-case tracking-normal">
                     Quiet background pad that ducks under speech, plus zoom punches on big words
+                  </span>
+                </label>
+                <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={hookTitleEnabled}
+                    onChange={(e) => setHookTitleEnabled(e.target.checked)}
+                    className="w-4 h-4 accent-black cursor-pointer"
+                  />
+                  <span className="text-xs font-black uppercase tracking-wider text-black">Hook title</span>
+                  <span className="text-[10px] font-medium text-neutral-500 normal-case tracking-normal">
+                    The clip's hook headline on a title card at the top for the first seconds
+                  </span>
+                </label>
+                <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={keywordHighlightsEnabled}
+                    onChange={(e) => setKeywordHighlightsEnabled(e.target.checked)}
+                    className="w-4 h-4 accent-black cursor-pointer"
+                  />
+                  <span className="text-xs font-black uppercase tracking-wider text-black">AI keyword highlights</span>
+                  <span className="text-[10px] font-medium text-neutral-500 normal-case tracking-normal">
+                    Key words and numbers pop in a second colour inside the captions
                   </span>
                 </label>
               </div>

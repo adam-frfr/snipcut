@@ -17,8 +17,11 @@ import {
   Check,
   AlertCircle,
   Scissors as TrimIcon,
+  Pencil,
+  RotateCcw,
 } from "lucide-react";
 import confetti from "canvas-confetti";
+import { computeKeepRanges, keptDuration, toOutputTime, toSourceTime, Range } from "@/lib/timeline";
 
 /**
  * Studio Editor — fully wired to the real pipeline.
@@ -40,10 +43,20 @@ type LayoutMode = "auto-tracker" | "split-screen" | "blurred-fit" | "center";
 type CaptionStyle = "hormozi" | "neon" | "beast" | "clean" | "kinetic" | "snipcut";
 type Aspect = "9:16" | "1:1" | "16:9";
 
+/** A word on the SOURCE clock (seconds into the original video). */
 interface EditorWord {
   start: number;
   end: number;
   text: string;
+  deleted?: boolean;
+}
+
+interface ClipFx {
+  removeSilences: boolean;
+  broll: boolean;
+  musicBed: boolean;
+  hookTitle: boolean;
+  keywordHighlights: boolean;
 }
 
 function fmt(t: number): string {
@@ -51,6 +64,24 @@ function fmt(t: number): string {
   const m = Math.floor(t / 60);
   const s = t - m * 60;
   return `${m}:${s.toFixed(1).padStart(4, "0")}`;
+}
+
+/** Source-absolute words for a stored clip (older clips only carry clip-relative ones). */
+function sourceWordsOf(c: any): EditorWord[] {
+  if (Array.isArray(c?.sourceWords) && c.sourceWords.length) {
+    return c.sourceWords.map((w: any) => ({
+      start: Number(w.start),
+      end: Number(w.end),
+      text: String(w.text ?? ""),
+      deleted: Boolean(w.deleted),
+    }));
+  }
+  const base = Number(c?.startTime) || 0;
+  return (Array.isArray(c?.transcript) ? c.transcript : []).map((w: any) => ({
+    start: Number(w.start) + base,
+    end: Number(w.end) + base,
+    text: String(w.text ?? ""),
+  }));
 }
 
 function EditorContent() {
@@ -71,11 +102,17 @@ function EditorContent() {
   const [duration, setDuration] = useState(0);
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
 
-  // Trim (clip-relative seconds)
+  // Words + trim live on the SOURCE clock, so trims can reach past the AI's
+  // cut and edits survive silence removal. The preview video plays the
+  // kept ranges of the source back to back (renderedRanges).
+  const [words, setWords] = useState<EditorWord[]>([]);
   const [trimStart, setTrimStart] = useState(0);
   const [trimEnd, setTrimEnd] = useState(0);
   const [previewTrimOnly, setPreviewTrimOnly] = useState(true);
-  const [selectedWordIdx, setSelectedWordIdx] = useState<number | null>(null);
+  const [selA, setSelA] = useState<number | null>(null);
+  const [selB, setSelB] = useState<number | null>(null);
+  const [editText, setEditText] = useState("");
+  const [dirty, setDirty] = useState(false);
 
   // Render settings
   const [layoutMode, setLayoutMode] = useState<LayoutMode>("auto-tracker");
@@ -85,7 +122,15 @@ function EditorContent() {
   const [botCropX, setBotCropX] = useState(75);
   const [captionStyle, setCaptionStyle] = useState<CaptionStyle>("hormozi");
   const [headline, setHeadline] = useState("");
-  const [captionPosY, setCaptionPosY] = useState(70);
+  // null = the style's own default height (same as the generated clip).
+  const [captionPosY, setCaptionPosY] = useState<number | null>(null);
+  const [fx, setFx] = useState<ClipFx>({
+    removeSilences: false,
+    broll: false,
+    musicBed: false,
+    hookTitle: true,
+    keywordHighlights: true,
+  });
 
   // Render state
   const [isRendering, setIsRendering] = useState(false);
@@ -143,8 +188,23 @@ function EditorContent() {
     );
   };
 
+  // Source ranges the current preview video is made of.
+  const clipStart = Number(clip?.startTime) || 0;
+  const clipEnd = Number(clip?.endTime) || clipStart + (Number(clip?.duration) || 0);
+  const renderedRanges: Range[] =
+    Array.isArray(clip?.keepRanges) && clip.keepRanges.length
+      ? clip.keepRanges
+      : clip
+        ? [{ start: clipStart, end: clipEnd }]
+        : [];
+  const renderedFrom = renderedRanges.length ? renderedRanges[0].start : 0;
+  const renderedTo = renderedRanges.length ? renderedRanges[renderedRanges.length - 1].end : 0;
+  const inRendered = (t: number) => renderedRanges.some((r) => t >= r.start - 0.05 && t <= r.end + 0.05);
+  const outOf = (srcT: number) => toOutputTime(renderedRanges, Math.max(renderedFrom, Math.min(renderedTo, srcT)));
 
-  const words: EditorWord[] = Array.isArray(clip?.transcript) ? clip.transcript : [];
+  // Editable window: the clip plus the surrounding source words.
+  const winStart = Math.min(clipStart, words.length ? words[0].start : clipStart);
+  const winEnd = Math.max(clipEnd, words.length ? words[words.length - 1].end : clipEnd);
 
   const applyClip = useCallback((c: any) => {
     setClip(c);
@@ -153,11 +213,25 @@ function EditorContent() {
     setPreviewUrl(c.previewUrl || c.renderedVideoUrl || c.videoUrl || "");
     setMasterUrl(c.renderedVideoUrl || c.videoUrl || "");
     setDuration(Number(c.duration) || 0);
-    setTrimStart(0);
-    setTrimEnd(Number(c.duration) || 0);
+    setWords(sourceWordsOf(c));
+    const s0 = Number(c.startTime) || 0;
+    setTrimStart(s0);
+    setTrimEnd(Number(c.endTime) || s0 + (Number(c.duration) || 0));
     setHeadline(c.hookHeadline || c.title || "");
+    if (c.captionStyle) setCaptionStyle(c.captionStyle);
+    if (c.aspectRatio) setAspectRatio(c.aspectRatio);
+    setFx({
+      removeSilences: Boolean(c.fx?.removeSilences),
+      broll: Boolean(c.fx?.broll),
+      musicBed: Boolean(c.fx?.musicBed),
+      hookTitle: c.fx ? c.fx.hookTitle !== false : true,
+      keywordHighlights: c.fx ? c.fx.keywordHighlights !== false : true,
+    });
     setCurrentTime(0);
-    setSelectedWordIdx(null);
+    setSelA(null);
+    setSelB(null);
+    setEditText("");
+    setDirty(false);
     setRenderError("");
     setRenderNote("");
   }, []);
@@ -184,9 +258,30 @@ function EditorContent() {
     if (videoRef.current) videoRef.current.playbackRate = playbackSpeed;
   }, [playbackSpeed, previewUrl]);
 
+  const srcNow = renderedRanges.length ? toSourceTime(renderedRanges, currentTime) : 0;
   const activeWordIdx = words.findIndex(
-    (w, i) => currentTime >= w.start && (i === words.length - 1 || currentTime < words[i + 1].start)
+    (w, i) => !w.deleted && inRendered(w.start) && srcNow >= w.start && (i === words.length - 1 || srcNow < words[i + 1].start)
   );
+  const selLo = selA === null ? null : Math.min(selA, selB ?? selA);
+  const selHi = selA === null ? null : Math.max(selA, selB ?? selA);
+  const selection = selLo === null || selHi === null ? [] : words.slice(selLo, selHi + 1);
+  const selectionAllDeleted = selection.length > 0 && selection.every((w) => w.deleted);
+
+  // Preview-only playback bounds (output clock) for the current trim.
+  const pStart = outOf(trimStart);
+  const pEnd = trimEnd >= renderedTo ? duration : outOf(trimEnd);
+
+  // What the next render will produce (pauses, fillers, deletions cut).
+  const plannedLength = (() => {
+    const inTrim = words.filter((w) => w.end > trimStart && w.start < trimEnd);
+    if (!fx.removeSilences && !inTrim.some((w) => w.deleted)) return trimEnd - trimStart;
+    const k = computeKeepRanges(inTrim, trimStart, trimEnd, {
+      pauseGap: fx.removeSilences ? 0.55 : Infinity,
+      cutFillers: fx.removeSilences,
+      tightEdges: fx.removeSilences,
+    });
+    return keptDuration(k.ranges);
+  })();
 
   const seekTo = (t: number) => {
     const v = videoRef.current;
@@ -199,7 +294,7 @@ function EditorContent() {
     const v = videoRef.current;
     if (!v) return;
     if (v.paused) {
-      if (previewTrimOnly && (currentTime < trimStart || currentTime >= trimEnd)) seekTo(trimStart);
+      if (previewTrimOnly && pEnd > pStart && (currentTime < pStart || currentTime >= pEnd)) seekTo(pStart);
       v.play().catch(() => {});
     } else {
       v.pause();
@@ -211,25 +306,52 @@ function EditorContent() {
     if (!v) return;
     const t = v.currentTime;
     setCurrentTime(t);
-    if (previewTrimOnly && trimEnd > trimStart && t >= trimEnd) {
+    if (previewTrimOnly && pEnd > pStart && t >= pEnd) {
       v.pause();
-      v.currentTime = trimStart;
-      setCurrentTime(trimStart);
+      v.currentTime = pStart;
+      setCurrentTime(pStart);
     }
+  };
+
+  const clickWord = (idx: number, extend: boolean) => {
+    if (extend && selA !== null) {
+      setSelB(idx);
+    } else {
+      setSelA(idx);
+      setSelB(idx);
+      setEditText(words[idx]?.text || "");
+    }
+    const w = words[idx];
+    if (w && inRendered(w.start)) seekTo(outOf(w.start) + 0.01);
   };
 
   const setTrimStartAtWord = (idx: number) => {
     const w = words[idx];
     if (!w) return;
-    const s = Math.min(w.start, trimEnd - 0.5);
-    setTrimStart(Number(Math.max(0, s).toFixed(2)));
+    setTrimStart(Number(Math.max(winStart, Math.min(w.start, trimEnd - 0.5)).toFixed(2)));
+    setDirty(true);
   };
 
   const setTrimEndAtWord = (idx: number) => {
     const w = words[idx];
     if (!w) return;
-    const e = Math.max(w.end, trimStart + 0.5);
-    setTrimEnd(Number(Math.min(duration || e, e).toFixed(2)));
+    setTrimEnd(Number(Math.min(winEnd, Math.max(w.end, trimStart + 0.5)).toFixed(2)));
+    setDirty(true);
+  };
+
+  const toggleDeleteSelection = () => {
+    if (selLo === null || selHi === null) return;
+    const restore = selectionAllDeleted;
+    setWords((ws) => ws.map((w, i) => (i >= selLo && i <= selHi ? { ...w, deleted: !restore } : w)));
+    setDirty(true);
+  };
+
+  const saveWordText = () => {
+    if (selLo === null || selLo !== selHi) return;
+    const t = editText.trim();
+    if (!t) return;
+    setWords((ws) => ws.map((w, i) => (i === selLo ? { ...w, text: t } : w)));
+    setDirty(true);
   };
 
   const handleRender = async () => {
@@ -242,52 +364,76 @@ function EditorContent() {
       setRenderError("Trim is too short — pick a range of at least 1 second.");
       return;
     }
+    if (plannedLength < 1) {
+      setRenderError("Less than a second would be left after the cuts — restore some words or widen the trim.");
+      return;
+    }
     setIsRendering(true);
     setRenderError("");
     setRenderNote("");
     try {
-      // renderVideoClip expects transcript times ABSOLUTE to the source video
-      const absoluteWords = words.map((w) => ({
-        start: Number((w.start + (clip.startTime || 0)).toFixed(2)),
-        end: Number((w.end + (clip.startTime || 0)).toFixed(2)),
-        text: w.text,
-      }));
-
-      const data = await renderClipWithPolling({
-          inputPath: clip.videoFilePath,
-          startTime: Number(((clip.startTime || 0) + trimStart).toFixed(2)),
-          duration: Number((trimEnd - trimStart).toFixed(2)),
-          aspectRatio,
-          reframeMode: layoutMode,
-          splitScreen: layoutMode === "split-screen",
-          splitScreenOptions:
-            layoutMode === "split-screen"
-              ? { splitRatio: splitRatio / 100, topCropXPercent: topCropX, botCropXPercent: botCropX }
-              : undefined,
-          captionPositionY: captionPosY,
-          transcript: absoluteWords,
-          headline: headline.trim() || undefined,
-          captionStyle,
-      });
-
-      // Rebase the stored clip to the newly rendered segment
-      const newDuration = Number((trimEnd - trimStart).toFixed(2));
-      const rebasedWords = words
+      const sendWords = words
         .filter((w) => w.end > trimStart && w.start < trimEnd)
         .map((w) => ({
-          start: Number(Math.max(0, w.start - trimStart).toFixed(2)),
-          end: Number(Math.max(0.3, w.end - trimStart).toFixed(2)),
+          start: Number(w.start.toFixed(3)),
+          end: Number(w.end.toFixed(3)),
           text: w.text,
+          ...(w.deleted ? { deleted: true } : {}),
         }));
+
+      const data = await renderClipWithPolling({
+        inputPath: clip.videoFilePath,
+        startTime: Number(trimStart.toFixed(2)),
+        duration: Number((trimEnd - trimStart).toFixed(2)),
+        aspectRatio,
+        reframeMode: layoutMode,
+        splitScreen: layoutMode === "split-screen",
+        splitScreenOptions:
+          layoutMode === "split-screen"
+            ? { splitRatio: splitRatio / 100, topCropXPercent: topCropX, botCropXPercent: botCropX }
+            : undefined,
+        captionPositionY: captionPosY ?? undefined,
+        transcript: sendWords,
+        headline: headline.trim() || undefined,
+        captionStyle,
+        // Same effects as the generated clip (they used to be dropped here).
+        removeSilences: fx.removeSilences,
+        broll: fx.broll,
+        music: fx.musicBed,
+        hookTitle: fx.hookTitle,
+        keywords: fx.keywordHighlights ? clip.keyPhrases || [] : null,
+        pexelsKey: localStorage.getItem("snipcut_pexels_key") || undefined,
+        pixabayKey: localStorage.getItem("snipcut_pixabay_key") || undefined,
+      });
+
+      const start = Number(trimStart.toFixed(2));
+      const end = Number(trimEnd.toFixed(2));
       const updated = {
         ...clip,
-        startTime: Number(((clip.startTime || 0) + trimStart).toFixed(2)),
-        endTime: Number(((clip.startTime || 0) + trimEnd).toFixed(2)),
-        duration: newDuration,
+        startTime: start,
+        endTime: end,
+        duration: Number(data.duration) || Number((end - start).toFixed(2)),
+        keepRanges: Array.isArray(data.keepRanges) ? data.keepRanges : undefined,
         videoUrl: data.downloadUrl,
         renderedVideoUrl: data.downloadUrl,
         previewUrl: data.previewDownloadUrl || undefined,
-        transcript: rebasedWords,
+        posterUrl: data.posterUrl || clip.posterUrl,
+        fileSize: data.fileSize,
+        previewFileSize: data.previewFileSize,
+        hookHeadline: headline.trim() || clip.hookHeadline,
+        captionStyle,
+        aspectRatio,
+        fx,
+        // Edits persist: the source words keep their new text / deletions.
+        sourceWords: words,
+        // Clip-relative words (dashboard caption overlay before a render).
+        transcript: words
+          .filter((w) => !w.deleted && w.end > start && w.start < end)
+          .map((w) => ({
+            start: Number(Math.max(0, w.start - start).toFixed(2)),
+            end: Number(Math.max(0.3, w.end - start).toFixed(2)),
+            text: w.text,
+          })),
       };
 
       try {
@@ -305,8 +451,13 @@ function EditorContent() {
       applyClip(updated);
       setPreviewUrl(data.previewDownloadUrl || data.downloadUrl);
       setMasterUrl(data.downloadUrl);
+      const cuts = [
+        data.deletedRemoved ? `${data.deletedRemoved} deleted word${data.deletedRemoved === 1 ? "" : "s"} cut` : "",
+        data.fillersRemoved ? `${data.fillersRemoved} filler${data.fillersRemoved === 1 ? "" : "s"} cut` : "",
+        data.fxSummary || "",
+      ].filter(Boolean);
       setRenderNote(
-        `Re-rendered in ${Math.round((data.timingMs || 0) / 100) / 10}s${data.tracking?.summary ? ` — ${data.tracking.summary}` : ""}`
+        `Re-rendered in ${Math.round((data.timingMs || 0) / 100) / 10}s — ${Number(data.duration || 0).toFixed(1)}s clip${cuts.length ? ` · ${cuts.join(" · ")}` : ""}${data.tracking?.summary ? ` — ${data.tracking.summary}` : ""}`
       );
       try {
         confetti({ particleCount: 70, spread: 65, origin: { y: 0.7 } });
@@ -403,26 +554,61 @@ function EditorContent() {
             <Type className="w-4 h-4" /> Transcript & Hooks
           </h2>
           <p className="text-[10px] font-bold text-neutral-500 mb-3 leading-snug">
-            Click a word to jump the preview to it. Select a word, then set it as the trim start or end. Words outside the trim are dimmed and won't be in the re-render.
+            Click a word to jump the preview to it (shift-click to select a run of words). Set the trim start or end on it — you can reach up to 30s past the AI's cut — fix its text, or delete it: deleted words are cut from the video and the captions.
           </p>
-          <div className="flex gap-2 mb-3">
+          <div className="flex gap-2 mb-2">
             <button
               type="button"
-              disabled={selectedWordIdx === null}
-              onClick={() => selectedWordIdx !== null && setTrimStartAtWord(selectedWordIdx)}
+              disabled={selLo === null}
+              onClick={() => selLo !== null && setTrimStartAtWord(selLo)}
               className="flex-1 px-2 py-1.5 text-[10px] font-black uppercase border-2 border-black bg-[#FFC700] disabled:opacity-40 shadow-[2px_2px_0px_#000000]"
             >
               Set start here
             </button>
             <button
               type="button"
-              disabled={selectedWordIdx === null}
-              onClick={() => selectedWordIdx !== null && setTrimEndAtWord(selectedWordIdx)}
+              disabled={selHi === null}
+              onClick={() => selHi !== null && setTrimEndAtWord(selHi)}
               className="flex-1 px-2 py-1.5 text-[10px] font-black uppercase border-2 border-black bg-white disabled:opacity-40 shadow-[2px_2px_0px_#000000]"
             >
               Set end here
             </button>
           </div>
+          <div className="flex gap-2 mb-2">
+            <button
+              type="button"
+              disabled={selLo === null}
+              onClick={toggleDeleteSelection}
+              className="flex-1 px-2 py-1.5 text-[10px] font-black uppercase border-2 border-black bg-white disabled:opacity-40 shadow-[2px_2px_0px_#000000] flex items-center justify-center gap-1.5"
+            >
+              {selectionAllDeleted ? <RotateCcw className="w-3.5 h-3.5" /> : <Scissors className="w-3.5 h-3.5" />}
+              {selectionAllDeleted
+                ? `Restore${selection.length > 1 ? ` ${selection.length} words` : ""}`
+                : `Delete${selection.length > 1 ? ` ${selection.length} words` : ""}`}
+            </button>
+          </div>
+          {selLo !== null && selLo === selHi && (
+            <div className="flex gap-2 mb-3">
+              <input
+                type="text"
+                value={editText}
+                onChange={(e) => setEditText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") saveWordText();
+                }}
+                aria-label="Caption text for the selected word"
+                className="flex-1 min-w-0 neo-input py-1.5 px-2 text-base sm:text-xs font-bold"
+              />
+              <button
+                type="button"
+                onClick={saveWordText}
+                disabled={!editText.trim() || editText.trim() === words[selLo]?.text}
+                className="px-2.5 py-1.5 text-[10px] font-black uppercase border-2 border-black bg-[#FFC700] disabled:opacity-40 shadow-[2px_2px_0px_#000000] flex items-center gap-1"
+              >
+                <Pencil className="w-3 h-3" /> Fix
+              </button>
+            </div>
+          )}
           <div className="max-h-[430px] overflow-y-auto pr-1 leading-[1.9] text-[13px] font-medium">
             {words.length === 0 && (
               <span className="text-neutral-500 font-bold text-xs">This clip has no word timings stored.</span>
@@ -430,20 +616,20 @@ function EditorContent() {
             {words.map((w, i) => {
               const inTrim = w.end > trimStart && w.start < trimEnd;
               const isActive = i === activeWordIdx;
-              const isSelected = i === selectedWordIdx;
+              const isSelected = selLo !== null && selHi !== null && i >= selLo && i <= selHi;
               return (
                 <button
                   key={i}
                   type="button"
-                  onClick={() => {
-                    setSelectedWordIdx(i);
-                    seekTo(w.start + 0.01);
-                  }}
-                  className={`px-0.5 mx-px border-b-2 transition-colors ${
-                    isActive
-                      ? "bg-[#FFC700] border-black font-black"
-                      : isSelected
+                  onClick={(e) => clickWord(i, e.shiftKey)}
+                  title={w.deleted ? "Deleted — cut from the video" : undefined}
+                  className={`px-0.5 mx-px border-b-2 transition-colors ${w.deleted ? "line-through decoration-2 " : ""}${
+                    isSelected
                       ? "bg-black text-white border-black"
+                      : isActive
+                      ? "bg-[#FFC700] border-black font-black"
+                      : w.deleted
+                      ? "border-transparent text-red-500/70 hover:bg-neutral-100"
                       : inTrim
                       ? "border-transparent hover:bg-[#FFF3C4]"
                       : "border-transparent text-neutral-400 hover:bg-neutral-100"
@@ -521,11 +707,12 @@ function EditorContent() {
               </select>
             </div>
 
-            {/* Trim controls */}
+            {/* Trim controls (source timestamps) */}
             <div className="mt-3.5 pt-3.5 border-t-2 border-black/15">
-              <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
                 <span className="text-[10px] font-black uppercase flex items-center gap-1.5">
-                  <TrimIcon className="w-3.5 h-3.5" /> Trim — {fmt(trimStart)} → {fmt(trimEnd)} ({(trimEnd - trimStart).toFixed(1)}s)
+                  <TrimIcon className="w-3.5 h-3.5" /> Trim — {fmt(trimStart)} → {fmt(trimEnd)} ({(trimEnd - trimStart).toFixed(1)}s
+                  {Math.abs(plannedLength - (trimEnd - trimStart)) > 0.15 ? ` → ${plannedLength.toFixed(1)}s after cuts` : ""})
                 </span>
                 <label className="flex items-center gap-1.5 text-[10px] font-black uppercase cursor-pointer">
                   <input type="checkbox" checked={previewTrimOnly} onChange={(e) => setPreviewTrimOnly(e.target.checked)} className="accent-black" />
@@ -537,11 +724,14 @@ function EditorContent() {
                   <label className="text-[10px] font-bold uppercase text-neutral-500">Start</label>
                   <input
                     type="range"
-                    min={0}
-                    max={Math.max(0.1, duration)}
+                    min={winStart}
+                    max={Math.max(winStart + 0.1, winEnd)}
                     step={0.1}
                     value={trimStart}
-                    onChange={(e) => setTrimStart(Math.min(Number(e.target.value), trimEnd - 0.5))}
+                    onChange={(e) => {
+                      setTrimStart(Math.min(Number(e.target.value), trimEnd - 0.5));
+                      setDirty(true);
+                    }}
                     className="w-full accent-black"
                   />
                 </div>
@@ -549,25 +739,33 @@ function EditorContent() {
                   <label className="text-[10px] font-bold uppercase text-neutral-500">End</label>
                   <input
                     type="range"
-                    min={0}
-                    max={Math.max(0.1, duration)}
+                    min={winStart}
+                    max={Math.max(winStart + 0.1, winEnd)}
                     step={0.1}
                     value={trimEnd}
-                    onChange={(e) => setTrimEnd(Math.max(Number(e.target.value), trimStart + 0.5))}
+                    onChange={(e) => {
+                      setTrimEnd(Math.max(Number(e.target.value), trimStart + 0.5));
+                      setDirty(true);
+                    }}
                     className="w-full accent-black"
                   />
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setTrimStart(0);
-                  setTrimEnd(duration);
-                }}
-                className="mt-1 text-[10px] font-black uppercase underline underline-offset-2"
-              >
-                Reset trim
-              </button>
+              <div className="flex items-center justify-between mt-1 gap-2 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTrimStart(clipStart);
+                    setTrimEnd(clipEnd);
+                  }}
+                  className="text-[10px] font-black uppercase underline underline-offset-2"
+                >
+                  Reset trim
+                </button>
+                {(trimStart < renderedFrom - 0.05 || trimEnd > renderedTo + 0.05) && (
+                  <span className="text-[10px] font-bold text-neutral-500">Extended parts appear after you re-render</span>
+                )}
+              </div>
             </div>
           </div>
         </section>
@@ -665,9 +863,50 @@ function EditorContent() {
 
           <label className="text-[10px] font-bold uppercase text-neutral-500 flex justify-between mb-1">
             <span>Caption height</span>
-            <span>{captionPosY}% from top</span>
+            <span>
+              {captionPosY === null ? "Auto (style default)" : `${captionPosY}% from top`}
+              {captionPosY !== null && (
+                <button type="button" onClick={() => setCaptionPosY(null)} className="ml-1.5 underline underline-offset-2 font-black">
+                  Auto
+                </button>
+              )}
+            </span>
           </label>
-          <input type="range" min={15} max={90} value={captionPosY} onChange={(e) => setCaptionPosY(Number(e.target.value))} className="w-full accent-black mb-5" />
+          <input
+            type="range"
+            min={15}
+            max={90}
+            value={captionPosY ?? 75}
+            onChange={(e) => setCaptionPosY(Number(e.target.value))}
+            className="w-full accent-black mb-1"
+          />
+          <p className="text-[10px] font-bold text-neutral-500 mb-4 leading-snug">On split-screen parts captions always sit on the seam between the speakers.</p>
+
+          <label className="block text-[10px] font-black uppercase mb-1.5">Effects</label>
+          <div className="flex flex-col gap-1.5 mb-5">
+            {(
+              [
+                { key: "removeSilences", label: "Remove silences & fillers" },
+                { key: "hookTitle", label: "Hook title (headline card)" },
+                { key: "keywordHighlights", label: "AI keyword highlights" },
+                { key: "broll", label: "AI B-roll cutaways" },
+                { key: "musicBed", label: "Music bed + punch-in zooms" },
+              ] as { key: keyof ClipFx; label: string }[]
+            ).map((o) => (
+              <label key={o.key} className="flex items-center gap-2 text-[11px] font-black uppercase cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={fx[o.key]}
+                  onChange={(e) => {
+                    setFx((f) => ({ ...f, [o.key]: e.target.checked }));
+                    setDirty(true);
+                  }}
+                  className="w-4 h-4 accent-black cursor-pointer"
+                />
+                {o.label}
+              </label>
+            ))}
+          </div>
 
           {renderError && (
             <div className="mb-3 p-2.5 bg-[#FFE5E5] border-2 border-black text-[11px] font-bold flex gap-2">
@@ -689,10 +928,10 @@ function EditorContent() {
             className="w-full py-3 bg-[#FFC700] hover:bg-black hover:text-white border-2 border-black font-black text-xs uppercase shadow-[3px_3px_0px_#000000] transition flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
           >
             <Wand2 className="w-4 h-4" />
-            {isRendering ? "Rendering…" : "Re-render with these settings"}
+            {isRendering ? "Rendering…" : dirty ? "Re-render with your edits" : "Re-render with these settings"}
           </button>
           <p className="text-[10px] font-bold text-neutral-500 mt-2.5 leading-snug">
-            Re-rendering runs the real engine on the source video (tracking + karaoke captions) with your trim, layout and caption choices, then swaps the preview to the new file and updates the clip on your dashboard.
+            Re-rendering runs the same engine as the original clip on the source video (tracking, captions, effects) with your trim, word edits, layout and caption choices, then swaps the preview to the new file and updates the clip on your dashboard.
           </p>
         </section>
       </main>

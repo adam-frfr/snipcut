@@ -1,0 +1,27 @@
+# Snipcut on a VPS:  docker compose up -d --build
+# Put a reverse proxy with HTTPS in front (see deploy/Caddyfile) and keep
+# port 3000 bound to localhost so the app is only reachable through it.
+services:
+  snipcut:
+    build: .
+    image: snipcut:latest
+    restart: unless-stopped
+    init: true
+    env_file: .env
+    environment:
+      NODE_ENV: production
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      # Jobs, caches, saved YouTube cookies, chunked-upload parts
+      - snipcut-data:/app/data
+      # Source videos and finished clips
+      - snipcut-uploads:/app/public/uploads
+      - snipcut-downloads:/app/public/downloads
+      - snipcut-clips:/app/public/rendered_clips
+
+volumes:
+  snipcut-data:
+  snipcut-uploads:
+  snipcut-downloads:
+  snipcut-clips:

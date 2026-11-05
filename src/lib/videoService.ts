@@ -320,6 +320,10 @@ export interface RenderOptions {
   // Render picture only; captions are burned later by applyPostEffects so
   // they can sit ON TOP of B-roll cutaways instead of underneath them.
   skipCaptions?: boolean;
+  /** AI key phrases to colour in the captions. */
+  keywords?: string[];
+  /** Hook title shown in the upper third for the opening seconds. */
+  hookTitle?: string;
 }
 
 export interface FocusShot {
@@ -381,31 +385,150 @@ interface KaraokeWord {
 }
 
 /**
+ * Caption events must never overlap: libass stacks simultaneous events, so
+ * two karaoke states of one phrase showed as the same line twice (seen in
+ * testing). Overlaps are common — word timings from Whisper overlap, the
+ * renderer pads words to >=0.2s, and silence-removal parts clamp early
+ * words to 0. End every event where the next one starts.
+ */
+export function preventCaptionOverlaps(dialogues: string[]): string[] {
+  const parseT = (s: string) => {
+    const [h, m, sec] = s.split(":");
+    return Number(h) * 3600 + Number(m) * 60 + Number(sec);
+  };
+  const evs = dialogues
+    .map((line) => {
+      const m = /^Dialogue: ([^,]*),([^,]*),([^,]*),(.*)$/.exec(line);
+      return m ? { layer: m[1], start: parseT(m[2]), end: parseT(m[3]), rest: m[4] } : null;
+    })
+    .filter((e): e is { layer: string; start: number; end: number; rest: string } => e !== null)
+    .sort((a, b) => a.start - b.start);
+  const out: string[] = [];
+  for (let i = 0; i < evs.length; i++) {
+    const e = evs[i];
+    const next = evs[i + 1];
+    const end = next && next.start > e.start ? Math.min(e.end, next.start) : e.end;
+    if (end - e.start < 0.03) continue;
+    out.push(`Dialogue: ${e.layer},${formatAssTime(e.start)},${formatAssTime(end)},${e.rest}`);
+  }
+  return out;
+}
+
+/**
  * Karaoke-style captions: a short phrase stays
  * on screen while the currently-spoken word is highlighted in the accent
  * colour. Emitted as ASS with one Dialogue event per word; each event
  * re-renders the whole phrase with a different word highlighted, so there
  * is never a flicker or a lonely single word on screen.
  */
+export interface CaptionOptions {
+  /** AI key phrases; their words (and any number) get a highlight colour. */
+  keywords?: string[];
+  /** Clip-relative spans where captions sit mid-screen (split-screen seam). */
+  centerSpans?: { start: number; end: number }[];
+  /** Hook title drawn in the upper third for the opening seconds. */
+  hook?: { text: string; until?: number };
+  /** Caption height was chosen by the user: every style honours marginV. */
+  customMarginV?: boolean;
+}
+
+const KEYWORD_STOPWORDS = new Set(
+  "the a an and or but of to in on at for with from by is are was were be been being it its this that these those you your we our they their he she his her i me my mine us them as so if not no do does did have has had just very really than then there here what which who whom how why when where can could would should will shall may might must about into over under more most less much many some any all".split(" ")
+);
+
+const normWord = (t: string) => t.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+/** Words (normalised) that make up the clip's key phrases. */
+export function keywordSet(phrases?: string[]): Set<string> {
+  const out = new Set<string>();
+  for (const p of phrases || []) {
+    for (const raw of String(p || "").split(/\s+/)) {
+      const w = normWord(raw);
+      if (w.length >= 3 && !KEYWORD_STOPWORDS.has(w)) out.add(w);
+    }
+  }
+  return out;
+}
+
+/** Hard-wrap a title into lines of at most `max` characters (libass WrapStyle 2 never wraps). */
+export function wrapTitle(text: string, max: number): string[] {
+  const words = text.split(/\s+/).filter(Boolean);
+  const lines: string[] = [];
+  let cur = "";
+  for (const w of words) {
+    if (cur && (cur + " " + w).length > max) {
+      lines.push(cur);
+      cur = w;
+    } else {
+      cur = cur ? `${cur} ${w}` : w;
+    }
+  }
+  if (cur) lines.push(cur);
+  return lines.slice(0, 3);
+}
+
+export function stripEmoji(text: string): string {
+  return text
+    .replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{2B00}-\u{2BFF}\u{200D}]/gu, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export function buildKaraokeAss(
   words: KaraokeWord[],
   captionStyle: "hormozi" | "neon" | "beast" | "clean" | "kinetic" | "snipcut",
   marginV: number,
-  playRes: { x: number; y: number } = { x: 1080, y: 1920 }
+  playRes: { x: number; y: number } = { x: 1080, y: 1920 },
+  options: CaptionOptions = {}
 ): string {
-  // ASS colours are &HAABBGGRR.
+  // ASS colours are &HAABBGGRR. `kw` = keyword highlight colour (differs
+  // from the spoken-word accent so both read at once).
   const palettes = {
-    hormozi: { base: "&H00FFFFFF", accent: "&H0000FFFF", size: 56, outline: 6 },
-    neon: { base: "&H00FFFFFF", accent: "&H0000FF00", size: 56, outline: 6 },
-    beast: { base: "&H00FFFFFF", accent: "&H0000FFFF", size: 62, outline: 8 },
-    clean: { base: "&H00FFFFFF", accent: "&H00FFFFFF", size: 46, outline: 3 },
-    kinetic: { base: "&H00FFFFFF", accent: "&H0000FFFF", size: 98, outline: 9 },
-    snipcut: { base: "&H00FFFFFF", accent: "&H0000FFFF", size: 74, outline: 10 },
+    hormozi: { base: "&H00FFFFFF", accent: "&H0000FFFF", kw: "&H006BE322", size: 56, outline: 6 },
+    neon: { base: "&H00FFFFFF", accent: "&H0000FF00", kw: "&H0000E5FF", size: 56, outline: 6 },
+    beast: { base: "&H00FFFFFF", accent: "&H0000FFFF", kw: "&H00303BFF", size: 62, outline: 8 },
+    clean: { base: "&H00FFFFFF", accent: "&H00FFFFFF", kw: "&H00FFFFFF", size: 46, outline: 3 },
+    kinetic: { base: "&H00FFFFFF", accent: "&H0000FFFF", kw: "&H006BE322", size: 98, outline: 9 },
+    snipcut: { base: "&H00FFFFFF", accent: "&H0000FFFF", kw: "&H006BE322", size: 74, outline: 10 },
   } as const;
+  const kwSet = keywordSet(options.keywords);
+  const isKeyword = (t: string) => {
+    if (captionStyle === "clean") return false;
+    const n = normWord(t);
+    return n.length > 0 && (kwSet.has(n) || /\d/.test(n));
+  };
+  const centerSpans = options.centerSpans || [];
+  // Split-screen: captions on the seam between the two panels, never over a face.
+  const posTag = (t: number) =>
+    centerSpans.some((s) => t >= s.start - 0.05 && t < s.end) ? "{\\an5}" : "";
   const pal = palettes[captionStyle] || palettes.hormozi;
   // Font size is authored against a 1920px-tall canvas; scale it to the
   // actual PlayRes so 16:9 / 1:1 renders don't get oversized captions.
-  const fontSize = Math.max(20, Math.round(pal.size * (playRes.y / 1920)));
+  // Sizes are authored for a 1080px-wide 9:16 frame. Scale by the SHORT
+  // side so 16:9 and 1:1 captions are as readable as 9:16 ones (scaling by
+  // height/1920 shrank 16:9 captions to 56% — unreadable on a phone).
+  const captionScale = Math.min(playRes.x, playRes.y) / 1080;
+  const fontSize = Math.max(20, Math.round(pal.size * captionScale));
+  const snipcutMarginV = options.customMarginV ? marginV : Math.round(playRes.y * 0.16);
+  const hookSize = Math.max(20, Math.round(68 * captionScale));
+
+  // Hook title: short white card with black text in the upper third
+  // (clear of the platform UI) for the opening seconds, like pro edits.
+  const hookEvents: string[] = [];
+  const hookText = options.hook?.text ? stripEmoji(options.hook.text) : "";
+  if (hookText) {
+    const lastWordEnd = words.length ? words[words.length - 1].end : 3.2;
+    const until = Math.max(1.2, Math.min(options.hook?.until ?? 3.2, lastWordEnd));
+    const maxChars = Math.max(10, Math.floor((playRes.x - 180) / (0.62 * hookSize)));
+    const lines = wrapTitle(hookText, maxChars).map((l) =>
+      l.replace(/\\/g, "\\\\").replace(/\{/g, "\\{").replace(/\}/g, "\\}")
+    );
+    if (lines.length) {
+      hookEvents.push(
+        `Dialogue: 1,${formatAssTime(0)},${formatAssTime(until)},Hook,,0,0,0,,{\\fad(120,220)\\fscx88\\fscy88\\t(0,160,1,\\fscx100\\fscy100)}${lines.join("\\N")}`
+      );
+    }
+  }
 
   const header = `[Script Info]
 Title: Snipcut Karaoke Captions
@@ -419,11 +542,13 @@ ScaledBorderAndShadow: yes
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Karaoke,Arial,${fontSize},${pal.base},${pal.base},&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,${pal.outline},2,2,60,60,${marginV},1
 Style: Kinetic,Arial,${fontSize},${pal.base},${pal.base},&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,${pal.outline},3,5,40,40,0,1
-Style: Opus,Arial,${Math.max(20, Math.round(74 * (playRes.y / 1920)))},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,10,2,2,50,50,${Math.round(playRes.y * 0.16)},1
+Style: Snipcut,Arial,${Math.max(20, Math.round(74 * captionScale))},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,10,2,2,50,50,${snipcutMarginV},1
+Style: Hook,Arial,${hookSize},&H00111111,&H00111111,&H00FFFFFF,&H00000000,-1,0,0,0,100,100,0,0,3,${Math.max(6, Math.round(20 * captionScale))},0,8,80,80,${Math.round(playRes.y * 0.11)},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 `;
+  const finish = (evts: string[]) => header + [...preventCaptionOverlaps(evts), ...hookEvents].join("\n") + "\n";
 
   const escapeAssText = (t: string) => t.replace(/\\/g, "\\\\").replace(/\{/g, "\\{").replace(/\}/g, "\\}");
 
@@ -432,13 +557,25 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     // words sit low-centre; the whole phrase stays on screen while the
     // spoken word turns accent-yellow with a slight pop. Auto-fit keeps
     // long phrases inside the frame (theirs occasionally overflow).
-    const snipcutFont = Math.max(20, Math.round(74 * (playRes.y / 1920)));
+    const snipcutFont = Math.max(20, Math.round(74 * captionScale));
+    // Estimated rendered width of a phrase (same model as the auto-fit below).
+    const phraseWidth = (ws: KaraokeWord[]) =>
+      ws.reduce((sum, pw, i) => sum + pw.text.length * 0.66 * snipcutFont * 1.16 + (i > 0 ? 0.32 * snipcutFont : 0), 0);
+    const lineBudget = playRes.x - 100;
     const phrases: KaraokeWord[][] = [];
     let cur: KaraokeWord[] = [];
     for (const w of words) {
       if (cur.length > 0) {
         const prev = cur[cur.length - 1];
-        if (cur.length >= 5 || w.start - prev.end > 0.5 || /[.!?]$/.test(prev.text)) {
+        // Also break before a word that would overflow the line: long
+        // phrases used to be shrunk to fit, so caption size jumped between
+        // big and small from one phrase to the next.
+        if (
+          cur.length >= 5 ||
+          w.start - prev.end > 0.5 ||
+          /[.!?]$/.test(prev.text) ||
+          phraseWidth([...cur, w]) > lineBudget
+        ) {
           phrases.push(cur);
           cur = [];
         }
@@ -464,14 +601,16 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
           if (j === i) {
             return `{\\c${pal.accent}\\fs${Math.round(snipcutFont * fit * 1.16)}\\fscx116\\fscy116\\t(0,90,1,\\fscx100\\fscy100)}${txt}{\\r}`;
           }
-          return fit < 1 ? `{\\fs${Math.round(snipcutFont * fit)}}${txt}{\\r}` : txt;
+          const kw = isKeyword(pw.text) ? `\\c${pal.kw}` : "";
+          if (fit < 1 || kw) return `{${kw}${fit < 1 ? `\\fs${Math.round(snipcutFont * fit)}` : ""}}${txt}{\\r}`;
+          return txt;
         });
         evts.push(
-          `Dialogue: 0,${formatAssTime(w.start)},${formatAssTime(evEnd)},Snipcut,,0,0,0,,${parts.join(" ")}`
+          `Dialogue: 0,${formatAssTime(w.start)},${formatAssTime(evEnd)},Snipcut,,0,0,0,,${posTag(w.start)}${parts.join(" ")}`
         );
       }
     }
-    return header + evts.join("\n") + "\n";
+    return finish(evts);
   }
 
   if (captionStyle === "kinetic") {
@@ -504,6 +643,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
       chunk.forEach((w, i) => {
         if (/\d/.test(w.text) || w.text.replace(/[^A-Za-z]/g, "").length >= chunk[emph].text.replace(/[^A-Za-z]/g, "").length) emph = i;
       });
+      // An AI key phrase word beats the length heuristic.
+      const kwIdx = chunk.findIndex((w) => isKeyword(w.text));
+      if (kwIdx >= 0) emph = kwIdx;
       // Auto-fit: Arial Bold uppercase averages ~0.68em per glyph; if the
       // chunk would overflow the canvas, shrink the whole event uniformly.
       const avail = playRes.x - 96;
@@ -514,14 +656,16 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
       const fitScale = estWidth > avail ? Math.max(0.55, avail / estWidth) : 1;
       const parts = chunk.map((w, i) => {
         const txt = escapeAssText(w.text.toUpperCase());
-        return i === emph && chunk.length > 1
-          ? `{\\c${pal.accent}\\fs${Math.round(fontSize * fitScale * 1.14)}}${txt}{\\r}`
-          : txt;
+        if (i === emph && chunk.length > 1) {
+          const col = isKeyword(w.text) ? pal.kw : pal.accent;
+          return `{\\c${col}\\fs${Math.round(fontSize * fitScale * 1.14)}}${txt}{\\r}`;
+        }
+        return txt;
       });
       const anim = `{\\fad(45,60)${fitScale < 1 ? `\\fs${Math.round(fontSize * fitScale)}` : ""}\\fscx115\\fscy115\\t(0,110,1,\\fscx100\\fscy100)}`;
       evts.push(`Dialogue: 0,${formatAssTime(start)},${formatAssTime(end)},Kinetic,,0,0,0,,${anim}${parts.join(" ")}`);
     });
-    return header + evts.join("\n") + "\n";
+    return finish(evts);
   }
 
   // Group words into phrases: max 4 words, break on sentence punctuation
@@ -554,15 +698,36 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         if (captionStyle === "clean") {
           return j === i ? `{\\b1}${txt}{\\b0}` : txt;
         }
-        if (j === i) return `{\\c${pal.accent}\\fs${Math.round(pal.size * 1.12)}}${txt}{\\r}`;
+        if (j === i) return `{\\c${pal.accent}\\fs${Math.round(fontSize * 1.12)}}${txt}{\\r}`;
+        if (isKeyword(pw.text)) return `{\\c${pal.kw}}${txt}{\\r}`;
         return txt;
       });
       events.push(
-        `Dialogue: 0,${formatAssTime(evStart)},${formatAssTime(evEnd)},Karaoke,,0,0,0,,${parts.join(" ")}`
+        `Dialogue: 0,${formatAssTime(evStart)},${formatAssTime(evEnd)},Karaoke,,0,0,0,,${posTag(evStart)}${parts.join(" ")}`
       );
     }
   }
-  return header + events.join("\n") + "\n";
+  return finish(events);
+}
+
+/**
+ * Clip-relative spans where captions should sit mid-screen: the whole clip
+ * for a split-screen render, or each split layout segment of a mixed
+ * (crop / fit / split) render. Bottom captions there cover the lower
+ * speaker's face; the seam between the panels is free.
+ */
+export function captionCenterSpans(
+  tracking: TrackingResult | null | undefined,
+  duration: number,
+  aspectRatio: string
+): { start: number; end: number }[] {
+  if (!tracking || aspectRatio !== "9:16") return [];
+  if (tracking.mode === "split-screen" && tracking.filter_type === "filter_complex") {
+    return [{ start: 0, end: duration }];
+  }
+  return (tracking.layoutSegments || [])
+    .filter((s) => s.layout === "split")
+    .map((s) => ({ start: s.start, end: s.end }));
 }
 
 /**
@@ -574,7 +739,8 @@ export async function detectSubjectAndReframe(
   startTime: number,
   duration: number,
   mode: ReframeMode = "auto-tracker",
-  speechSpans?: { start: number; end: number }[]
+  speechSpans?: { start: number; end: number }[],
+  aspect: "9:16" | "1:1" = "9:16"
 ): Promise<TrackingResult> {
   return new Promise((resolve) => {
     const scriptPath = path.join(process.cwd(), "scripts", "track_reframe.py");
@@ -604,6 +770,8 @@ export async function detectSubjectAndReframe(
       String(duration),
       "--mode",
       mode,
+      "--aspect",
+      aspect,
     ];
     if (speechSpans && speechSpans.length > 0) {
       try {
@@ -687,6 +855,8 @@ export async function renderVideoClip({
   headline,
   captionStyle = "hormozi",
   skipCaptions = false,
+  keywords,
+  hookTitle,
 }: RenderOptions): Promise<{ outputPath: string; tracking: TrackingResult }> {
   // Resolve input and output paths safely strictly within allowed directories
   const resolvedInput = resolveSafeFilePath(inputPath);
@@ -765,6 +935,18 @@ export async function renderVideoClip({
       } catch (e) {
         console.warn("AI Tracking warning:", e);
       }
+    }
+  } else if (aspectRatio === "1:1" && (effectiveMode === "auto-tracker" || effectiveMode === "split-screen")) {
+    // Square output follows the speaker too (it used to be a fixed centre
+    // crop that cut two-person shots in half). Split/fit layouts are 9:16-
+    // only, so 1:1 always gets the tracked single crop.
+    try {
+      const tracked = await detectSubjectAndReframe(resolvedInput, startTime, duration, "auto-tracker", transcript, "1:1");
+      if (tracked?.status === "success" && tracked.filter_type === "vf" && /scale=1080:1080/.test(tracked.filter_value || "")) {
+        trackingResult = { ...tracked, layoutSegments: [] };
+      }
+    } catch (e) {
+      console.warn("AI Tracking warning (1:1):", e);
     }
   }
 
@@ -858,11 +1040,21 @@ export async function renderVideoClip({
       if (captionPositionY !== undefined) {
         marginV = Math.max(60, Math.min(playRes.y - 120, Math.round(playRes.y * (1 - captionPositionY / 100))));
       }
+      const fromWords = Boolean(transcript && transcript.length > 0);
       const assContent = buildKaraokeAss(
         srtEntries.map((e) => ({ start: e.start, end: e.end, text: e.text })),
         captionStyle,
         marginV,
-        playRes
+        playRes,
+        {
+          keywords,
+          centerSpans:
+            effectiveMode === "auto-tracker" || effectiveMode === "split-screen"
+              ? captionCenterSpans(trackingResult, duration, aspectRatio)
+              : [],
+          hook: fromWords && hookTitle ? { text: hookTitle } : undefined,
+          customMarginV: captionPositionY !== undefined,
+        }
       );
 
       tempSrtPath = path.join(dir, `sub-${Date.now()}-${Math.floor(Math.random() * 1000)}.ass`);
@@ -904,7 +1096,10 @@ export async function renderVideoClip({
         command = command.videoFilters(filters);
       }
     } else if (aspectRatio === "1:1") {
-      const filters = ["scale=1080:1080:force_original_aspect_ratio=increase,crop=1080:1080"];
+      const tracked1x1 = /scale=1080:1080/.test(trackingResult.filter_value || "");
+      const filters = [
+        tracked1x1 ? trackingResult.filter_value : "scale=1080:1080:force_original_aspect_ratio=increase,crop=1080:1080",
+      ];
       if (subtitleFilterStr) {
         filters.push(subtitleFilterStr);
       }
@@ -1136,6 +1331,9 @@ export interface PostFxOptions {
   broll: BrollCue[];
   punches: { start: number; end: number }[]; // clip-relative
   musicBed: boolean;
+  /** Same caption extras as renderVideoClip (times clip-relative). */
+  captionOptions?: CaptionOptions;
+  captionPositionY?: number;
 }
 
 function punchZoomExpr(punches: { start: number; end: number }[], fps = 30): string {
@@ -1314,11 +1512,16 @@ export async function renderSegmentedClip(opts: {
 export function shapeBrollCues<T extends { start: number; end: number }>(cues: T[], duration: number): T[] {
   const MAX_CUE = 2.5;
   const MIN_GAP = 1.5;
+  // The first seconds are the hook: viewers decide to stay by seeing the
+  // speaker say it. A cutaway at 0s (seen in testing: 3s of stock laptop
+  // footage over the opening line) hides exactly that, and becomes the
+  // thumbnail too. Keep the speaker on screen for the opening.
+  const HOOK_CLEAR = Math.min(3.0, duration * 0.2);
   const budget = Math.max(0, duration * 0.2);
   const sorted = [...cues].sort((a, b) => a.start - b.start);
   const out: T[] = [];
   let used = 0;
-  let lastEnd = -Infinity;
+  let lastEnd = HOOK_CLEAR - MIN_GAP;
   for (const cue of sorted) {
     const start = Math.max(cue.start, lastEnd + MIN_GAP);
     if (start >= duration - 0.4) continue;
@@ -1424,11 +1627,16 @@ export async function applyPostEffects(opts: PostFxOptions): Promise<void> {
   if (opts.words.length > 0) {
     const playRes =
       opts.aspectRatio === "16:9" ? { x: 1920, y: 1080 } : opts.aspectRatio === "1:1" ? { x: 1080, y: 1080 } : { x: 1080, y: 1920 };
+    const marginV =
+      opts.captionPositionY !== undefined
+        ? Math.max(60, Math.min(playRes.y - 120, Math.round(playRes.y * (1 - opts.captionPositionY / 100))))
+        : Math.round(playRes.y * 0.27);
     const assContent = buildKaraokeAss(
       opts.words.map((w) => ({ start: w.start, end: w.end, text: w.text })),
       opts.captionStyle,
-      Math.round(playRes.y * 0.27),
-      playRes
+      marginV,
+      playRes,
+      { ...(opts.captionOptions || {}), customMarginV: opts.captionPositionY !== undefined }
     );
     const fxDir = path.join(process.cwd(), "data", "postfx");
     fs.mkdirSync(fxDir, { recursive: true });
@@ -1466,4 +1674,75 @@ export async function applyPostEffects(opts: PostFxOptions): Promise<void> {
       try { fs.unlinkSync(assPath); } catch {}
     }
   }
+}
+
+/**
+ * Silence removal: cut `ranges` (seconds relative to the start of
+ * `inputPath`) out of an already-rendered clip and join them in ONE
+ * frame-exact trim/concat pass. Rendering the whole clip first and cutting
+ * afterwards means the tracker, split layout and captions all run over one
+ * continuous timeline — tracking each kept piece separately restarted the
+ * camera at every join (a short piece could open on an empty background).
+ * Range edges snap to the frame grid so audio and video stay the same
+ * length across many joins. Returns the joined duration in seconds.
+ */
+export async function cutKeepRanges(
+  inputPath: string,
+  outputPath: string,
+  ranges: { start: number; end: number }[]
+): Promise<number> {
+  const { stdout } = await execFileP(getFfprobeBinary(), [
+    "-v", "error", "-show_entries", "stream=codec_type,r_frame_rate:format=duration", "-of", "json", inputPath,
+  ]);
+  const info = JSON.parse(stdout || "{}");
+  const streams: { codec_type?: string; r_frame_rate?: string }[] = info.streams || [];
+  const v = streams.find((s) => s.codec_type === "video");
+  const hasAudio = streams.some((s) => s.codec_type === "audio");
+  const [num, den] = String(v?.r_frame_rate || "30/1").split("/").map(Number);
+  const fps = num > 0 && den > 0 ? num / den : 30;
+  const total = Number(info.format?.duration) || Infinity;
+
+  // Snap to frames, clamp to the file, merge overlaps (filler cuts can
+  // leave neighbouring ranges touching), drop slivers.
+  const snapped = ranges
+    .map((r) => ({
+      start: Math.max(0, Math.round(r.start * fps) / fps),
+      end: Math.min(total, Math.round(r.end * fps) / fps),
+    }))
+    .sort((a, b) => a.start - b.start);
+  const merged: { start: number; end: number }[] = [];
+  for (const r of snapped) {
+    const last = merged[merged.length - 1];
+    if (last && r.start <= last.end + 0.5 / fps) last.end = Math.max(last.end, r.end);
+    else if (r.end - r.start >= 1.5 / fps) merged.push({ ...r });
+  }
+  if (merged.length === 0) throw new Error("Silence removal left nothing to keep");
+
+  const f = (n: number) => n.toFixed(6);
+  const parts: string[] = [];
+  const labels: string[] = [];
+  merged.forEach((r, i) => {
+    parts.push(`[0:v]trim=start=${f(r.start)}:end=${f(r.end)},setpts=PTS-STARTPTS[v${i}]`);
+    labels.push(`[v${i}]`);
+    if (hasAudio) {
+      parts.push(`[0:a]atrim=start=${f(r.start)}:end=${f(r.end)},asetpts=PTS-STARTPTS[a${i}]`);
+      labels.push(`[a${i}]`);
+    }
+  });
+  const fc = `${parts.join(";")};${labels.join("")}concat=n=${merged.length}:v=1:a=${hasAudio ? 1 : 0}[v]${hasAudio ? "[a]" : ""}`;
+  const fcPath = path.join(os.tmpdir(), `snipcut-cut-${process.pid}-${Date.now()}.txt`);
+  fs.writeFileSync(fcPath, fc, "utf-8");
+  try {
+    await execFileP(getFfmpegBinary(), [
+      "-hide_banner", "-loglevel", "error", "-y", "-i", inputPath,
+      "-filter_complex_script", fcPath,
+      "-map", "[v]", ...(hasAudio ? ["-map", "[a]"] : []),
+      "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
+      ...(hasAudio ? ["-c:a", "aac", "-b:a", "192k"] : []),
+      "-movflags", "+faststart", outputPath,
+    ], { maxBuffer: 64 * 1024 * 1024 });
+  } finally {
+    try { fs.unlinkSync(fcPath); } catch {}
+  }
+  return merged.reduce((s, r) => s + (r.end - r.start), 0);
 }

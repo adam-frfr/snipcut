@@ -151,6 +151,10 @@ export function resolveCookieArg(requestCookies?: string): { arg: string; tempFi
 /** Turn raw yt-dlp failures into messages a human can act on. */
 export function friendlyDownloadError(rawError: string): string {
   const e = rawError || "";
+  // Server setup problem, not the user's link — say so.
+  if (/yt-dlp binary not found|ENOENT/i.test(e)) {
+    return "YouTube downloads aren't set up on this server (yt-dlp is not installed). Upload the video file instead, or ask the site owner to install yt-dlp.";
+  }
   if (/not a bot|Sign in to confirm/i.test(e)) {
     return "YouTube blocked this download with its bot check. Add fresh YouTube cookies in Settings (API Keys → YouTube Cookies) and use the Test button to verify them, then try again.";
   }

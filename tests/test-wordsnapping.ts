@@ -136,20 +136,18 @@ const overlappingClips: CuratedClipResult[] = [
 ];
 
 const result4 = snapAndValidateClips(overlappingClips, words, { totalDuration, minDuration: 3.0 });
-assert.strictEqual(result4.length, 2, "Second clip trimmed, third clip dropped");
+// A trimmed clip now starts on the first WORD after the earlier clip ends
+// (not at the earlier clip's end time, which opened clips mid-sentence or on
+// dead air). Here the only speech left after "hoop." (44.5s) is "Done." at
+// 50.0s, so both later clips would be a lone word: under the 3s minimum,
+// they are dropped rather than shipped as 5s of silence plus one word.
+// (A trim that keeps the clip is covered in test-clip-boundaries.ts.)
+assert.strictEqual(result4.length, 1, "Both overlapping later clips dropped (no usable speech after the earlier clip)");
 console.log(`-> Accepted Clip #1: [${result4[0].startTime}s - ${result4[0].endTime}s] "${result4[0].title}"`);
-console.log(`-> Accepted Clip #2: [${result4[1].startTime}s - ${result4[1].endTime}s] "${result4[1].title}"`);
-
-const overlap = Number((result4[0].endTime - result4[1].startTime).toFixed(2));
-assert.ok(
-  overlap <= 0.5,
-  `Overlap (${overlap}s) between adjacent clips must be <= 0.5s`
-);
-assert.strictEqual(
-  result4[1].startTime,
-  result4[0].endTime,
-  `Later clip start must be trimmed to earlier clip's end (${result4[0].endTime}s)`
-);
-console.log("-> PASS: Later overlapping clip's start trimmed to prevent >0.5s overlap, untrimmable clip dropped");
+for (let i = 1; i < result4.length; i++) {
+  const overlap = Number((result4[i - 1].endTime - result4[i].startTime).toFixed(2));
+  assert.ok(overlap <= 0.5, `Overlap (${overlap}s) between adjacent clips must be <= 0.5s`);
+}
+console.log("-> PASS: Overlapping clips never overlap >0.5s; clips with no real speech after trimming are dropped");
 
 console.log("\nALL WORD SNAPPING FIXES & REGRESSION TESTS PASSED!\n");
