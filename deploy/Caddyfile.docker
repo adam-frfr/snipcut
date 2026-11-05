@@ -1,0 +1,19 @@
+# Caddy for the optional "https" compose profile:
+#   set DOMAIN=clips.yourdomain.com in .env, then
+#   docker compose --profile https up -d --build
+# Caddy gets a Let's Encrypt certificate for $DOMAIN automatically (its DNS
+# A record must point at this server, and ports 80/443 must be free).
+{$DOMAIN} {
+	# Landing-page uploads send the whole file in one request (up to 2 GB);
+	# dashboard uploads send 2 MB chunks. Allow both.
+	request_body {
+		max_size 2200MB
+	}
+
+	reverse_proxy snipcut:3000 {
+		transport http {
+			read_timeout 30m
+			write_timeout 30m
+		}
+	}
+}
