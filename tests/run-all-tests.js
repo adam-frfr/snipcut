@@ -27,6 +27,11 @@ const tests = [
     args: ["tsx", path.join(__dirname, "test-adaptive-fx.ts")],
   },
   {
+    name: "Download All: Streaming ZIP Is Valid",
+    cmd: "npx",
+    args: ["tsx", path.join(__dirname, "test-zip.ts")],
+  },
+  {
     name: "Job Lock: One Worker Per Job",
     cmd: "npx",
     args: ["tsx", path.join(__dirname, "test-job-lock.ts")],
