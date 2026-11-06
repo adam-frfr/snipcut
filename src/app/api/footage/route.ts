@@ -18,6 +18,15 @@ const MAX_BYTES = 300 * 1024 * 1024;
 const EXT = /\.(mp4|mov|webm|mkv)$/i;
 const ID = /^[a-z0-9-]{1,60}\.(mp4|mov|webm|mkv)$/;
 type Index = Record<string, { name: string; duration: number }>;
+// Footage is kept until deleted, so cap how much can pile up on the disk.
+const MAX_FILES = Math.max(1, Number(process.env.MAX_USER_FOOTAGE) || 20);
+const storedCount = () => {
+  try {
+    return fs.readdirSync(/*turbopackIgnore: true*/ USER_FOOTAGE_DIR()).filter((f) => ID.test(f)).length;
+  } catch {
+    return 0;
+  }
+};
 
 function readIndex(): Index {
   try {
@@ -50,6 +59,9 @@ export async function POST(req: NextRequest) {
   } catch {}
   const ext = (EXT.exec(name)?.[1] || "").toLowerCase();
   if (!ext) return NextResponse.json({ error: "Upload an MP4, MOV, WebM or MKV video." }, { status: 415 });
+  if (storedCount() >= MAX_FILES) {
+    return NextResponse.json({ error: `You can keep up to ${MAX_FILES} footage files. Delete one to upload another.` }, { status: 409 });
+  }
   if (Number(req.headers.get("content-length") || 0) > MAX_BYTES) {
     return NextResponse.json({ error: "Footage can be up to 300 MB." }, { status: 413 });
   }

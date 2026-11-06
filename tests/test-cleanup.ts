@@ -36,6 +36,9 @@ const livePostfx = file(`data/postfx/${tag}-live.ass`, 0.5);
 const staleVo = file(`data/voiceover/${tag}.mp3`, 5);
 const music = file(`data/music/user/${tag}.mp3`, 500);
 const job = file(`data/jobs/${tag}.json`, 500);
+const oldDebug = file(`data/debug/transcript-${tag}.json`, 30);
+const oldCache = file(`data/cache/transcripts/${tag}.json`, 30);
+const freshCache = file(`data/cache/renders/${tag}.json`, 1);
 
 const res = cleanupExpiredFiles(24);
 const gone = (p: string) => !fs.existsSync(p);
@@ -46,6 +49,8 @@ check(!gone(freshBroll), "fresh B-roll is kept");
 check(gone(stalePostfx) && gone(staleVo), "temp files from a crashed render go after 3h");
 check(!gone(livePostfx), "a render's temp files in use are kept");
 check(!gone(music) && !gone(job), "uploaded music and job records are never deleted");
+check(gone(oldDebug) && gone(oldCache), "old transcript dumps and caches are deleted");
+check(!gone(freshCache) && fs.existsSync(path.join(process.cwd(), "data/cache/transcripts")), "fresh cache entries and the cache folders themselves are kept");
 check(res.deletedFiles >= 5, `reports what it deleted (${res.deletedFiles} files)`);
 
 startCleanupTimer();

@@ -12,6 +12,7 @@ import { acquireJobLock, releaseJobLock } from "./jobLock";
 import { resolveSafeFilePath, extractAudioForWhisper, generatePreviewClip, generatePosterImage, generateSourcePoster } from "./videoService";
 import { downloadYoutubeVideo, normalizeUploadedVideo } from "./mediaPrep";
 import { buildHighlightReel } from "./highlightReel";
+import { hasBrollSource } from "./brollService";
 
 
 // Keep-range logic lives in ./timeline (shared with the editor); re-exported
@@ -597,7 +598,7 @@ class JobQueueManager {
         const captionStyle = job.options.captionStyle || "hormozi";
 
         // Render cache key: sha256(sourceHash:start:end:mode:captionStyle:aspectRatio)
-        const renderKeyRaw = `${sourceHash}:${clip.startTime}:${clip.endTime}:${reframeMode}:${captionStyle}:${aspectRatio}:${job.options.removeSilences ? "tight2" : "full"}:fx${job.options.broll ? "b" : ""}${job.options.musicBed ? "m" : ""}:v3${job.options.hookTitle === false ? "" : "h"}${job.options.keywordHighlights === false ? "" : "k"}:s${JSON.stringify({ ...normalizeClipStyle(job.options.clipStyle), highlightReel: false })}:f${job.options.captionFont || ""}`;
+        const renderKeyRaw = `${sourceHash}:${clip.startTime}:${clip.endTime}:${reframeMode}:${captionStyle}:${aspectRatio}:${job.options.removeSilences ? "tight2" : "full"}:fx${job.options.broll ? (hasBrollSource({ pexelsKey: job.options.pexelsKey, pixabayKey: job.options.pixabayKey, unsplashKey: job.options.unsplashKey, openaiKey: job.options.openaiKey }) ? "b" : "b0") : ""}${job.options.musicBed ? "m" : ""}:v3${job.options.hookTitle === false ? "" : "h"}${job.options.keywordHighlights === false ? "" : "k"}:s${JSON.stringify({ ...normalizeClipStyle(job.options.clipStyle), highlightReel: false })}:f${job.options.captionFont || ""}`;
         const renderKey = crypto.createHash("sha256").update(renderKeyRaw).digest("hex");
         const renderCachePath = path.join(RENDERS_CACHE_DIR, `${renderKey}.json`);
 

@@ -117,7 +117,7 @@ export async function GET(req: NextRequest) {
           "Accept-Ranges": "bytes",
           "Content-Length": chunkSize.toString(),
           "Content-Type": contentType,
-          "Cache-Control": "public, max-age=3600",
+          "Cache-Control": "private, max-age=3600",
         },
       });
     } else {
@@ -140,7 +140,7 @@ export async function GET(req: NextRequest) {
           "Content-Length": fileSize.toString(),
           "Content-Type": contentType,
           "Accept-Ranges": "bytes",
-          "Cache-Control": "public, max-age=3600",
+          "Cache-Control": "private, max-age=3600",
         },
       });
     }

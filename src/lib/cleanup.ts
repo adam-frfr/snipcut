@@ -8,7 +8,8 @@ import path from "path";
  *
  * Kept for FILE_RETENTION_HOURS (default 24h): uploads, YouTube downloads,
  * rendered clips (+ previews, posters, thumbnails), extracted audio,
- * B-roll images / videos, abandoned chunked uploads.
+ * B-roll images / videos, abandoned chunked uploads, transcript debug
+ * dumps and the transcript / clip / render caches.
  * Kept for 3h: effect-pass temp files (subtitles, pre-pass, voiceover)
  * left behind by a crashed render.
  * Never deleted: job records, saved YouTube cookies, your uploaded music
@@ -64,6 +65,14 @@ export function cleanupExpiredFiles(hours = retentionHours()): { deletedFiles: n
     path.join(cwd, "public", "downloads"),
     path.join(cwd, "data", "audio"),
     path.join(cwd, "data", "broll"),
+    // Transcript dumps and the transcript / clip / render caches: they hold
+    // the text of people's videos, so they go with the videos. Each cache
+    // folder is swept on its own: sweep() keeps a top folder but removes
+    // empty sub-folders, and the job queue creates these only at startup.
+    path.join(cwd, "data", "debug"),
+    path.join(cwd, "data", "cache", "transcripts"),
+    path.join(cwd, "data", "cache", "clips"),
+    path.join(cwd, "data", "cache", "renders"),
   ]) {
     sweep(dir, maxAgeMs, now, acc);
   }

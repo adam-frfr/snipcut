@@ -10,6 +10,8 @@ import { emojiFor, EMOJI_CODES } from "../src/lib/emojiMap";
 import { buildKaraokeAss, buildBehindTitleAss } from "../src/lib/videoService";
 import { pickSlamSentence, pickReactions, detectListicle, transitionFilter, footagePath } from "../src/lib/clipStyle";
 import { knotsForward, knotsInverse } from "../src/lib/timeline";
+import { isAudioOnlySource, safeUploadName, AUDIO_ONLY_SUFFIX } from "../src/lib/mediaPrep";
+import { resolveSafeFilePath } from "../src/lib/videoService";
 
 let failures = 0;
 const check = (ok: boolean, msg: string) => {
@@ -169,6 +171,22 @@ check(normalizeClipStyle({ zoomType: "none" }).zoomType === "none", "zooms can b
     check(n <= 3 && /…/.test(ev), "a long title is cut to 3 lines with an ellipsis");
     check(top >= 1920 * 0.119, `title stays clear of the zoom crop at the top (${((top / 1920) * 100).toFixed(1)}%)`);
     check(fs >= 100, `a long title stays big (${fs}px)`);
+  }
+}
+
+// Bug hunt fixes.
+{
+  // A real video named "...-audio" must not turn into an audiogram.
+  const vid = `${safeUploadName("interview-audio.mp4").baseName}.mp4`;
+  check(!isAudioOnlySource(vid), `a video named "interview-audio.mp4" stays a video (${vid})`);
+  const tricky = `${safeUploadName("my.audio.mp4").baseName}.mp4`;
+  check(!isAudioOnlySource(tricky), "a file named my.audio.mp4 can't fake the audio-only marker");
+  check(isAudioOnlySource(`uploads/123-podcast${AUDIO_ONLY_SUFFIX}`), "the audio-only placeholder is recognised");
+  // Source paths outside the media folders (or URLs) are refused.
+  for (const bad of ["/etc/passwd", "http://169.254.169.254/latest", "../../etc/hosts"]) {
+    let threw = false;
+    try { resolveSafeFilePath(bad); } catch { threw = true; }
+    check(threw, `render source "${bad}" is refused`);
   }
 }
 
