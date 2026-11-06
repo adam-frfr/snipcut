@@ -2235,7 +2235,8 @@ export async function applyPostEffects(opts: PostFxOptions): Promise<PostFxResul
   let nextInput = 1 + broll.length;
 
   // Person cut-out (background swap, text behind, glow) on talking-head shots.
-  const wantCutout = style.background !== "none" || style.textBehind || style.subjectGlow;
+  // (Not on audiograms: there's no camera picture, so no note about it either.)
+  const wantCutout = !style.audiogram && (style.background !== "none" || style.textBehind || style.subjectGlow);
   const cutSpans = cropSpans.filter((c) => c.end - c.start > 0.3);
   let maskIdx = -1;
   let bgIdx = -1;
@@ -2522,7 +2523,10 @@ export async function applyPostEffects(opts: PostFxOptions): Promise<PostFxResul
   });
 
   if (footageIdx >= 0) {
-    filters.push(`[${last}]crop=1080:960:0:300[sptop]`);
+    // Top half: the tracked frame keeps the face in its upper part, so crop
+    // from near the top (seen live: y=300 cut the head and put the hook
+    // card over the eyes).
+    filters.push(`[${last}]crop=1080:960:0:60[sptop]`);
     filters.push(`[${footageIdx}:v]scale=1080:960:force_original_aspect_ratio=increase,crop=1080:960,fps=30,setsar=1[spbot]`);
     filters.push(`[sptop][spbot]vstack=inputs=2[splitv]`);
     last = "splitv";
@@ -2707,18 +2711,21 @@ export function buildBehindTitleAss(text: string, until: number, W: number, H: n
   const clean = stripEmoji(text).replace(/[{}\\]/g, "").toUpperCase();
   let size = Math.round((H > W ? 165 : 140) * scale);
   let lines = wrapTitle(clean, Math.max(6, Math.floor((W * 0.92) / (0.6 * size))));
-  while (lines.length > 3 && size > 90 * scale) {
-    size = Math.round(size * 0.85);
+  // Fit in 3 lines and in the top third (smaller font for long titles).
+  while ((lines.length > 3 || lines.length * size * 1.15 > H * 0.3) && Math.round(size * 0.88) >= 105 * scale) {
+    size = Math.round(size * 0.88);
     lines = wrapTitle(clean, Math.max(6, Math.floor((W * 0.92) / (0.6 * size))));
   }
-  lines = lines.slice(0, 3);
+  if (lines.length > 3) lines = [...lines.slice(0, 2), `${lines[2].replace(/[,.;:!?—-]+$/, "")}…`];
   const longest = clean.split(/\s+/).reduce((a, b) => (b.length > a.length ? b : a), "");
   const acc = accent || "&H0000D7FF";
   const body = lines.map((l) => l.split(" ").map((w) => (w === longest ? `{\\c${acc}}${w}{\\c&H00FFFFFF&}` : w)).join(" ")).join("\\N");
   // Bottom of the title tucks a little behind the top of the head.
-  const blockH = lines.length * size * 1.05;
+  const blockH = lines.length * size * 1.15;
   const target = (headTop ?? (H > W ? 0.22 : 0.3)) * H + 0.07 * H;
-  const cy = Math.round(Math.min(H * 0.42, Math.max(blockH / 2 + H * 0.045, target - blockH / 2)));
+  // Keep clear of the top edge: the push-in / punch zooms run after the
+  // title is drawn and crop up to ~12% of the frame height off the top.
+  const cy = Math.round(Math.min(H * 0.45, Math.max(blockH / 2 + H * 0.12, target - blockH / 2)));
   return `[Script Info]
 ScriptType: v4.00+
 PlayResX: ${W}
