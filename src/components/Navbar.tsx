@@ -67,6 +67,12 @@ export default function Navbar() {
               Scheduler
             </Link>
             <Link
+              href="/autopilot"
+              className="text-xs font-black uppercase tracking-wider text-black hover:text-[#FF5500] transition-colors"
+            >
+              Autopilot
+            </Link>
+            <Link
               href="/brand-kit"
               className="text-xs font-black uppercase tracking-wider text-black hover:text-[#FF5500] transition-colors"
             >
@@ -140,6 +146,13 @@ export default function Navbar() {
             className="block py-2 text-xs font-black uppercase tracking-wider text-black border-b border-black/10"
           >
             Scheduler
+          </Link>
+          <Link
+            href="/autopilot"
+            onClick={() => setMobileMenuOpen(false)}
+            className="block py-2 text-xs font-black uppercase tracking-wider text-black border-b border-black/10"
+          >
+            Autopilot
           </Link>
           <Link
             href="/brand-kit"

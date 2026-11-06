@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 import {
   Key,
   ShieldCheck,
@@ -213,8 +214,12 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
     }
   };
 
-  return (
-    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+  // Rendered into <body>: inside the navbar (which gets a backdrop blur once
+  // you scroll) "fixed" would be relative to the navbar, so the window was
+  // cut off at the navbar's height.
+  if (typeof document === "undefined") return null;
+  return createPortal(
+    <div className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
       <div className="bg-white max-w-lg w-full rounded-2xl border-2 border-black shadow-[6px_6px_0px_#000000] animate-in zoom-in-95 duration-150 relative text-black flex flex-col max-h-[calc(100dvh-1.5rem)] sm:max-h-[calc(100dvh-2rem)] overflow-hidden">
         {/* Close Button */}
         <button
@@ -486,6 +491,7 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
