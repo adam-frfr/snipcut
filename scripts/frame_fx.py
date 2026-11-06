@@ -170,6 +170,10 @@ def run_blur(inp, out, ffmpeg, mode):
             if faces is not None:
                 for f in faces:
                     x, y, fw, fh = [float(v) * s for v in f[:4]]
+                    # Tiny "faces" are mostly false hits (posters, phone
+                    # screens, patterns), seen live with the older model.
+                    if fw < 0.04 * w:
+                        continue
                     boxes.append([x, y, fw, fh])
             # Keep faces for a few frames when detection blinks (no flicker).
             new_tracks = []

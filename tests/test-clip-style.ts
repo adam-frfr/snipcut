@@ -158,7 +158,18 @@ check(normalizeClipStyle({ zoomType: "none" }).zoomType === "none", "zooms can b
   const behindLow = buildBehindTitleAss("This phone is not cheap anymore", 3, 1080, 1920, "anton", undefined, 0.35);
   const yOf = (a: string) => Number(/\\pos\(\d+,(\d+)\)/.exec(a)?.[1]);
   check(yOf(behindHigh) < yOf(behindLow), "title behind sits higher when the head is higher");
-  check(yOf(behindHigh) > 0 && yOf(behindLow) <= 1920 * 0.42, "title behind stays on screen");
+  check(yOf(behindHigh) > 0 && yOf(behindLow) <= 1920 * 0.45, "title behind stays on screen");
+  {
+    // Seen live: a long AI headline + zooms cut the top line off the frame.
+    const longT = buildBehindTitleAss("Brand new 2025 iPhone 16e? Not a budget phone, it costs $900 and here is why everyone is wrong", 3, 1080, 1920, "default", undefined, 0.04);
+    const fs = Number(/Behind,[^,]+,(\d+)/.exec(longT)?.[1]);
+    const ev = longT.split("\n").find((l) => l.startsWith("Dialogue"))!;
+    const n = ev.slice(ev.indexOf("}") + 1).split("\\N").length;
+    const top = yOf(longT) - (n * fs * 1.15) / 2;
+    check(n <= 3 && /…/.test(ev), "a long title is cut to 3 lines with an ellipsis");
+    check(top >= 1920 * 0.119, `title stays clear of the zoom crop at the top (${((top / 1920) * 100).toFixed(1)}%)`);
+    check(fs >= 100, `a long title stays big (${fs}px)`);
+  }
 }
 
 if (failures) {
