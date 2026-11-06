@@ -114,6 +114,14 @@ export function verifyAuthAndRateLimit(req: NextRequest): NextResponse | null {
   }
 
   // 2. Shared-Secret Access Gate (APP_ACCESS_TOKEN)
+  return verifyAccessToken(req);
+}
+
+/**
+ * Shared-secret check only (no rate limit). Used by the API routes (via
+ * verifyAuthAndRateLimit) and by src/proxy.ts for saved video files.
+ */
+export function verifyAccessToken(req: NextRequest): NextResponse | null {
   const requiredToken = (process.env.APP_ACCESS_TOKEN || "").trim();
 
   // Fail closed in production if token is unset
