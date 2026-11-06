@@ -123,6 +123,7 @@ export interface JobOptions {
   captionFont?: string; // CAPTION_FONTS key
   pexelsKey?: string;
   pixabayKey?: string;
+  unsplashKey?: string;
 }
 
 export interface JobRecord {
@@ -166,7 +167,7 @@ export async function computeFileSha256(filePath: string): Promise<string> {
 /**
  * Persist job state to data/jobs/<id>.json
  */
-const USER_KEY_FIELDS = ["groqKey", "openaiKey", "claudeKey", "pexelsKey", "pixabayKey"] as const;
+const USER_KEY_FIELDS = ["groqKey", "openaiKey", "claudeKey", "pexelsKey", "pixabayKey", "unsplashKey"] as const;
 
 export function saveJobRecord(job: JobRecord): void {
   job.updatedAt = Date.now();
@@ -671,6 +672,7 @@ class JobQueueManager {
             claudeKey: job.options.claudeKey,
             pexelsKey: job.options.pexelsKey,
             pixabayKey: job.options.pixabayKey,
+            unsplashKey: job.options.unsplashKey,
           },
           brollTag: `broll-${job.id.slice(5, 13)}-${i + 1}`,
         });

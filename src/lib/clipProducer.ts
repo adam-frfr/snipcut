@@ -62,7 +62,7 @@ export interface ProduceClipOptions {
   removeSilences?: boolean;
   broll?: boolean;
   musicBed?: boolean;
-  keys?: { groqKey?: string; openaiKey?: string; claudeKey?: string; pexelsKey?: string; pixabayKey?: string };
+  keys?: { groqKey?: string; openaiKey?: string; claudeKey?: string; pexelsKey?: string; pixabayKey?: string; unsplashKey?: string };
   brollTag?: string;
   /** Music mood, sound effects, voice clean-up, grade, transitions, push-in. */
   style?: Partial<ClipStyle>;
@@ -225,7 +225,7 @@ export async function produceClip(o: ProduceClipOptions): Promise<ProduceClipRes
           .filter((s) => s.end > s.start);
 
         let cues: { start: number; end: number; assetPath: string; kind: "image" | "video" }[] = [];
-        const brollKeys = { pexelsKey: o.keys?.pexelsKey, pixabayKey: o.keys?.pixabayKey, openaiKey: o.keys?.openaiKey };
+        const brollKeys = { pexelsKey: o.keys?.pexelsKey, pixabayKey: o.keys?.pixabayKey, unsplashKey: o.keys?.unsplashKey, openaiKey: o.keys?.openaiKey };
         if (o.broll && talkingHead < 0.4) {
           notes.push(
             shots.fit.length && coverage(shots.fit, finalDur) >= coverage(shots.split, finalDur)
@@ -233,7 +233,7 @@ export async function produceClip(o: ProduceClipOptions): Promise<ProduceClipRes
               : "B-roll skipped: split-screen clip"
           );
         } else if (o.broll && !hasBrollSource(brollKeys)) {
-          notes.push("B-roll skipped: add an OpenAI key (AI-made B-roll) or a Pexels / Pixabay key in API Keys");
+          notes.push("B-roll skipped: add an OpenAI key (AI-made B-roll) or a Pexels / Pixabay / Unsplash key in API Keys");
         } else if (o.broll) {
           const sentences = buildSentences(pseudoSegments(keptWords), spanStart, spanEnd);
           if (sentences.length) {
@@ -257,6 +257,7 @@ export async function produceClip(o: ProduceClipOptions): Promise<ProduceClipRes
                 ...brollKeys,
                 pexelsKey: o.keys?.pexelsKey || process.env.PEXELS_API_KEY,
                 pixabayKey: o.keys?.pixabayKey || process.env.PIXABAY_API_KEY,
+                unsplashKey: o.keys?.unsplashKey || process.env.UNSPLASH_ACCESS_KEY,
                 destDir: path.join(process.cwd(), "data", "broll"),
                 tag: o.brollTag || `broll-${tag}`,
               });

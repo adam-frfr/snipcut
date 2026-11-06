@@ -33,6 +33,7 @@ async function performRender(
       captionFont,
       pexelsKey,
       pixabayKey,
+      unsplashKey,
       groqKey,
       openaiKey,
       claudeKey,
@@ -92,7 +93,7 @@ async function performRender(
       removeSilences: removeSilences === true,
       broll: broll === true,
       musicBed: music === true,
-      keys: { groqKey, openaiKey, claudeKey, pexelsKey, pixabayKey },
+      keys: { groqKey, openaiKey, claudeKey, pexelsKey, pixabayKey, unsplashKey },
       style: normalizeClipStyle(clipStyle),
       captionFont: typeof captionFont === "string" && CAPTION_FONTS[captionFont] ? captionFont : undefined,
     });
@@ -170,8 +171,8 @@ function sweepRenders() {
 
 function renderKeyFor(body: any): string {
   // Everything that changes the output (API keys and cookies excluded).
-  const { groqKey, openaiKey, claudeKey, pexelsKey, pixabayKey, ...rest } = body || {};
-  void groqKey; void openaiKey; void claudeKey; void pexelsKey; void pixabayKey;
+  const { groqKey, openaiKey, claudeKey, pexelsKey, pixabayKey, unsplashKey, ...rest } = body || {};
+  void groqKey; void openaiKey; void claudeKey; void pexelsKey; void pixabayKey; void unsplashKey;
   const sortKeys = (v: any): any =>
     Array.isArray(v)
       ? v.map(sortKeys)

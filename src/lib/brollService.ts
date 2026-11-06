@@ -11,8 +11,8 @@ import { CLAUDE_DEEP_MODEL } from "./claudeModels";
  * sentence into a concrete stock-search query. Without any LLM the sentence
  * keywords are used as the query — worse, but the feature still works.
  *
- * Fetching: Pexels (user's free key, video + photo) when available, else
- * Openverse (no key, photos). Stills get a Ken Burns drift in the composite
+ * Fetching: Pexels (video + photo), Pixabay (video + photo), Unsplash
+ * (photos), then Openverse (no key, photos) and AI images. Stills get a Ken Burns drift in the composite
  * pass, so photo cutaways still feel alive.
  */
 
@@ -296,10 +296,11 @@ const imageKey = (k?: string) => {
 };
 
 /** Is there a source that gives on-topic B-roll (stock keys or AI images)? */
-export function hasBrollSource(keys: { pexelsKey?: string; pixabayKey?: string; openaiKey?: string }): boolean {
+export function hasBrollSource(keys: { pexelsKey?: string; pixabayKey?: string; unsplashKey?: string; openaiKey?: string }): boolean {
   const pexels = (keys.pexelsKey || process.env.PEXELS_API_KEY || "").trim();
   const pixabay = (keys.pixabayKey || process.env.PIXABAY_API_KEY || "").trim();
-  return Boolean(pexels || pixabay || imageKey(keys.openaiKey) || wikimediaAllowed());
+  const unsplash = (keys.unsplashKey || process.env.UNSPLASH_ACCESS_KEY || "").trim();
+  return Boolean(pexels || pixabay || unsplash || imageKey(keys.openaiKey) || wikimediaAllowed());
 }
 
 /** One photorealistic vertical B-roll still for a cue, written to `dest` (PNG). */
@@ -347,13 +348,26 @@ async function generateBrollImage(apiKey: string, item: BrollPlanItem, dest: str
   }
 }
 
+/** Searchable text of an Unsplash photo: description, alt text and tag titles. */
+export function unsplashText(photo: any): string {
+  const tags = Array.isArray(photo?.tags) ? photo.tags.map((t: any) => t?.title || "").join(" ") : "";
+  return `${photo?.description || ""} ${photo?.alt_description || ""} ${tags}`.trim();
+}
+
+/** Fire-and-forget download ping required by the Unsplash API guidelines. */
+function trackUnsplashDownload(url: string | undefined, key: string): void {
+  if (!url || !/^https:\/\/api\.unsplash\.com\//.test(url)) return;
+  fetch(url, { headers: { Authorization: `Client-ID ${key}` }, signal: AbortSignal.timeout(8000) }).catch(() => {});
+}
+
 export async function fetchBrollAssets(
   plan: BrollPlanItem[],
-  opts: { pexelsKey?: string; pixabayKey?: string; openaiKey?: string; destDir: string; tag: string }
+  opts: { pexelsKey?: string; pixabayKey?: string; unsplashKey?: string; openaiKey?: string; destDir: string; tag: string }
 ): Promise<BrollAsset[]> {
   fs.mkdirSync(opts.destDir, { recursive: true });
   const pexelsKey = (opts.pexelsKey || process.env.PEXELS_API_KEY || "").trim();
   const pixabayKey = (opts.pixabayKey || process.env.PIXABAY_API_KEY || "").trim();
+  const unsplashKey = (opts.unsplashKey || process.env.UNSPLASH_ACCESS_KEY || "").trim();
   const openaiKey = imageKey(opts.openaiKey);
   const assets: BrollAsset[] = [];
 
@@ -461,6 +475,41 @@ export async function fetchBrollAssets(
             }
             try { fs.unlinkSync(dest); } catch {}
           }
+        }
+      } catch {}
+    }
+
+    // Unsplash (free Access Key) — photos only, no video. Used for photo
+    // cues, and for video cues when no video source had a match (the
+    // still gets the Ken Burns drift). Relevance-gated on Unsplash's own
+    // description, alt text and tags.
+    if (!done && unsplashKey) {
+      try {
+        const res = await fetch(
+          `https://api.unsplash.com/search/photos?query=${q}&per_page=5&orientation=portrait&content_filter=high`,
+          {
+            headers: { Authorization: `Client-ID ${unsplashKey}`, "Accept-Version": "v1" },
+            signal: AbortSignal.timeout(10000),
+          }
+        );
+        if (res.ok) {
+          const data: any = await res.json();
+          for (const photo of (data.results || []).slice(0, 5)) {
+            if (!brollTitleMatches(item.query, unsplashText(photo))) continue;
+            const src = photo?.urls?.regular || photo?.urls?.full;
+            if (!src) continue;
+            const dest = path.join(opts.destDir, `${opts.tag}-${i}.jpg`);
+            if ((await downloadToFile(src, dest)) && looksLikeImage(dest)) {
+              // Unsplash's API terms ask apps to report each download.
+              trackUnsplashDownload(photo?.links?.download_location, unsplashKey);
+              assets.push({ ...item, kind: "image", assetPath: dest });
+              done = true;
+              break;
+            }
+            try { fs.unlinkSync(dest); } catch {}
+          }
+        } else {
+          console.warn(`[B-roll] Unsplash search failed (${res.status})`);
         }
       } catch {}
     }

@@ -65,7 +65,7 @@ const words = Array.from({ length: 10 }, (_, i) => ({ start: i * 1.2, end: i * 1
 
   // AI B-roll: with no stock key, cutaways are generated from the OpenAI
   // key (Pexels / Pixabay paused new keys). Stand-in OpenAI response.
-  for (const k of ["PEXELS_API_KEY", "PIXABAY_API_KEY", "OPENAI_API_KEY", "BROLL_ALLOW_WIKIMEDIA"]) delete process.env[k];
+  for (const k of ["PEXELS_API_KEY", "PIXABAY_API_KEY", "UNSPLASH_ACCESS_KEY", "OPENAI_API_KEY", "BROLL_ALLOW_WIKIMEDIA"]) delete process.env[k];
   check(!hasBrollSource({}), "no keys -> no B-roll source (no random Wikimedia pictures)");
   check(hasBrollSource({ openaiKey: "sk-test" }), "an OpenAI key enables AI B-roll");
   const png = Buffer.from(
@@ -89,6 +89,38 @@ const words = Array.from({ length: 10 }, (_, i) => ({ start: i * 1.2, end: i * 1
   check(Boolean(req) && /city at night/.test(req!.body.prompt) && /No text/.test(req!.body.prompt), "prompt carries the cue and forbids text/logos");
   check(assets.length === 1 && assets[0].kind === "image" && fs.existsSync(assets[0].assetPath), "the generated image is saved and used as the cutaway");
   fs.rmSync(brollDir, { recursive: true, force: true });
+
+  // Unsplash (photos only): Client-ID auth, relevance gate on its own
+  // description/alt/tags, download ping, and no credit added anywhere.
+  check(hasBrollSource({ unsplashKey: "u-test" }), "an Unsplash key enables stock-photo B-roll");
+  const jpg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(9000, 7)]);
+  const ucalls: { url: string; auth: string }[] = [];
+  (globalThis as any).fetch = async (url: string, init: any) => {
+    const u = String(url);
+    ucalls.push({ url: u, auth: init?.headers?.Authorization || "" });
+    if (u.startsWith("https://api.unsplash.com/search/photos")) {
+      return new Response(JSON.stringify({ results: [
+        { alt_description: "a bowl of fruit on a table", urls: { regular: "https://images.unsplash.com/off" }, links: { download_location: "https://api.unsplash.com/photos/off/download" } },
+        { description: "City skyline at night", alt_description: "lit windows", tags: [{ title: "night" }], urls: { regular: "https://images.unsplash.com/on" }, links: { download_location: "https://api.unsplash.com/photos/on/download" } },
+      ] }), { status: 200 });
+    }
+    if (u.startsWith("https://images.unsplash.com/")) return new Response(jpg, { status: 200 });
+    if (u.includes("/download")) return new Response("{}", { status: 200 });
+    return new Response("{}", { status: 404 });
+  };
+  const uDir = path.join(dataDir, "test_broll_unsplash");
+  const uAssets = await fetchBrollAssets(
+    [{ start: 4, end: 6.5, text: "the city at night", query: "city skyline night", kind: "video" }],
+    { unsplashKey: "u-test", destDir: uDir, tag: "u" }
+  );
+  await new Promise((r) => setTimeout(r, 50)); // let the download ping fire
+  (globalThis as any).fetch = realFetch;
+  const search = ucalls.find((c) => c.url.startsWith("https://api.unsplash.com/search/photos"));
+  check(Boolean(search) && search!.auth === "Client-ID u-test" && /orientation=portrait/.test(search!.url), "searches Unsplash (portrait) with the Access Key");
+  check(!ucalls.some((c) => c.url.endsWith("/off")), "off-topic Unsplash photo is skipped by the relevance gate");
+  check(uAssets.length === 1 && uAssets[0].kind === "image" && fs.existsSync(uAssets[0].assetPath), "the on-topic Unsplash photo becomes a still cutaway");
+  check(ucalls.some((c) => c.url === "https://api.unsplash.com/photos/on/download"), "reports the download to Unsplash");
+  fs.rmSync(uDir, { recursive: true, force: true });
 
   for (const f of [clean, music]) {
     try { fs.unlinkSync(f); } catch {}
