@@ -51,6 +51,15 @@ export function normalizeProxy(raw: unknown): string | null {
 }
 
 /** Sanitized "<timestamp>-<name>" base and extension for a user-supplied file name. */
+/**
+ * Audio-only uploads are wrapped in a still picture and saved as
+ * "<name>.audio.mp4". safeUploadName() turns every "." in a user's file
+ * name into "_", so a real video can never end up with this suffix (the
+ * old "-audio.mp4" marker matched videos named like "interview-audio.mp4").
+ */
+export const AUDIO_ONLY_SUFFIX = ".audio.mp4";
+export const isAudioOnlySource = (p: string) => String(p || "").toLowerCase().endsWith(AUDIO_ONLY_SUFFIX);
+
 export function safeUploadName(fileName: string): { baseName: string; ext: string } {
   const rawExt = path.extname(fileName).toLowerCase();
   const ext = /^\.[a-z0-9]{1,8}$/.test(rawExt) ? rawExt : ".mp4";
@@ -172,10 +181,10 @@ export async function normalizeUploadedVideo(rawPath: string, baseName: string):
   const ffmpegBin = getFfmpegBinary();
 
   // Audio-only (podcast MP3 / WAV / M4A): wrap it in a still dark picture so
-  // the whole pipeline works; "-audio.mp4" tells the renderer to make
+  // the whole pipeline works; AUDIO_ONLY_SUFFIX tells the renderer to make
   // audiogram clips (waveform + backdrop) from it.
   if (!(await hasVideoStream(rawPath))) {
-    const audioName = `${baseName}-audio.mp4`;
+    const audioName = `${baseName}${AUDIO_ONLY_SUFFIX}`;
     const audioPath = path.join(uploadsDir, audioName);
     await execFilePromise(ffmpegBin, [
       "-hide_banner", "-loglevel", "error", "-y",

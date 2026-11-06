@@ -61,8 +61,10 @@ export async function POST(req: NextRequest) {
     const lines = wrapTitle(headline.toUpperCase(), Math.max(8, Math.floor((W - 120) / ((/Anton|Bebas/.test(font) ? 0.44 : 0.58) * size)))).slice(0, 4);
     // The longest word pops in the accent colour.
     const longest = headline.toUpperCase().split(/\s+/).reduce((a, b) => (b.replace(/\W/g, "").length > a.replace(/\W/g, "").length ? b : a), "");
+    // Braces and backslashes in a title would be read as ASS override tags.
+    const esc = (t: string) => t.replace(/\\/g, "\\\\").replace(/\{/g, "\\{").replace(/\}/g, "\\}");
     const text = lines
-      .map((l) => l.split(" ").map((w) => (w === longest ? `{\\c${accent}}${w}{\\c&H00FFFFFF&}` : w)).join(" "))
+      .map((l) => l.split(" ").map((w) => (w === longest ? `{\\c${accent}}${esc(w)}{\\c&H00FFFFFF&}` : esc(w))).join(" "))
       .join("\\N");
     const ass = `[Script Info]
 ScriptType: v4.00+

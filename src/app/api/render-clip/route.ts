@@ -6,6 +6,7 @@ import path from "path";
 import fs from "fs";
 import { verifyAuthAndRateLimit } from "@/lib/authRateLimit";
 import crypto from "crypto";
+import { hasBrollSource } from "@/lib/brollService";
 
 async function performRender(
   body: any
@@ -53,7 +54,7 @@ async function performRender(
     }
 
     const outputDir = path.join(process.cwd(), "public", "rendered_clips");
-    const outputFilename = `clip-${Date.now()}.mp4`;
+    const outputFilename = `clip-${Date.now()}-${crypto.randomBytes(3).toString("hex")}.mp4`;
     const outputPath = path.join(outputDir, outputFilename);
 
     const start2 = Number(Number(startTime).toFixed(2));
@@ -159,6 +160,27 @@ type RenderEntry = {
   error?: string;
 };
 const renderRegistry = new Map<string, RenderEntry>();
+
+// At most N manual renders run at once (RENDER_CONCURRENCY, default 2); the
+// rest wait their turn and keep showing "rendering". Several face-blur /
+// cut-out renders in parallel used to be able to exhaust the server's RAM.
+const MAX_PARALLEL_RENDERS = Math.max(1, Number(process.env.RENDER_CONCURRENCY) || 2);
+let activeRenders = 0;
+const renderWaiters: (() => void)[] = [];
+async function withRenderSlot<T>(fn: () => Promise<T>): Promise<T> {
+  if (activeRenders >= MAX_PARALLEL_RENDERS) {
+    await new Promise<void>((resolve) => renderWaiters.push(resolve));
+  } else {
+    activeRenders++;
+  }
+  try {
+    return await fn();
+  } finally {
+    const next = renderWaiters.shift();
+    if (next) next(); // hand the slot straight to the next render
+    else activeRenders--;
+  }
+}
 const RENDER_KEEP_MS = 10 * 60 * 1000;
 const RENDER_MAX_AGE_MS = 30 * 60 * 1000;
 
@@ -172,7 +194,10 @@ function sweepRenders() {
 function renderKeyFor(body: any): string {
   // Everything that changes the output (API keys and cookies excluded).
   const { groqKey, openaiKey, claudeKey, pexelsKey, pixabayKey, unsplashKey, ...rest } = body || {};
-  void groqKey; void openaiKey; void claudeKey; void pexelsKey; void pixabayKey; void unsplashKey;
+  void groqKey; void claudeKey;
+  // Not the keys themselves, but whether B-roll has a source: a render
+  // made before a key was added must not be replayed after it was.
+  if (rest.broll === true) rest.__brollSource = hasBrollSource({ pexelsKey, pixabayKey, unsplashKey, openaiKey });
   const sortKeys = (v: any): any =>
     Array.isArray(v)
       ? v.map(sortKeys)
@@ -225,7 +250,7 @@ export async function POST(req: NextRequest) {
 
   const entry: RenderEntry = { status: "rendering", startedAt: Date.now() };
   renderRegistry.set(key, entry);
-  performRender(body)
+  withRenderSlot(() => performRender(body))
     .then(({ status, payload }) => {
       if (status === 200 && payload?.success) {
         entry.status = "completed";

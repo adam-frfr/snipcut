@@ -44,7 +44,9 @@ export async function POST(
 
   // The 24h cleanup may have removed the source video; fail clearly here
   // instead of deep inside the pipeline.
-  const srcPath = (job.options as any)?.filePath as string | undefined;
+  // The source lives in job.output (filePath), or is still the raw upload
+  // when conversion never finished.
+  const srcPath = job.output?.filePath || job.output?.rawUploadPath;
   if (srcPath) {
     const fs = await import("fs");
     if (!fs.existsSync(srcPath)) {

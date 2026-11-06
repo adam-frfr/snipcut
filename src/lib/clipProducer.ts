@@ -10,7 +10,9 @@ import {
   SplitScreenCustomOptions,
   TrackingResult,
   probeVideoFormat,
+  resolveSafeFilePath,
 } from "./videoService";
+import { isAudioOnlySource } from "./mediaPrep";
 import type { CaptionStyleName } from "./videoService";
 import { buildSentences, planBroll, fetchBrollAssets, hasBrollSource } from "./brollService";
 import {
@@ -91,7 +93,11 @@ export interface ProduceClipResult {
 
 const wordText = (w: TimelineWord) => String(w.text ?? w.word ?? "");
 
-export async function produceClip(o: ProduceClipOptions): Promise<ProduceClipResult> {
+export async function produceClip(opts: ProduceClipOptions): Promise<ProduceClipResult> {
+  // The source path comes from the request body: resolve it once, inside the
+  // allowed media folders, so every ffmpeg / probe call below uses the same
+  // checked path (some used to get the raw value).
+  const o: ProduceClipOptions = { ...opts, inputPath: resolveSafeFilePath(opts.inputPath) };
   const windowDur = o.endTime - o.startTime;
   if (!(windowDur > 0.3)) throw new Error("Clip is too short to render.");
 
@@ -139,9 +145,9 @@ export async function produceClip(o: ProduceClipOptions): Promise<ProduceClipRes
   const hookText = o.hookTitle && o.headline ? o.headline : undefined;
   const keywords = o.keywords || undefined;
   const style = normalizeClipStyle(o.style);
-  // Audio-only uploads arrive as "<name>-audio.mp4" (a still placeholder
+  // Audio-only uploads arrive as "<name>.audio.mp4" (a still placeholder
   // picture): those always get the podcast audiogram look.
-  const audioOnlySource = /-audio\.mp4$/i.test(o.inputPath);
+  const audioOnlySource = isAudioOnlySource(o.inputPath);
   const audiogram = style.audiogram || audioOnlySource;
   if (audiogram) style.audiogram = true;
   const fx = Boolean(o.broll || o.musicBed) || styleNeedsFx(style);

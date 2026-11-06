@@ -13,6 +13,15 @@ import { USER_MUSIC_DIR, probeDuration } from "@/lib/clipStyle";
  */
 const MAX_BYTES = 30 * 1024 * 1024;
 const EXT = /\.(mp3|wav|m4a|aac|ogg)$/i;
+// Your music is kept until deleted, so cap how much can pile up on the disk.
+const MAX_FILES = Math.max(1, Number(process.env.MAX_USER_MUSIC) || 50);
+const storedCount = () => {
+  try {
+    return fs.readdirSync(/*turbopackIgnore: true*/ USER_MUSIC_DIR()).filter((f) => EXT.test(f)).length;
+  } catch {
+    return 0;
+  }
+};
 
 function readIndex(): Record<string, { name: string; duration: number }> {
   try {
@@ -45,6 +54,9 @@ export async function POST(req: NextRequest) {
   } catch {}
   const ext = (EXT.exec(name)?.[1] || "").toLowerCase();
   if (!ext) return NextResponse.json({ error: "Upload an MP3, WAV, M4A, AAC or OGG file." }, { status: 415 });
+  if (storedCount() >= MAX_FILES) {
+    return NextResponse.json({ error: `You can keep up to ${MAX_FILES} music tracks. Delete one to upload another.` }, { status: 409 });
+  }
   if (Number(req.headers.get("content-length") || 0) > MAX_BYTES) {
     return NextResponse.json({ error: "Music files can be up to 30 MB." }, { status: 413 });
   }
