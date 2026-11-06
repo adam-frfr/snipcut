@@ -11,6 +11,7 @@ import { normalizeClipStyle, ClipStyle } from "./clipStyle";
 import { acquireJobLock, releaseJobLock } from "./jobLock";
 import { resolveSafeFilePath, extractAudioForWhisper, generatePreviewClip, generatePosterImage, generateSourcePoster } from "./videoService";
 import { downloadYoutubeVideo, normalizeUploadedVideo } from "./mediaPrep";
+import { buildHighlightReel } from "./highlightReel";
 
 
 // Keep-range logic lives in ./timeline (shared with the editor); re-exported
@@ -50,6 +51,19 @@ export interface RenderedClipItem {
   keepRanges?: { start: number; end: number }[];
   /** Clock changes from speed-up / freeze / intro / teaser (timeline.ts knots). */
   timeKnots?: [number, number][];
+  /** Big moments in the finished clip (seconds) — the highlight reel uses them. */
+  hypeMoments?: number[];
+}
+
+/** One reel stitched from the job's best moments (optional). */
+export interface HighlightReelItem {
+  downloadUrl: string;
+  previewDownloadUrl?: string;
+  posterUrl?: string;
+  filename: string;
+  duration: number;
+  parts: number;
+  fileSize?: number;
 }
 
 export interface JobOutput {
@@ -71,6 +85,9 @@ export interface JobOutput {
   };
   curatedClips?: SnappedClipResult[];
   renderedClips?: RenderedClipItem[];
+  highlightReel?: HighlightReelItem;
+  /** Why the reel wasn't made (shown on the dashboard). */
+  highlightReelNote?: string;
   /** Editor re-renders saved into the project, by clip index. */
   editedClips?: Record<string, Record<string, unknown> & { editedAt: number }>;
 }
@@ -579,7 +596,7 @@ class JobQueueManager {
         const captionStyle = job.options.captionStyle || "hormozi";
 
         // Render cache key: sha256(sourceHash:start:end:mode:captionStyle:aspectRatio)
-        const renderKeyRaw = `${sourceHash}:${clip.startTime}:${clip.endTime}:${reframeMode}:${captionStyle}:${aspectRatio}:${job.options.removeSilences ? "tight2" : "full"}:fx${job.options.broll ? "b" : ""}${job.options.musicBed ? "m" : ""}:v3${job.options.hookTitle === false ? "" : "h"}${job.options.keywordHighlights === false ? "" : "k"}:s${JSON.stringify(normalizeClipStyle(job.options.clipStyle))}:f${job.options.captionFont || ""}`;
+        const renderKeyRaw = `${sourceHash}:${clip.startTime}:${clip.endTime}:${reframeMode}:${captionStyle}:${aspectRatio}:${job.options.removeSilences ? "tight2" : "full"}:fx${job.options.broll ? "b" : ""}${job.options.musicBed ? "m" : ""}:v3${job.options.hookTitle === false ? "" : "h"}${job.options.keywordHighlights === false ? "" : "k"}:s${JSON.stringify({ ...normalizeClipStyle(job.options.clipStyle), highlightReel: false })}:f${job.options.captionFont || ""}`;
         const renderKey = crypto.createHash("sha256").update(renderKeyRaw).digest("hex");
         const renderCachePath = path.join(RENDERS_CACHE_DIR, `${renderKey}.json`);
 
@@ -704,6 +721,7 @@ class JobQueueManager {
               .join(" · ") || undefined,
           keepRanges: produced.keepRanges,
           timeKnots: produced.timeKnots,
+          hypeMoments: produced.hypeMoments,
           hookStrength: clip.hookStrength,
           engagementScore: clip.engagementScore,
           trendMatch: clip.trendMatch,
@@ -719,6 +737,46 @@ class JobQueueManager {
       }
 
       job.stageTimestamps.rendering.end = Date.now();
+
+      // Optional highlight reel from the finished clips (never fails the job).
+      if (normalizeClipStyle(job.options.clipStyle).highlightReel && !job.output.highlightReel) {
+        job.stageMessage = "Stitching your highlight reel...";
+        saveJobRecord(job);
+        try {
+          const clipsDir = path.join(process.cwd(), "public", "rendered_clips");
+          const sources = job.output.renderedClips
+            .map((r) => ({ path: path.join(clipsDir, r.filename), hype: r.hypeMoments?.[0] }))
+            .filter((r) => fs.existsSync(r.path));
+          const aspect = job.options.aspectRatio || "9:16";
+          const reelName = `reel-${Date.now()}.mp4`;
+          const reelPath = path.join(clipsDir, reelName);
+          const made = await buildHighlightReel(sources, reelPath, {
+            W: aspect === "16:9" ? 1920 : 1080,
+            H: aspect === "16:9" ? 1080 : aspect === "1:1" ? 1080 : 1920,
+            font: job.options.captionFont && job.options.captionFont !== "default" ? job.options.captionFont : "anton",
+          });
+          if (made) {
+            const previewName = await generatePreviewClip(reelPath).catch(() => null);
+            const posterName = await generatePosterImage(reelPath).catch(() => null);
+            job.output.highlightReel = {
+              downloadUrl: `/api/media?file=rendered_clips/${reelName}`,
+              previewDownloadUrl: previewName ? `/api/media?file=rendered_clips/${previewName}` : undefined,
+              posterUrl: posterName ? `/api/media?file=rendered_clips/${posterName}` : undefined,
+              filename: reelName,
+              duration: made.duration,
+              parts: made.parts,
+              fileSize: (() => { try { return fs.statSync(reelPath).size; } catch { return undefined; } })(),
+            };
+            job.output.highlightReelNote = undefined;
+          } else {
+            job.output.highlightReelNote = "The highlight reel needs at least 2 finished clips.";
+          }
+        } catch (e: any) {
+          console.warn("[JobQueue] Highlight reel failed:", e?.message || e);
+          job.output.highlightReelNote = "The highlight reel couldn't be made this time.";
+        }
+        saveJobRecord(job);
+      }
 
       // -------------------------------------------------------------
       // Stage 5: Done & Periodic Cleanup

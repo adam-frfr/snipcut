@@ -1,3 +1,7 @@
 # Shell scripts run on Linux servers: always LF.
 *.sh text eol=lf
 Caddyfile* text eol=lf
+# Vision models / media: never touch their bytes.
+*.onnx binary
+*.png binary
+*.ttf binary

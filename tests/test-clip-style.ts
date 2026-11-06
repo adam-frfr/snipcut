@@ -7,7 +7,8 @@
 import { normalizeClipStyle, STYLE_PACKS, DEFAULT_CLIP_STYLE, styleNeedsFx } from "../src/lib/clipStyleOptions";
 import { parseCounter, formatCounter, isProfane, maskProfanity, hexToAss, filmLookFilter, fitBackgroundChain, emojiImage } from "../src/lib/clipStyle";
 import { emojiFor, EMOJI_CODES } from "../src/lib/emojiMap";
-import { buildKaraokeAss } from "../src/lib/videoService";
+import { buildKaraokeAss, buildBehindTitleAss } from "../src/lib/videoService";
+import { pickSlamSentence, pickReactions, detectListicle, transitionFilter, footagePath } from "../src/lib/clipStyle";
 import { knotsForward, knotsInverse } from "../src/lib/timeline";
 
 let failures = 0;
@@ -95,6 +96,69 @@ check(normalizeClipStyle({ zoomType: "none" }).zoomType === "none", "zooms can b
   check(near(knotsInverse(knots, f10 + 0.4), 10), "time map: inside the freeze = the frozen moment");
   check(near(knotsInverse(knots, knotsForward(knots, 13.7)), 13.7), "time map: inverse undoes forward");
   check(knotsForward([], 7) === 7 && knotsInverse(undefined, 7) === 7, "time map: no knots = unchanged clock");
+}
+
+// ---- batch 6 ---------------------------------------------------------------
+{
+  const n = normalizeClipStyle({ background: "space", faceBlur: "maybe", splitFootage: "../x.mp4", textSlam: "yes", highlightReel: true });
+  check(n.background === "none" && n.faceBlur === "off", "unknown background / face-blur values fall back to off");
+  check(n.splitFootage === "" && n.textSlam === false && n.highlightReel === true, "footage id must be a plain upload id; booleans must be booleans");
+  check(footagePath("../../etc/passwd") === null, "footage path can't escape the upload folder");
+  check(!styleNeedsFx({ ...DEFAULT_CLIP_STYLE, sfx: false, voiceEnhance: false, pushIn: false, highlightReel: true }), "the reel switch alone doesn't force an effects pass per clip");
+  check(styleNeedsFx({ ...DEFAULT_CLIP_STYLE, sfx: false, voiceEnhance: false, pushIn: false, background: "blur" }), "a background swap runs the effects pass");
+  for (const t of ["lightleak", "burn", "rewind", "whip"] as const) {
+    const f = transitionFilter(t, [4.2]);
+    check(f.includes("enable=") && f.includes("4.") && !f.includes("rgbashift=rh=-16"), `${t} transition has its own timed filter`);
+  }
+  check(transitionFilter("whip", []) === "", "no cuts = no transition filter");
+
+  const mk = (text: string, t0: number, step = 0.4) =>
+    text.split(" ").map((w, i) => ({ text: w, start: t0 + i * step, end: t0 + i * step + step * 0.9 }));
+  const talk = [
+    ...mk("so here is the thing about this phone.", 0.2),
+    ...mk("it costs $599 and that is insane!", 6),
+    ...mk("but most people never notice the trick.", 11),
+    ...mk("anyway let me show you more stuff here now.", 16),
+  ];
+  const kw = new Set(["costs", "insane", "trick"]);
+  const sl = pickSlamSentence(talk, (w) => kw.has(w.toLowerCase().replace(/[^a-z0-9]/g, "")), 3.2, 24);
+  check(!!sl && sl.words[0].text === "it" && /insane/.test(sl.words[sl.words.length - 1].text), "text slam picks the punchy sentence with the number");
+  check(pickSlamSentence(talk, () => false, 30, 24) === null, "no slam when nothing fits after the hook");
+
+  const reacts = pickReactions(talk, 3.2, 24, []);
+  check(reacts.length === 1 && reacts[0].text === "NO WAY!", "reaction sticker on 'insane'");
+  check(pickReactions(talk, 3.2, 24, [{ start: 5.5, end: 9.5 }]).length === 0, "reactions keep away from the slam");
+
+  const list = detectListicle(
+    [
+      ...mk("here are 3 tips that changed my life.", 0.5),
+      ...mk("first, wake up early every day.", 4),
+      ...mk("second, drink water before coffee.", 8),
+      ...mk("and finally, go for a walk.", 12),
+    ],
+    16
+  );
+  check(!!list && list.label === "TIP" && list.total === 3 && list.items.length === 3, "list: 3 tips detected with 3 items");
+  check(!!list && list.items[0].start === 4 && list.items[2].n === 3 && list.items[1].end === list.items[2].start, "list items start at first / second / finally");
+  check(detectListicle(mk("i went to the store and bought 3 apples today.", 0), 10) === null, "no list without list words");
+
+  const ass = buildKaraokeAss(talk, "snipcut", 400, { x: 1080, y: 1920 }, {
+    slam: sl!,
+    stickers: { subscribeAt: 12, reactions: [{ t: 7, text: "NO WAY!" }] },
+    listicle: { label: "TIP", total: 3, items: [{ n: 1, start: 4, end: 8 }, { n: 2, start: 8, end: 12 }] },
+  });
+  const L = ass.split("\n");
+  check(L.filter((l) => l.includes(",Slam,")).length === sl!.words.length, "every slam word gets its own full-screen event");
+  check(!L.some((l) => l.includes(",Snipcut,") && /0:00:0[67]\./.test(l)), "normal captions pause during the slam");
+  check(L.some((l) => l.includes(",Sub2,") && l.endsWith("SUBSCRIBE")) && L.some((l) => l.includes(",SubDone,") && l.endsWith("SUBSCRIBED")), "subscribe button pops, then shows SUBSCRIBED");
+  check(L.some((l) => l.includes(",React,") && l.endsWith("NO WAY!")), "reaction sticker event");
+  check(L.some((l) => l.includes(",List,") && l.endsWith("TIP 1/3")) && L.some((l) => l.endsWith("TIP 2/3")), "list labels TIP 1/3, TIP 2/3");
+
+  const behindHigh = buildBehindTitleAss("This phone is not cheap anymore", 3, 1080, 1920, "anton", undefined, 0.12);
+  const behindLow = buildBehindTitleAss("This phone is not cheap anymore", 3, 1080, 1920, "anton", undefined, 0.35);
+  const yOf = (a: string) => Number(/\\pos\(\d+,(\d+)\)/.exec(a)?.[1]);
+  check(yOf(behindHigh) < yOf(behindLow), "title behind sits higher when the head is higher");
+  check(yOf(behindHigh) > 0 && yOf(behindLow) <= 1920 * 0.42, "title behind stays on screen");
 }
 
 if (failures) {

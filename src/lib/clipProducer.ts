@@ -21,6 +21,7 @@ import {
   translateLines,
   generateVoiceover,
   userMusicPath,
+  renderAudiogramBase,
 } from "./clipStyle";
 import { measureBackgroundAudio, shotMap, coverage, inside, overlaps, Span } from "./adaptiveFx";
 import { computeKeepRanges, toOutputTime, wordsOnOutput, keptDuration, inSpokenOrder, Range, TimelineWord } from "./timeline";
@@ -138,6 +139,11 @@ export async function produceClip(o: ProduceClipOptions): Promise<ProduceClipRes
   const hookText = o.hookTitle && o.headline ? o.headline : undefined;
   const keywords = o.keywords || undefined;
   const style = normalizeClipStyle(o.style);
+  // Audio-only uploads arrive as "<name>-audio.mp4" (a still placeholder
+  // picture): those always get the podcast audiogram look.
+  const audioOnlySource = /-audio\.mp4$/i.test(o.inputPath);
+  const audiogram = style.audiogram || audioOnlySource;
+  if (audiogram) style.audiogram = true;
   const fx = Boolean(o.broll || o.musicBed) || styleNeedsFx(style);
 
   const outDir = path.dirname(o.outputPath);
@@ -178,7 +184,21 @@ export async function produceClip(o: ProduceClipOptions): Promise<ProduceClipRes
         const bgAudio = o.musicBed
           ? measureBackgroundAudio(o.inputPath, spanStart, spanDur, keptWords)
           : Promise.resolve(null);
-        const base = await renderSpan(cutting ? spanPath : basePath, true);
+        const base: { tracking: TrackingResult | null } = audiogram
+          ? await (async () => {
+              await renderAudiogramBase({
+                input: o.inputPath,
+                output: cutting ? spanPath : basePath,
+                start: spanStart,
+                duration: spanDur,
+                W: o.aspectRatio === "16:9" ? 1920 : 1080,
+                H: o.aspectRatio === "16:9" ? 1080 : o.aspectRatio === "1:1" ? 1080 : 1920,
+                hasPicture: !audioOnlySource,
+                brand: style.brand,
+              });
+              return { tracking: null };
+            })()
+          : await renderSpan(cutting ? spanPath : basePath, true);
         if (cutting) {
           temp.push(spanPath);
           await cutKeepRanges(spanPath, basePath, relRanges);
@@ -186,7 +206,8 @@ export async function produceClip(o: ProduceClipOptions): Promise<ProduceClipRes
         temp.push(basePath);
         const finalDur = cutting ? keptDuration(ranges) : spanDur;
         const mapRel = (t: number) => toOutputTime(ranges, spanStart + t);
-        const layoutMode = o.splitScreen ? "split-screen" : o.reframeMode || "auto-tracker";
+        // The audiogram is a designed full frame: no zooms / B-roll / cut-out on it.
+        const layoutMode = audiogram ? "blurred-fit" : o.splitScreen ? "split-screen" : o.reframeMode || "auto-tracker";
         const mapSpans = (sp: Span[]) =>
           sp.map((s) => ({ start: mapRel(s.start), end: mapRel(s.end) })).filter((s) => s.end - s.start > 0.05);
         const shotsRel = shotMap(base.tracking, layoutMode, spanDur);
@@ -334,7 +355,8 @@ export async function produceClip(o: ProduceClipOptions): Promise<ProduceClipRes
           },
           voiceover,
           musicPath,
-          fitSpans: shots.fit,
+          fitSpans: audiogram ? [] : shots.fit,
+          cropSpans: audiogram ? [] : shots.crop,
           sourceAspect,
         });
         notes.push(...res.notes);

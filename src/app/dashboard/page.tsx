@@ -253,6 +253,14 @@ function DashboardContent() {
 
   // Phase 4: Async Job State & Worker Polling
   const [currentJobId, setCurrentJobId] = useState<string | null>(null);
+  // Highlight reel of the open project (when it was asked for).
+  const [reel, setReel] = useState<{ jobId: string; url: string; previewUrl?: string; posterUrl?: string; duration: number; parts: number } | null>(null);
+  const [reelNote, setReelNote] = useState<{ jobId: string; text: string } | null>(null);
+  const setReelFromJob = (job: any) => {
+    const r = job?.output?.highlightReel;
+    setReel(r?.downloadUrl ? { jobId: job.id, url: r.downloadUrl, previewUrl: r.previewDownloadUrl, posterUrl: r.posterUrl, duration: r.duration, parts: r.parts } : null);
+    setReelNote(job?.output?.highlightReelNote ? { jobId: job.id, text: job.output.highlightReelNote } : null);
+  };
   const [jobProgress, setJobProgress] = useState<number>(0);
   const [jobStatus, setJobStatus] = useState<string>("");
   const [isRetrying, setIsRetrying] = useState<boolean>(false);
@@ -627,6 +635,7 @@ function DashboardContent() {
       if (data?.job) {
         const built = buildClipsFromJob(data.job);
         if (built.length) publishClips(built);
+        setReelFromJob(data.job);
       }
     } catch {
       setErrorMsg("Could not open that project — please try again.");
@@ -704,6 +713,7 @@ function DashboardContent() {
           const firstBatch = shownRenderedRef.current === 0;
           shownRenderedRef.current = renderedCount;
           publishClips(buildClipsFromJob(job));
+          setReelFromJob(job);
           if (firstBatch) {
             setIsProcessing(false);
             try {
@@ -715,6 +725,7 @@ function DashboardContent() {
           localStorage.removeItem("active_job_id");
 
           const generatedClips = buildClipsFromJob(job);
+          setReelFromJob(job);
 
           // A very low-res source (e.g. a downloader's default 144p/240p)
           // physically caps how good any clip can look — every crop is a
@@ -1406,6 +1417,35 @@ function DashboardContent() {
                 </a>
               </div>
             )}
+            {reel && reel.jobId === currentProjectId && (
+              <div className="mb-5 bg-white border-2 border-black shadow-[4px_4px_0px_#000000] p-4 flex flex-col sm:flex-row gap-4 items-start">
+                <video
+                  src={reel.previewUrl || reel.url}
+                  poster={reel.posterUrl}
+                  controls
+                  playsInline
+                  preload="metadata"
+                  className="w-[150px] max-w-full aspect-[9/16] bg-black border-2 border-black object-contain shrink-0"
+                />
+                <div className="flex-1 min-w-0">
+                  <span className="neo-tag-yellow text-[10px]">New</span>
+                  <h3 className="mt-2 text-sm font-black uppercase text-black">Highlight reel</h3>
+                  <p className="text-[11px] font-medium text-neutral-600 mt-1">
+                    The best moments of {reel.parts} clips stitched into one {Math.round(reel.duration)}s video with transitions and a title.
+                  </p>
+                  <a
+                    href={reel.url}
+                    download
+                    className="mt-3 inline-flex px-3 py-2 bg-[#FFC700] hover:bg-black hover:text-white text-black border-2 border-black font-black text-xs uppercase items-center gap-1.5 shadow-[2px_2px_0px_#000000] transition-all"
+                  >
+                    <Download className="w-3.5 h-3.5" /> Download reel
+                  </a>
+                </div>
+              </div>
+            )}
+            {!reel && reelNote && reelNote.jobId === currentProjectId && (
+              <p className="mb-4 text-[11px] font-bold text-neutral-500">{reelNote.text}</p>
+            )}
             {clips.length === 0 ? (
               /* Clean Empty State */
               <div className="bg-white border-2 border-black shadow-[6px_6px_0px_#000000] p-8 sm:p-12 text-center max-w-xl mx-auto">
@@ -2039,12 +2079,12 @@ function DashboardContent() {
 
               <div>
                 <label className="block text-xs font-black uppercase tracking-wider text-black mb-1.5">
-                  Or Upload Video File (MP4, MOV, WebM)
+                  Or Upload Video / Podcast File (MP4, MOV, WebM, MP3, WAV)
                 </label>
                 <div className="border-2 border-dashed border-black bg-[#F8F7F4] hover:bg-[#FFFBEA] p-6 text-center cursor-pointer relative transition-colors">
                   <input
                     type="file"
-                    accept="video/*"
+                    accept="video/*,audio/*"
                     onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
                     className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                   />
@@ -2055,7 +2095,7 @@ function DashboardContent() {
                     {uploadFile ? uploadFile.name : "Select Video File"}
                   </div>
                   <div className="text-[11px] font-mono text-neutral-600 mt-0.5">
-                    {uploadFile ? `${(uploadFile.size / (1024 * 1024)).toFixed(1)} MB` : "Up to 2GB MP4 / MOV"}
+                    {uploadFile ? `${(uploadFile.size / (1024 * 1024)).toFixed(1)} MB` : "Up to 2GB · audio-only files become podcast audiograms"}
                   </div>
                 </div>
               </div>
@@ -2172,6 +2212,7 @@ function DashboardContent() {
                   onFont={setCaptionFont}
                   onCaptionStyle={(st) => setJobCaptionStyle(st as CaptionStyleName)}
                   musicOn={musicBedEnabled}
+                  showReel
                 />
               </div>
 

@@ -7,6 +7,12 @@ import { spawn, execFile } from "child_process";
 import util from "util";
 import { emojiFor } from "./emojiMap";
 import {
+  runFrameFx,
+  makeBackgroundImage,
+  pickSlamSentence,
+  pickReactions,
+  detectListicle,
+  footagePath,
   parseCounter,
   formatCounter,
   filmLookFilter,
@@ -510,6 +516,12 @@ export interface CaptionOptions {
   watermark?: { text: string; pos: string; opacity: number };
   /** Telestrator marks (x/y in % of the frame). */
   drawings?: { t: number; x: number; y: number; kind: "circle" | "arrow" }[];
+  /** Full-screen word-by-word slam; normal captions pause during it. */
+  slam?: { start: number; end: number; words: { start: number; end: number; text: string }[] };
+  /** Animated subscribe button (time) and comic reaction stickers. */
+  stickers?: { subscribeAt?: number; reactions?: { t: number; text: string }[] };
+  /** "TIP 2/5" labels for a numbered list. */
+  listicle?: { label: string; total: number; items: { n: number; start: number; end: number }[] };
 }
 
 const KEYWORD_STOPWORDS = new Set(
@@ -561,6 +573,9 @@ export function buildKaraokeAss(
   playRes: { x: number; y: number } = { x: 1080, y: 1920 },
   options: CaptionOptions = {}
 ): string {
+  // A text slam takes over the screen: no normal captions under it.
+  const slam = options.slam;
+  if (slam) words = words.filter((w) => !(w.start >= slam.start - 0.02 && w.start < slam.end));
   // ASS colours are &HAABBGGRR. `kw` = keyword highlight colour (differs
   // from the spoken-word accent so both read at once).
   const palettes = {
@@ -689,6 +704,11 @@ Style: LTTitle,${fontName},${Math.max(16, Math.round(36 * captionScale))},&H00FF
 Style: Counter,${fontName},${Math.max(30, Math.round(150 * captionScale))},${pal.accent === "&H00FFFFFF" ? "&H0000FFFF" : pal.accent},&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,${Math.max(4, Math.round(10 * captionScale))},4,5,40,40,0,1
 Style: Mark,${fontName},${Math.max(14, Math.round(34 * captionScale))},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,1,0,1,2,1,9,44,44,${Math.round(playRes.y * 0.05)},1
 Style: Draw,Arial,20,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,6,0,5,0,0,0,1
+Style: Slam,${fontName},${Math.max(40, Math.round(150 * captionScale * fontBoost))},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,${Math.max(4, Math.round(11 * captionScale))},5,5,40,40,0,1
+Style: Sub2,${fontName},${Math.max(30, Math.round(92 * captionScale))},&H00FFFFFF,&H00FFFFFF,&H002B2BE8,&H00000000,-1,0,0,0,100,100,1,0,3,${Math.max(8, Math.round(24 * captionScale))},0,5,40,40,0,1
+Style: SubDone,${fontName},${Math.max(30, Math.round(92 * captionScale))},&H00FFFFFF,&H00FFFFFF,&H00585858,&H00000000,-1,0,0,0,100,100,1,0,3,${Math.max(8, Math.round(24 * captionScale))},0,5,40,40,0,1
+Style: React,${CAPTION_FONTS.bangers},${Math.max(24, Math.round(96 * captionScale))},&H0000E5FF,&H0000E5FF,&H00000000,&H00000000,-1,0,0,0,100,100,2,0,1,${Math.max(4, Math.round(9 * captionScale))},4,5,40,40,0,1
+Style: List,${fontName},${Math.max(22, Math.round(56 * captionScale))},&H00111111,&H00111111,${pal.accent === "&H00FFFFFF" ? "&H0000D7FF" : pal.accent},&H00000000,-1,0,0,0,100,100,1,0,3,${Math.max(5, Math.round(12 * captionScale))},0,7,0,0,0,1
 Style: Hook,Arial,${hookSize},&H00111111,&H00111111,&H00FFFFFF,&H00000000,-1,0,0,0,100,100,0,0,3,${Math.max(6, Math.round(20 * captionScale))},0,8,80,80,${Math.round(playRes.y * 0.11)},1
 
 [Events]
@@ -1033,8 +1053,60 @@ function buildExtraEvents(
       );
     }
   }
+
+  // Text slam: each word alone, huge, centre screen, slamming in.
+  if (options.slam?.words.length) {
+    const sw = options.slam.words;
+    const cy = Math.round(playRes.y * 0.46);
+    sw.forEach((w, i) => {
+      const end = i + 1 < sw.length ? sw[i + 1].start : options.slam!.end;
+      if (end - w.start < 0.03) return;
+      const col = i % 2 === 1 || isNumberish(w.text) ? `\\c${ctx.accent === "&H00FFFFFF" ? "&H0000FFFF" : ctx.accent}` : "";
+      const tilt = i % 2 ? "\\frz-3" : "\\frz3";
+      out.push(
+        `Dialogue: 7,${T(w.start)},${T(end)},Slam,,0,0,0,,{\\an5\\pos(${cx},${cy})${col}${tilt}\\fscx175\\fscy175\\t(0,90,\\fscx100\\fscy100)\\t(90,140,\\frz0)}${esc(w.text.toUpperCase().replace(/[.,!?;:]+$/, ""))}`
+      );
+    });
+  }
+
+  // Subscribe button: pops in, gets "clicked", turns into SUBSCRIBED.
+  if (options.stickers?.subscribeAt !== undefined) {
+    const t0 = options.stickers.subscribeAt;
+    const y = Math.round(playRes.y * (playRes.y > playRes.x ? 0.6 : 0.7));
+    out.push(
+      `Dialogue: 5,${T(t0)},${T(t0 + 1.0)},Sub2,,0,0,0,,{\\an5\\pos(${cx},${y})\\fscx20\\fscy20\\t(0,180,\\fscx112\\fscy112)\\t(180,280,\\fscx100\\fscy100)\\t(800,900,\\fscx90\\fscy90)}SUBSCRIBE`
+    );
+    out.push(
+      `Dialogue: 5,${T(t0 + 1.0)},${T(t0 + 2.4)},SubDone,,0,0,0,,{\\an5\\pos(${cx},${y})\\fscx90\\fscy90\\t(0,120,\\fscx100\\fscy100)\\fad(0,250)}SUBSCRIBED`
+    );
+  }
+
+  // Comic reaction stickers, tilted, popping in on alternate sides.
+  (options.stickers?.reactions || []).forEach((r, i) => {
+    const x = Math.round(playRes.x * (i % 2 ? 0.7 : 0.3));
+    const y = Math.round(playRes.y * 0.27);
+    const rot = i % 2 ? -10 : 10;
+    out.push(
+      `Dialogue: 6,${T(r.t)},${T(r.t + 1.4)},React,,0,0,0,,{\\an5\\pos(${x},${y})\\frz${rot}\\fscx10\\fscy10\\t(0,160,\\fscx125\\fscy125)\\t(160,260,\\fscx100\\fscy100)\\t(260,420,\\frz${rot - 6})\\t(420,580,\\frz${rot})\\fad(0,220)}${esc(r.text)}`
+    );
+  });
+
+  // Numbered list: "TIP 2/5" tag in the top-left while each item plays.
+  if (options.listicle?.items.length) {
+    const L = options.listicle;
+    const x = Math.round(44 * captionScale);
+    const y = Math.round(playRes.y * (playRes.y > playRes.x ? 0.17 : 0.1));
+    for (const it of L.items) {
+      const label = L.label === "#" ? `#${it.n} OF ${L.total}` : `${L.label} ${it.n}/${L.total}`;
+      out.push(
+        `Dialogue: 4,${T(Math.max(ctx.hookUntil, it.start))},${T(it.end)},List,,0,0,0,,{\\an7\\move(${-Math.round(playRes.x * 0.5)},${y},${x},${y},0,260)}${esc(label)}`
+      );
+    }
+  }
   return out;
 }
+
+const isNumberish = (t: string) => /\d/.test(t);
 
 /**
  * Clip-relative spans where captions should sit mid-screen: the whole clip
@@ -1710,6 +1782,8 @@ export interface PostFxOptions {
   fitSpans?: { start: number; end: number }[];
   /** Source width / height (face bubble geometry). */
   sourceAspect?: number;
+  /** Clip-relative talking-head (crop) shots: where the person cut-out applies. */
+  cropSpans?: { start: number; end: number }[];
 }
 
 function punchZoomExpr(punches: { start: number; end: number }[], fps = 30): string {
@@ -2069,6 +2143,29 @@ export async function applyPostEffects(opts: PostFxOptions): Promise<PostFxResul
   let transitionsIn = (opts.transitionTimes || []).filter((t) => t > 0.3 && t < opts.duration - 0.3);
   const capOpts: CaptionOptions = { ...(opts.captionOptions || {}) };
   let fitSpans = opts.fitSpans || [];
+  let cropSpans = opts.cropSpans || [];
+
+  // Face blur first: everything after works on the blurred picture.
+  if (style.faceBlur !== "off") {
+    const blurred = path.join(fxDir, `blur-${stamp}.mp4`);
+    const muxed = path.join(fxDir, `blurmux-${stamp}.mp4`);
+    const st = await runFrameFx("blur", basePath, blurred, [style.faceBlur]);
+    if (st) {
+      temp.push(blurred);
+      try {
+        await execFileP(getFfmpegBinary(), ["-y", "-loglevel", "error", "-i", blurred, "-i", basePath, "-map", "0:v", "-map", "1:a?", "-c", "copy", "-shortest", muxed], { maxBuffer: 16 * 1024 * 1024 });
+        temp.push(muxed);
+        basePath = muxed;
+        notes.push(
+          Number(st.facesBlurred) > 0
+            ? style.faceBlur === "all" ? "faces blurred" : "other people's faces blurred"
+            : style.faceBlur === "all" ? "face blur: no faces found" : "face blur: nobody else in the shot"
+        );
+      } catch {
+        notes.push("face blur failed");
+      }
+    } else notes.push("face blur skipped: the face detector couldn't run");
+  }
 
   // Big moments (loudness peaks) on the clip as cut.
   const wantHype = style.hypeMoments || style.freezeFrame || style.coldOpen;
@@ -2112,6 +2209,7 @@ export async function applyPostEffects(opts: PostFxOptions): Promise<PostFxResul
     transitionsIn = transitionsIn.map(mapT);
     bleeps = bleeps.map(ms);
     fitSpans = fitSpans.map(ms);
+    cropSpans = cropSpans.map(ms);
     hype = hype.map((h) => mapT(h));
     if (capOpts.centerSpans) capOpts.centerSpans = capOpts.centerSpans.map(ms);
     if (capOpts.speakerSpans) capOpts.speakerSpans = capOpts.speakerSpans.map(ms);
@@ -2135,6 +2233,68 @@ export async function applyPostEffects(opts: PostFxOptions): Promise<PostFxResul
     }
   }
   let nextInput = 1 + broll.length;
+
+  // Person cut-out (background swap, text behind, glow) on talking-head shots.
+  const wantCutout = style.background !== "none" || style.textBehind || style.subjectGlow;
+  const cutSpans = cropSpans.filter((c) => c.end - c.start > 0.3);
+  let maskIdx = -1;
+  let bgIdx = -1;
+  let headTop: number | undefined;
+  if (wantCutout && cutSpans.length) {
+    const mp = path.join(fxDir, `mask-${stamp}.mp4`);
+    // Stats (is there a person? where's the head?) only on the talking-head shots.
+    const spanArg = cutSpans.map((c) => `${c.start.toFixed(2)}-${c.end.toFixed(2)}`).join(",");
+    const st = await runFrameFx("mask", basePath, mp, [spanArg]);
+    if (st) temp.push(mp);
+    if (st && Number(st.personCoverage) > 0.03) {
+      if (typeof st.headTop === "number") headTop = st.headTop;
+      maskIdx = nextInput++;
+      args.push("-i", mp);
+      if (style.background === "studio" || style.background === "gradient" || style.background === "brand") {
+        const png = await makeBackgroundImage(style.background, W, H, style.brand);
+        if (png) {
+          bgIdx = nextInput++;
+          args.push("-loop", "1", "-framerate", "30", "-t", duration.toFixed(2), "-i", png);
+        }
+      }
+    } else notes.push(st ? "cut-out skipped: no person found in the shot" : "cut-out skipped: the AI cut-out couldn't run");
+  } else if (wantCutout) notes.push("cut-out skipped: it needs a talking-head shot");
+  const cutout = maskIdx >= 0;
+  // Text behind the speaker replaces the hook card while it's on screen.
+  let behindAss: string | null = null;
+  const hookWindow = Math.min(duration, Math.max(2.5, capOpts.hook?.until ?? 3.4));
+  // The title only shows on the cut-out picture: it needs the opening to be a talking-head shot.
+  const hookOnCutout =
+    cutSpans.reduce((s, c) => s + Math.max(0, Math.min(c.end, hookWindow) - Math.max(c.start, 0)), 0) >= hookWindow * 0.85;
+  if (cutout && style.textBehind && capOpts.hook?.text && !hookOnCutout) {
+    notes.push("text behind skipped: the clip doesn't open on the speaker");
+  }
+  if (cutout && style.textBehind && capOpts.hook?.text && hookOnCutout) {
+    const until = hookWindow;
+    behindAss = path.join(fxDir, `behind-${stamp}.ass`);
+    fs.writeFileSync(
+      behindAss,
+      buildBehindTitleAss(capOpts.hook.text, until, W, H, capOpts.font, style.brand ? hexToAss(style.brand.primary) : undefined, headTop),
+      "utf-8"
+    );
+    temp.push(behindAss);
+    notes.push("text behind the speaker");
+  } else if (style.textBehind && !capOpts.hook?.text) {
+    notes.push("text behind skipped: turn on Hook title");
+  }
+
+  // Split layout: uploaded footage under the clip (9:16 only).
+  let footageIdx = -1;
+  if (style.splitFootage) {
+    const fp = W === 1080 && H === 1920 ? footagePath(style.splitFootage) : null;
+    if (fp) {
+      footageIdx = nextInput++;
+      args.push("-stream_loop", "-1", "-t", (duration + 0.5).toFixed(2), "-i", fp);
+      // Captions sit on the seam between the two halves.
+      capOpts.centerSpans = [{ start: 0, end: duration + 1 }];
+      notes.push("split with your footage");
+    } else notes.push(W === 1080 && H === 1920 ? "split skipped: footage not found" : "split skipped: needs a 9:16 clip");
+  }
 
   // Music: an uploaded track, a real one from data/music/<mood>/, or generated.
   let musicIdx = -1;
@@ -2189,6 +2349,43 @@ export async function applyPostEffects(opts: PostFxOptions): Promise<PostFxResul
     for (const e of plan) await addSfx(e.kind, e.at, e.gain);
   }
   for (const h of hypeHits) await addSfx("boom", h, 0.55);
+  if (style.transition === "rewind") for (const t of transitions) await addSfx("rewind", Math.max(0, t - 0.35), 0.4);
+
+  // Text slam: the strongest short sentence, word by word, full screen.
+  let slam: { start: number; end: number; words: { start: number; end: number; text: string }[] } | null = null;
+  if (style.textSlam && words.length) {
+    const kw = keywordSet(capOpts.keywords);
+    slam = pickSlamSentence(words, (w) => kw.has(w.toLowerCase().replace(/[^a-z0-9]/g, "")), hookUntil, duration);
+    if (slam) {
+      capOpts.slam = slam;
+      notes.push("text slam");
+      if (style.sfx) await addSfx("boom", slam.start, 0.4);
+    } else notes.push("text slam skipped: no short punchy sentence");
+  }
+  // Stickers: subscribe button mid-clip (clear of the slam / end card) + reactions.
+  let subscribeAt: number | undefined;
+  if (style.stickers) {
+    if (duration >= 10) {
+      let t = Math.min(duration - 4.8, Math.max(hookUntil + 2, duration * 0.55));
+      if (slam && t > slam.start - 2.6 && t < slam.end + 0.3) t = slam.end + 0.4;
+      if (t + 2.4 < duration - 2.3) {
+        subscribeAt = Number(t.toFixed(2));
+        if (style.sfx) await addSfx("pop", subscribeAt + 0.9, 0.4);
+      }
+    }
+    const avoid = [...(slam ? [slam] : []), ...(subscribeAt !== undefined ? [{ start: subscribeAt, end: subscribeAt + 2.4 }] : [])];
+    const reactions = pickReactions(words, hookUntil, duration, avoid);
+    capOpts.stickers = { subscribeAt, reactions };
+    notes.push(`stickers (${(subscribeAt !== undefined ? 1 : 0) + reactions.length})`);
+  }
+  // Numbered list labels.
+  if (style.listicle) {
+    const list = detectListicle(words, duration);
+    if (list) {
+      capOpts.listicle = list;
+      notes.push(`list labels (${list.items.length})`);
+    } else notes.push("list labels skipped: no numbered list in this clip");
+  }
   for (const b of bleeps) await addSfx("beep", b.start, 0.32, Math.min(2.4, b.end - b.start));
 
   // Emoji pops.
@@ -2210,6 +2407,10 @@ export async function applyPostEffects(opts: PostFxOptions): Promise<PostFxResul
     const fire = emojiImage("1f525");
     for (const h of hypeHits) if (fire && !emojiEvents.some((e) => Math.abs(e.at - h) < 1)) emojiEvents.push({ at: h, file: fire });
   }
+  if (subscribeAt !== undefined) {
+    const thumbs = emojiImage("1f44d");
+    if (thumbs) emojiEvents.push({ at: subscribeAt + 1.0, file: thumbs });
+  }
   const emojiIdx = emojiEvents.map((e) => {
     args.push("-loop", "1", "-framerate", "30", "-t", "1.3", "-i", e.file);
     return nextInput++;
@@ -2224,6 +2425,36 @@ export async function applyPostEffects(opts: PostFxOptions): Promise<PostFxResul
   if (style.transition === "zoom") {
     for (const t of transitions) zParts.push(`0.22*max(0,1-abs(in-${Math.round(t * 30)})/5)`);
   }
+  let srcV = "0:v";
+  if (cutout) {
+    const prep = `fps=30,scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},setsar=1`;
+    const whole = cutSpans.length === 1 && cutSpans[0].start <= 0.05 && cutSpans[0].end >= duration - 0.05;
+    const useOrigBg = bgIdx < 0;
+    const outs = ["cfg", ...(useOrigBg ? ["cbg"] : []), ...(whole ? [] : ["corig"])];
+    filters.push(`[0:v]${prep},split=${outs.length}${outs.map((o) => `[${o}]`).join("")}`);
+    filters.push(`[${maskIdx}:v]fps=30,scale=${W}:${H},format=gray,gblur=sigma=2.5${style.subjectGlow ? ",split=2[cm][cmg]" : "[cm]"}`);
+    if (bgIdx >= 0) filters.push(`[${bgIdx}:v]scale=${W}:${H},setsar=1,fps=30,format=yuv420p[cb0]`);
+    else if (style.background === "blur") filters.push(`[cbg]gblur=sigma=30,eq=brightness=-0.05[cb0]`);
+    else filters.push(`[cbg]null[cb0]`);
+    let bgL = "cb0";
+    if (behindAss) {
+      filters.push(`[${bgL}]${subtitlesFilter(behindAss)}[cb1]`);
+      bgL = "cb1";
+    }
+    if (style.subjectGlow) {
+      filters.push(`[cmg]dilation,dilation,dilation,gblur=sigma=6[gm]`);
+      filters.push(`color=c=white:s=${W}x${H}:r=30:d=${duration.toFixed(2)},format=yuva420p[gc]`);
+      filters.push(`[gc][gm]alphamerge,colorchannelmixer=aa=0.7[glow]`);
+      filters.push(`[${bgL}][glow]overlay=format=auto[cb2]`);
+      bgL = "cb2";
+    }
+    filters.push(`[cfg][cm]alphamerge[cp]`);
+    filters.push(`[${bgL}][cp]overlay=format=auto${whole ? ",format=yuv420p[vcomp]" : ",format=yuv420p[ccomp]"}`);
+    if (!whole) filters.push(`[corig][ccomp]overlay=enable='${between(cutSpans)}'[vcomp]`);
+    srcV = "vcomp";
+    if (style.background !== "none") notes.push(`background: ${style.background}`);
+    if (style.subjectGlow) notes.push("subject glow");
+  }
   if (zParts.length) {
     const sh = zp.shake.length ? `(${zp.shake.join("+")})` : "";
     const xs = sh ? `+${sh}*14*sin(in*1.9)` : "";
@@ -2231,10 +2462,10 @@ export async function applyPostEffects(opts: PostFxOptions): Promise<PostFxResul
     // fps=30 FIRST: zoompan with d=1 emits one frame per input frame and
     // stamps them at its own fps, so a 25fps clip came out 17% short.
     filters.push(
-      `[0:v]fps=30,scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},zoompan=z='min(1.35,1+${zParts.join("+")})':x='iw/2-(iw/zoom/2)${xs}':y='ih/2-(ih/zoom/2)${ys}':d=1:s=${W}x${H}:fps=30[base]`
+      `[${srcV}]fps=30,scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},zoompan=z='min(1.35,1+${zParts.join("+")})':x='iw/2-(iw/zoom/2)${xs}':y='ih/2-(ih/zoom/2)${ys}':d=1:s=${W}x${H}:fps=30[base]`
     );
   } else {
-    filters.push(`[0:v]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},fps=30[base]`);
+    filters.push(`[${srcV}]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},fps=30[base]`);
   }
   let last = "base";
 
@@ -2290,6 +2521,13 @@ export async function applyPostEffects(opts: PostFxOptions): Promise<PostFxResul
     last = `v${i}`;
   });
 
+  if (footageIdx >= 0) {
+    filters.push(`[${last}]crop=1080:960:0:300[sptop]`);
+    filters.push(`[${footageIdx}:v]scale=1080:960:force_original_aspect_ratio=increase,crop=1080:960,fps=30,setsar=1[spbot]`);
+    filters.push(`[sptop][spbot]vstack=inputs=2[splitv]`);
+    last = "splitv";
+  }
+
   // End card (darkened last seconds + animated text in the captions).
   const brand = style.brand;
   if (style.endCard && duration > 6) {
@@ -2305,6 +2543,7 @@ export async function applyPostEffects(opts: PostFxOptions): Promise<PostFxResul
   // Colour grade, film look, cut transitions, hype flashes, end-card dim.
   const lookParts = [gradeFilter(style.grade), filmLookFilter(style.filmLook), transitionFilter(style.transition, transitions)];
   if (hypeHits.length) lookParts.push(`drawbox=x=0:y=0:w=iw:h=ih:color=white@0.6:t=fill:enable='${hypeHits.map((h) => `between(t\\,${h.toFixed(3)}\\,${(h + 0.07).toFixed(3)})`).join("+")}'`);
+  if (slam) lookParts.push(`drawbox=x=0:y=0:w=iw:h=ih:color=black@0.6:t=fill:enable='between(t\\,${(slam.start - 0.05).toFixed(3)}\\,${slam.end.toFixed(3)})'`);
   if (capOpts.endCard) lookParts.push(`drawbox=x=0:y=0:w=iw:h=ih:color=black@0.45:t=fill:enable='gte(t\\,${capOpts.endCard.start.toFixed(2)})'`);
   const look = lookParts.filter(Boolean).join(",");
   if (look) {
@@ -2345,8 +2584,10 @@ export async function applyPostEffects(opts: PostFxOptions): Promise<PostFxResul
       .map((d) => ({ ...d, t: d.t - teaserLen }))
       .filter((d) => d.t >= 0 && d.t < duration);
   }
+  if (behindAss) capOpts.hook = undefined;
   let assPath: string | null = null;
-  const hasCaptionLayer = words.length > 0 || capOpts.endCard || capOpts.lowerThird || capOpts.watermark || capOpts.drawings?.length;
+  const hasCaptionLayer =
+    words.length > 0 || capOpts.endCard || capOpts.lowerThird || capOpts.watermark || capOpts.drawings?.length || capOpts.stickers || capOpts.listicle;
   if (hasCaptionLayer) {
     const playRes =
       opts.aspectRatio === "16:9" ? { x: 1920, y: 1080 } : opts.aspectRatio === "1:1" ? { x: 1080, y: 1080 } : { x: 1080, y: 1920 };
@@ -2457,6 +2698,42 @@ export async function applyPostEffects(opts: PostFxOptions): Promise<PostFxResul
     hype: hype.map((h) => Number((h + offset).toFixed(2))),
     notes,
   };
+}
+
+/** Giant hook title meant to sit BEHIND the cut-out speaker (upper middle). */
+export function buildBehindTitleAss(text: string, until: number, W: number, H: number, font?: string, accent?: string, headTop?: number): string {
+  const fontName = CAPTION_FONTS[font || "default"] || "Arial";
+  const scale = Math.min(W, H) / 1080;
+  const clean = stripEmoji(text).replace(/[{}\\]/g, "").toUpperCase();
+  let size = Math.round((H > W ? 165 : 140) * scale);
+  let lines = wrapTitle(clean, Math.max(6, Math.floor((W * 0.92) / (0.6 * size))));
+  while (lines.length > 3 && size > 90 * scale) {
+    size = Math.round(size * 0.85);
+    lines = wrapTitle(clean, Math.max(6, Math.floor((W * 0.92) / (0.6 * size))));
+  }
+  lines = lines.slice(0, 3);
+  const longest = clean.split(/\s+/).reduce((a, b) => (b.length > a.length ? b : a), "");
+  const acc = accent || "&H0000D7FF";
+  const body = lines.map((l) => l.split(" ").map((w) => (w === longest ? `{\\c${acc}}${w}{\\c&H00FFFFFF&}` : w)).join(" ")).join("\\N");
+  // Bottom of the title tucks a little behind the top of the head.
+  const blockH = lines.length * size * 1.05;
+  const target = (headTop ?? (H > W ? 0.22 : 0.3)) * H + 0.07 * H;
+  const cy = Math.round(Math.min(H * 0.42, Math.max(blockH / 2 + H * 0.045, target - blockH / 2)));
+  return `[Script Info]
+ScriptType: v4.00+
+PlayResX: ${W}
+PlayResY: ${H}
+WrapStyle: 2
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Behind,${fontName},${size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,0,${Math.max(2, Math.round(6 * scale))},5,20,20,0,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,${formatAssTime(until)},Behind,,0,0,0,,{\\an5\\pos(${Math.round(W / 2)},${cy})\\fad(150,250)\\fscx118\\fscy118\\t(0,260,\\fscx100\\fscy100)}${body}
+`;
 }
 
 /** Prepends the big moment as a 2s "wait for it" teaser. Returns the teaser length (0 if it failed). */

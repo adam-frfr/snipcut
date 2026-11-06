@@ -205,6 +205,32 @@ def detect_faces(detector, frame, min_face=18):
     return out
 
 
+
+def make_face_detector(size, score=0.6):
+    """
+    YuNet face detector that actually runs on this OpenCV. The 2023 model
+    needs OpenCV >= 4.8; Debian's OpenCV 4.6 (the Docker image) can only run
+    the 2022 model, and loading the wrong one fails on the first detect().
+    Each candidate is tried on a blank frame; None if neither works.
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    for name in ("face_detection_yunet.onnx", "face_detection_yunet_2022mar.onnx"):
+        path = os.path.join(here, name)
+        if not os.path.exists(path):
+            continue
+        try:
+            # The 2022 model gives more false faces at the same score: be stricter.
+            sc = max(score, 0.8) if "2022" in name else score
+            d = cv2.FaceDetectorYN.create(path, "", size, sc, 0.3, 5000)
+            d.setInputSize(size)
+            d.detect(np.zeros((size[1], size[0], 3), np.uint8))
+            return d
+        except Exception:
+            continue
+    sys.stderr.write("Warning: no YuNet face model works with this OpenCV\n")
+    return None
+
+
 def run_tracking(video_path, start_time, duration, mode="auto-tracker", ai_shots_json=None, words=None, aspect="9:16"):
     if not os.path.exists(video_path):
         return {"status": "error", "error": f"Video file not found: {video_path}"}
@@ -229,16 +255,10 @@ def run_tracking(video_path, start_time, duration, mode="auto-tracker", ai_shots
             "summary": "Dual-subject split screen: Top (Content/Speaker 1) and Bottom (Reaction/Speaker 2).",
         }
 
-    model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "face_detection_yunet.onnx")
-    detector = None
-    if os.path.exists(model_path):
-        try:
-            # YuNet's default score threshold (0.9) discards distant/soft
-            # faces entirely; 0.6 keeps small lecture/podcast faces while
-            # the tracker stage filters out transient false positives.
-            detector = cv2.FaceDetectorYN.create(model_path, "", (320, 320), 0.6, 0.3, 5000)
-        except Exception as e:
-            sys.stderr.write(f"Warning: Failed to init FaceDetectorYN: {e}\n")
+    # YuNet's default score threshold (0.9) discards distant/soft faces
+    # entirely; 0.6 keeps small lecture/podcast faces while the tracker
+    # stage filters out transient false positives.
+    detector = make_face_detector((320, 320), 0.6)
 
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():

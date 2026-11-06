@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import { execFile } from "child_process";
 import util from "util";
-import { getFfmpegBinary, getYtDlpBinary, probeVideoFormat, checkZscaleSupported } from "./videoService";
+import { getFfmpegBinary, getFfprobeBinary, getYtDlpBinary, probeVideoFormat, checkZscaleSupported } from "./videoService";
 import { resolveCookieArg, friendlyDownloadError } from "./youtubeCookies";
 
 /**
@@ -169,9 +169,31 @@ export async function downloadYoutubeVideo(opts: {
  */
 export async function normalizeUploadedVideo(rawPath: string, baseName: string): Promise<{ filePath: string; fileId: string }> {
   const uploadsDir = path.dirname(rawPath);
+  const ffmpegBin = getFfmpegBinary();
+
+  // Audio-only (podcast MP3 / WAV / M4A): wrap it in a still dark picture so
+  // the whole pipeline works; "-audio.mp4" tells the renderer to make
+  // audiogram clips (waveform + backdrop) from it.
+  if (!(await hasVideoStream(rawPath))) {
+    const audioName = `${baseName}-audio.mp4`;
+    const audioPath = path.join(uploadsDir, audioName);
+    await execFilePromise(ffmpegBin, [
+      "-hide_banner", "-loglevel", "error", "-y",
+      "-f", "lavfi", "-i", "color=c=0x111116:s=1280x720:r=30",
+      "-i", rawPath,
+      "-map", "0:v", "-map", "1:a:0", "-shortest",
+      "-c:v", "libx264", "-preset", "veryfast", "-tune", "stillimage", "-crf", "30", "-pix_fmt", "yuv420p",
+      "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", audioPath,
+    ], { maxBuffer: 64 * 1024 * 1024 });
+    if (!fs.existsSync(audioPath)) throw new Error("Could not read the uploaded audio file.");
+    if (path.resolve(rawPath) !== path.resolve(audioPath)) {
+      try { fs.unlinkSync(rawPath); } catch {}
+    }
+    return { filePath: audioPath, fileId: `uploads/${audioName}` };
+  }
+
   const webMp4Filename = `${baseName}.mp4`;
   const webMp4Path = path.join(uploadsDir, webMp4Filename);
-  const ffmpegBin = getFfmpegBinary();
   const streamInfo = await probeVideoFormat(rawPath);
   const transcodeNeeded = !streamInfo.isH264Yuv420p8Bit || streamInfo.isHdr || streamInfo.isVfr;
 
@@ -199,4 +221,17 @@ export async function normalizeUploadedVideo(rawPath: string, baseName: string):
     try { fs.unlinkSync(rawPath); } catch {}
   }
   return { filePath: webMp4Path, fileId: `uploads/${webMp4Filename}` };
+}
+
+/** True when the file has a real picture (not audio only / cover art only). */
+async function hasVideoStream(file: string): Promise<boolean> {
+  try {
+    const res: any = await execFilePromise(getFfprobeBinary(), [
+      "-v", "error", "-show_entries", "stream=codec_type:stream_disposition=attached_pic", "-of", "json", file,
+    ], { maxBuffer: 4 * 1024 * 1024, timeout: 30000 });
+    const info = JSON.parse(String(res.stdout || "{}"));
+    return (info.streams || []).some((s: any) => s.codec_type === "video" && !(s.disposition && s.disposition.attached_pic));
+  } catch {
+    return true; // can't tell: treat as video (the old behaviour)
+  }
 }
