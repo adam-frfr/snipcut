@@ -1,6 +1,7 @@
 import assert from "node:assert";
 import { NextRequest } from "next/server";
 import { verifyAuthAndRateLimit } from "../src/lib/authRateLimit";
+import { proxy } from "../src/proxy";
 
 console.log("=== Testing Access Gate & Rate Limiting (Item 4) ===");
 
@@ -101,6 +102,19 @@ const resProdUnset = verifyAuthAndRateLimit(reqProdUnset);
 assert.ok(resProdUnset !== null, "Must fail closed in production when APP_ACCESS_TOKEN is unset");
 assert.strictEqual(resProdUnset.status, 401, "Status must be 401 in production when unset");
 console.log("-> PASS: Production mode with unset APP_ACCESS_TOKEN failed closed with HTTP 401");
+
+// Saved videos under public/ are not open to people without the key.
+console.log("\n[Test 7] Static video files need the access key...");
+process.env.APP_ACCESS_TOKEN = TEST_SECRET;
+for (const p of ["/uploads/1793941082271-talk.mp4", "/rendered_clips/clip.mp4", "/downloads/a.zip"]) {
+  const anon = proxy(new NextRequest(`http://localhost:3000${p}`));
+  assert.strictEqual(anon.status, 404, `${p} must be hidden without the key`);
+  const ok = proxy(new NextRequest(`http://localhost:3000${p}`, { headers: { cookie: `app_access_token=${TEST_SECRET}` } }));
+  assert.ok(ok.status !== 404 && ok.status !== 401, `${p} must load with the key cookie`);
+}
+const page = proxy(new NextRequest("http://localhost:3000/dashboard"));
+assert.ok(page.status !== 404, "pages stay open");
+console.log("-> PASS: uploads / rendered clips / downloads hidden without the key, served with it");
 
 // Restore env
 delete process.env.APP_ACCESS_TOKEN;
