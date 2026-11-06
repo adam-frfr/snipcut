@@ -81,7 +81,7 @@ interface ChatKeys {
   claudeKey?: string;
 }
 
-async function chatJson(prompt: string, keys: ChatKeys): Promise<string | null> {
+export async function chatJson(prompt: string, keys: ChatKeys): Promise<string | null> {
   const timeout = AbortSignal.timeout(30000);
 
   // Anthropic (frontier key first — best query taste)

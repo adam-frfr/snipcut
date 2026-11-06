@@ -69,7 +69,7 @@ export function verifyAuthAndRateLimit(req: NextRequest): NextResponse | null {
   // Media playback issues many small range requests (plus seeks and
   // download resumes) — counting those against the general 60/min bucket
   // made videos stall on 429s mid-playback. Media gets its own bucket.
-  const isMedia = req.nextUrl.pathname.startsWith("/api/media") && req.method === "GET";
+  const isMedia = (req.nextUrl.pathname.startsWith("/api/media") || req.nextUrl.pathname.startsWith("/api/autopilot/clip")) && req.method === "GET";
   // Chunked uploads send one request per 2MB piece: on a fast link a file
   // over ~120MB blew through the general 60/min bucket and failed with 429.
   const isUploadChunk = req.nextUrl.pathname.startsWith("/api/upload-chunk") && req.method === "POST";

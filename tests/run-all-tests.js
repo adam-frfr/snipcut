@@ -7,6 +7,11 @@ console.log("==================================================\n");
 
 const tests = [
   {
+    name: "Autopilot: Trend Hunter, Auto-Clipping, Inbox, Schedule & YouTube Uploads",
+    cmd: "npx",
+    args: ["tsx", path.join(__dirname, "test-autopilot.ts")],
+  },
+  {
     name: "Word Snapping & Drop Criteria (Item 3)",
     cmd: "npx",
     args: ["tsx", path.join(__dirname, "test-wordsnapping.ts")],

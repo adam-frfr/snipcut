@@ -15,6 +15,7 @@ import {
   Wand2,
   Upload,
   Calendar,
+  Bot,
   CheckCircle2,
   TrendingUp,
   Plus,
@@ -1151,6 +1152,14 @@ function DashboardContent() {
             >
               <Calendar className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">Scheduler</span>
+            </Link>
+
+            <Link
+              href="/autopilot"
+              className="px-2 sm:px-3 py-1.5 text-xs font-black uppercase tracking-wider bg-white hover:bg-[#FFC700] border-2 border-black shadow-[2px_2px_0px_#000000] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all flex items-center gap-1.5"
+            >
+              <Bot className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Autopilot</span>
             </Link>
 
             <button

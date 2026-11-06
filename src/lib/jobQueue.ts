@@ -125,6 +125,8 @@ export interface JobOptions {
   pexelsKey?: string;
   pixabayKey?: string;
   unsplashKey?: string;
+  /** Started by Autopilot (shown on the dashboard like any job). */
+  autopilot?: boolean;
 }
 
 export interface JobRecord {
