@@ -31,6 +31,10 @@ import {
   CAPTION_FONT_OPTIONS,
   STYLE_PACKS,
   BrandStyle,
+  BACKGROUNDS,
+  BACKGROUND_LABELS,
+  FACE_BLURS,
+  FACE_BLUR_LABELS,
 } from "@/lib/clipStyleOptions";
 
 type Track = { id: string; name: string; duration: number };
@@ -156,6 +160,7 @@ export default function StyleControls({
   onCaptionStyle,
   dense = false,
   musicOn,
+  showReel = false,
 }: {
   style: ClipStyle;
   onChange: (patch: Partial<ClipStyle>) => void;
@@ -165,12 +170,47 @@ export default function StyleControls({
   dense?: boolean;
   /** Whether "Music bed" is on (music settings do nothing without it). */
   musicOn?: boolean;
+  /** Offer the job-level highlight reel (dashboard only). */
+  showReel?: boolean;
 }) {
   const [tracks, setTracks] = useState<Track[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");
   const [activePack, setActivePack] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
+
+  const [footage, setFootage] = useState<Track[]>([]);
+  const [footUploading, setFootUploading] = useState(false);
+  const [footError, setFootError] = useState("");
+  const footRef = useRef<HTMLInputElement>(null);
+  const loadFootage = () =>
+    fetch("/api/footage", { headers: authHeaders() })
+      .then((r) => (r.ok ? r.json() : { items: [] }))
+      .then((d) => setFootage(Array.isArray(d.items) ? d.items : []))
+      .catch(() => {});
+  const uploadFootage = async (file: File) => {
+    setFootError("");
+    if (file.size > 300 * 1024 * 1024) {
+      setFootError("Footage can be up to 300 MB.");
+      return;
+    }
+    setFootUploading(true);
+    try {
+      const res = await fetch("/api/footage", {
+        method: "POST",
+        headers: { ...authHeaders(), "Content-Type": "application/octet-stream", "x-file-name": encodeURIComponent(file.name) },
+        body: file,
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.error || "Upload failed");
+      await loadFootage();
+      onChange({ splitFootage: d.id });
+    } catch (e: any) {
+      setFootError(e?.message || "Upload failed");
+    } finally {
+      setFootUploading(false);
+    }
+  };
 
   const loadTracks = () =>
     fetch("/api/music", { headers: authHeaders() })
@@ -179,6 +219,7 @@ export default function StyleControls({
       .catch(() => {});
   useEffect(() => {
     loadTracks();
+    loadFootage();
   }, []);
 
   const uploadTrack = async (file: File) => {
@@ -268,6 +309,16 @@ export default function StyleControls({
           <Toggle style={style} onChange={onChange} k="pushIn" label="Slow push-in" hint="camera drifts in" />
           <Toggle style={style} onChange={onChange} k="progressBar" label="Progress bar" hint="fills across the top" />
         </div>
+        <div className={`grid ${cols} gap-2 px-3 pb-2`}>
+          <Select label="Behind the speaker" value={style.background} options={opts(BACKGROUNDS, BACKGROUND_LABELS)} onPick={(v) => onChange({ background: v as ClipStyle["background"] })} />
+        </div>
+        <div className="flex flex-wrap gap-x-5 gap-y-2 px-3 pb-2">
+          <Toggle style={style} onChange={onChange} k="textBehind" label="Title behind me" hint="hook title sits behind your head" />
+          <Toggle style={style} onChange={onChange} k="subjectGlow" label="Subject glow" hint="soft outline around you" />
+        </div>
+        <p className="px-3 pb-3 text-[10px] font-medium text-neutral-500">
+          The AI cuts the speaker out of the shot for these three. They apply to talking-head shots (not screen recordings).
+        </p>
       </details>
 
       <details className={groupCls} onToggle={(e) => (e.currentTarget as HTMLDetailsElement).open && loadTracks()}>
@@ -344,6 +395,10 @@ export default function StyleControls({
           <Toggle style={style} onChange={onChange} k="freezeFrame" label="Freeze-frame" hint="record scratch on the big moment" />
           <Toggle style={style} onChange={onChange} k="coldOpen" label="Cold-open teaser" hint="big moment first: “wait for it”" />
           <Toggle style={style} onChange={onChange} k="endCard" label="End card" hint="animated follow card" />
+          <Toggle style={style} onChange={onChange} k="textSlam" label="Text slams" hint="best line slams in full-screen" />
+          <Toggle style={style} onChange={onChange} k="stickers" label="Animated stickers" hint="subscribe button + LOL / NO WAY!" />
+          <Toggle style={style} onChange={onChange} k="listicle" label="List labels" hint={'"3 tips" → TIP 1/3, TIP 2/3...'} />
+          {showReel && <Toggle style={style} onChange={onChange} k="highlightReel" label="Highlight reel" hint="also one video of the best moments" />}
         </div>
         <div className={`grid ${cols} gap-2 px-3 pb-3`}>
           <Text label="End card text" value={style.endCardText} placeholder="FOLLOW FOR MORE" max={40} onText={(v) => onChange({ endCardText: v })} />
@@ -353,6 +408,48 @@ export default function StyleControls({
         </div>
         <p className="px-3 pb-3 -mt-1 text-[10px] font-medium text-neutral-500">
           Face-cam bubble works on 9:16 screen recordings: pick the corner your webcam is in. Freeze-frame, cold open and hype need a clip with a clear loud moment.
+        </p>
+      </details>
+
+      <details className={groupCls} onToggle={(e) => (e.currentTarget as HTMLDetailsElement).open && loadFootage()}>
+        <summary className={summaryCls}>Layout &amp; privacy</summary>
+        <div className={`grid ${cols} gap-2 px-3 pb-2`}>
+          <Select
+            label="Bottom footage (split)"
+            value={style.splitFootage}
+            options={[["", "Off"], ...footage.map((t) => [t.id, t.name] as [string, string])]}
+            onPick={(v) => onChange({ splitFootage: v })}
+          />
+          <Select label="Blur faces" value={style.faceBlur} options={opts(FACE_BLURS, FACE_BLUR_LABELS)} onPick={(v) => onChange({ faceBlur: v as ClipStyle["faceBlur"] })} />
+        </div>
+        <div className="px-3 pb-2 flex items-center gap-2 flex-wrap">
+          <input
+            ref={footRef}
+            type="file"
+            accept=".mp4,.mov,.webm,.mkv,video/*"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) uploadFootage(f);
+              e.target.value = "";
+            }}
+          />
+          <button
+            type="button"
+            disabled={footUploading}
+            onClick={() => footRef.current?.click()}
+            className="px-2.5 py-1.5 border-2 border-black text-[10px] font-black uppercase cursor-pointer bg-[#FFC700] hover:bg-[#FFD84D] disabled:opacity-60"
+          >
+            {footUploading ? "Uploading…" : "Upload gameplay / footage"}
+          </button>
+          <span className="text-[10px] font-medium text-neutral-500">Clip on top, your footage looping underneath (9:16). Captions sit on the seam.</span>
+          {footError && <span className="text-[10px] font-bold text-red-600">{footError}</span>}
+        </div>
+        <div className="flex flex-wrap gap-x-5 gap-y-2 px-3 pb-3">
+          <Toggle style={style} onChange={onChange} k="audiogram" label="Audiogram (podcast)" hint="waveform + cover instead of the camera" />
+        </div>
+        <p className="px-3 pb-3 -mt-1 text-[10px] font-medium text-neutral-500">
+          Blur faces: "Other people" keeps the main speaker sharp. Audio-only uploads (MP3 / WAV) always become audiograms.
         </p>
       </details>
 

@@ -46,6 +46,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   if (entries.length === 0) {
     return NextResponse.json({ error: "No rendered clips in this project yet" }, { status: 404 });
   }
+  const reel = job.output.highlightReel;
+  if (reel?.filename && /^[A-Za-z0-9._-]+$/.test(reel.filename) && fs.existsSync(path.join(dir, reel.filename))) {
+    entries.push({ name: "00 - Highlight reel.mp4", path: path.join(dir, reel.filename) });
+  }
   entries.push({ name: "captions.txt", data: Buffer.from(captions.join("\n"), "utf8") });
 
   const zipName = `${safeName(String(job.output.curatedClips[0]?.title || "snipcut-clips"))} - clips.zip`;

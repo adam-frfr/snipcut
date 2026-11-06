@@ -297,6 +297,22 @@ export function transitionFilter(kind: CutTransition, at: number[]): string {
   if (kind === "none" || kind === "zoom" || at.length === 0) return "";
   const win = (half: number) => at.map((t) => `between(t\\,${(t - half).toFixed(3)}\\,${(t + half).toFixed(3)})`).join("+");
   if (kind === "flash") return `drawbox=x=0:y=0:w=iw:h=ih:color=white@0.75:t=fill:enable='${win(0.05)}'`;
+  if (kind === "lightleak") {
+    // Warm glow washing over the cut.
+    return `colorbalance=rs=0.35:gs=0.12:bs=-0.25:rm=0.25:gm=0.05:bm=-0.15:enable='${win(0.2)}',eq=brightness=0.16:saturation=1.25:enable='${win(0.14)}'`;
+  }
+  if (kind === "burn") {
+    // Over-exposed orange flare, like the end of a film reel.
+    return `eq=brightness=0.42:contrast=1.5:saturation=1.7:enable='${win(0.07)}',colorbalance=rs=0.5:gs=0.12:bs=-0.45:rh=0.3:bh=-0.3:enable='${win(0.13)}'`;
+  }
+  if (kind === "rewind") {
+    // VHS rewind: colour split, static, scan lines, washed-out colour.
+    return `rgbashift=rh=-12:bh=12:enable='${win(0.22)}',noise=alls=40:allf=t:enable='${win(0.22)}',drawgrid=w=iw:h=6:t=2:c=black@0.35:enable='${win(0.22)}',eq=saturation=0.55:enable='${win(0.22)}'`;
+  }
+  if (kind === "whip") {
+    // Fast sideways pan blur.
+    return `avgblur=sizeX=70:sizeY=1:enable='${win(0.08)}'`;
+  }
   // glitch: RGB split + noise for a few frames.
   return `rgbashift=rh=-16:bh=16:rv=4:enable='${win(0.09)}',noise=alls=45:allf=t:enable='${win(0.07)}'`;
 }
@@ -541,4 +557,325 @@ export function emojiImage(code: string): string | null {
   if (!/^[0-9a-f]{4,6}$/.test(code)) return null;
   const p = path.join(process.cwd(), "assets", "emoji", `${code}.png`);
   return fs.existsSync(p) ? p : null;
+}
+
+// ---- batch 6: person cut-out, face blur, slams, stickers, lists ----------
+
+/** Uploaded footage for the split layout (gameplay / satisfying clips). */
+export const USER_FOOTAGE_DIR = () => path.join(DATA(), "footage", "user");
+
+export function footagePath(id: string): string | null {
+  if (!/^[a-z0-9-]{1,60}\.(mp4|mov|webm|mkv)$/.test(id)) return null;
+  const p = path.join(USER_FOOTAGE_DIR(), id);
+  return fs.existsSync(p) ? p : null;
+}
+
+/**
+ * Runs scripts/frame_fx.py: "mask" = person mask video, "blur" = faces
+ * blurred. Returns the script's stats, or null when it failed (the clip
+ * then renders without that effect).
+ */
+export async function runFrameFx(
+  mode: "mask" | "blur",
+  input: string,
+  output: string,
+  extra: string[] = []
+): Promise<Record<string, any> | null> {
+  const py = process.env.PYTHON_BIN || (process.platform === "win32" ? "python" : "python3");
+  const script = path.join(process.cwd(), "scripts", "frame_fx.py");
+  try {
+    const res: any = await execFileP(py, [script, mode, input, output, ffmpegBin(), ...extra], {
+      maxBuffer: 16 * 1024 * 1024,
+      timeout: 20 * 60 * 1000,
+    }).catch((e: any) => e);
+    const line = String(res?.stdout || "").trim().split(/\r?\n/).pop() || "";
+    const stats = JSON.parse(line);
+    if (stats?.ok && fs.existsSync(output)) return stats;
+    console.warn(`[ClipStyle] frame_fx ${mode} failed:`, stats?.error || res?.stderr || res);
+  } catch (e) {
+    console.warn(`[ClipStyle] frame_fx ${mode} failed:`, e);
+  }
+  return null;
+}
+
+const rgbOf = (hex: string, d: [number, number, number]): [number, number, number] => {
+  const m = /^#?([0-9a-fA-F]{6})$/.exec(hex || "");
+  if (!m) return d;
+  const n = parseInt(m[1], 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+};
+
+/**
+ * Background picture behind the cut-out speaker (cached PNG):
+ * studio = dark backdrop with a soft spotlight; gradient = diagonal
+ * colour fade (brand colours when a brand kit is on); brand = brand colour
+ * with a vignette.
+ */
+export async function makeBackgroundImage(
+  kind: "studio" | "gradient" | "brand",
+  W: number,
+  H: number,
+  brand?: { primary: string; secondary: string } | null
+): Promise<string | null> {
+  const c0 = rgbOf(brand?.primary || "", kind === "gradient" ? [106, 17, 203] : [250, 204, 21]);
+  const c1 = rgbOf(brand?.secondary || "", [252, 92, 125]);
+  const key = `${kind}-${W}x${H}-${c0.join("_")}-${c1.join("_")}`;
+  const out = path.join(DATA(), "backgrounds", `${key}.png`);
+  if (fs.existsSync(out)) return out;
+  // Spotlight / vignette term: 1 in the centre, falling off to the edges.
+  const cx = Math.round(W / 2);
+  const cy = Math.round(H * 0.42);
+  const sig = Math.round(Math.max(W, H) * 0.42);
+  const spot = `exp(-((X-${cx})*(X-${cx})+(Y-${cy})*(Y-${cy}))/(2*${sig}*${sig}))`;
+  const t = `(X/${W}*0.5+Y/${H}*0.5)`;
+  let r: string, g: string, b: string;
+  if (kind === "studio") {
+    r = `14+46*${spot}`;
+    g = `14+46*${spot}`;
+    b = `20+52*${spot}`;
+  } else if (kind === "gradient") {
+    const mix = (a: number, z: number) => `(${a}+(${z - a})*${t})*(0.72+0.28*${spot})`;
+    r = mix(c0[0], c1[0]);
+    g = mix(c0[1], c1[1]);
+    b = mix(c0[2], c1[2]);
+  } else {
+    r = `${c0[0]}*(0.55+0.45*${spot})`;
+    g = `${c0[1]}*(0.55+0.45*${spot})`;
+    b = `${c0[2]}*(0.55+0.45*${spot})`;
+  }
+  try {
+    fs.mkdirSync(path.dirname(out), { recursive: true });
+    await execFileP(
+      ffmpegBin(),
+      [
+        "-hide_banner", "-loglevel", "error", "-y",
+        "-f", "lavfi", "-i", `color=c=black:s=${W}x${H}:d=1`,
+        "-vf", `format=rgb24,geq=r='${r}':g='${g}':b='${b}'`,
+        "-frames:v", "1", out,
+      ],
+      { timeout: 60000 }
+    );
+    return fs.existsSync(out) ? out : null;
+  } catch (e) {
+    console.warn("[ClipStyle] Could not make the background image:", e);
+    return null;
+  }
+}
+
+type W3 = { start: number; end: number; text: string };
+const clean = (t: string) => t.toLowerCase().replace(/[^a-z0-9$%']/g, "");
+
+/** Sentences (pauses / punctuation) from a word stream. */
+export function sentencesOf(words: W3[]): W3[][] {
+  const out: W3[][] = [];
+  let cur: W3[] = [];
+  for (const w of words) {
+    if (cur.length && w.start - cur[cur.length - 1].end > 0.6) {
+      out.push(cur);
+      cur = [];
+    }
+    cur.push(w);
+    if (/[.!?]["”']?$/.test(w.text.trim())) {
+      out.push(cur);
+      cur = [];
+    }
+  }
+  if (cur.length) out.push(cur);
+  return out;
+}
+
+/**
+ * The clip's strongest short sentence for a text slam: 3-9 words, clear
+ * of the hook and the end card, scored on key words, numbers and "!".
+ */
+export function pickSlamSentence(
+  words: W3[],
+  isKeyword: (w: string) => boolean,
+  hookUntil: number,
+  duration: number
+): { start: number; end: number; words: W3[] } | null {
+  let best: { score: number; s: W3[] } | null = null;
+  for (const s of sentencesOf(words)) {
+    if (s.length < 3 || s.length > 9) continue;
+    const start = s[0].start;
+    const end = s[s.length - 1].end;
+    if (start < hookUntil + 0.8 || end > duration - 3) continue;
+    let score = 0;
+    for (const w of s) {
+      if (isKeyword(w.text)) score += 2;
+      if (/\d/.test(w.text)) score += 2;
+    }
+    if (/!/.test(s[s.length - 1].text)) score += 2;
+    score += Math.min(2, s.length / 4);
+    if (!best || score > best.score) best = { score, s };
+  }
+  if (!best || best.score < 1.5) return null;
+  return { start: best.s[0].start, end: best.s[best.s.length - 1].end + 0.25, words: best.s };
+}
+
+const REACTIONS: { re: RegExp; text: string }[] = [
+  { re: /^(lol|lmao|funny|hilarious|joke|laughing)$/, text: "LOL" },
+  { re: /^(wow|whoa|omg|insane|crazy|unbelievable|shocking)$/, text: "NO WAY!" },
+  { re: /^(money|rich|million|millions|billion|cash|profit)$/, text: "CHA-CHING!" },
+  { re: /^(wait|hold)$/, text: "WAIT..." },
+  { re: /^(secret|secrets|hidden|truth)$/, text: "SECRET!" },
+  { re: /^(fail|failed|mistake|wrong|disaster)$/, text: "OOPS!" },
+];
+
+/** Comic reaction stickers on matching words (max 3, spaced out). */
+export function pickReactions(
+  words: W3[],
+  hookUntil: number,
+  duration: number,
+  avoid: { start: number; end: number }[]
+): { t: number; text: string }[] {
+  const out: { t: number; text: string }[] = [];
+  for (const w of words) {
+    if (out.length >= 3) break;
+    if (w.start < hookUntil + 0.5 || w.start > duration - 3) continue;
+    if (avoid.some((a) => w.start > a.start - 1 && w.start < a.end + 1)) continue;
+    if (out.length && w.start - out[out.length - 1].t < 4) continue;
+    const tok = w.text.split(/\s+/).map(clean).find((t) => REACTIONS.some((r) => r.re.test(t)));
+    if (!tok) continue;
+    const r = REACTIONS.find((x) => x.re.test(tok))!;
+    out.push({ t: w.start, text: r.text });
+  }
+  return out;
+}
+
+const NUM: Record<string, number> = {
+  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+  first: 1, second: 2, third: 3, fourth: 4, fifth: 5, sixth: 6, seventh: 7, eighth: 8, ninth: 9, tenth: 10,
+  "1st": 1, "2nd": 2, "3rd": 3, "4th": 4, "5th": 5,
+};
+const ORDINALS = new Set(["first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth", "tenth", "1st", "2nd", "3rd", "4th", "5th"]);
+const LIST_NOUNS = /^(tips|things|ways|steps|reasons|mistakes|rules|secrets|lessons|habits|signs|hacks|tricks|ideas|questions|facts|apps|tools|books|strategies|myths|lies|truths)$/;
+const ITEM_LEAD = new Set(["number", "tip", "step", "reason", "mistake", "rule", "way", "secret", "lesson", "habit", "sign", "hack", "trick", "idea", "thing", "no", "#"]);
+
+/**
+ * "3 tips ... first ... second ... finally": a numbered list the speaker
+ * walks through. Returns the label ("TIP"), the count and when each item
+ * starts, or null when there's no clear list.
+ */
+export function detectListicle(
+  words: W3[],
+  duration: number
+): { label: string; total: number; items: { n: number; start: number; end: number }[] } | null {
+  const toks = words.flatMap((w) => w.text.split(/\s+/).map((t) => ({ t: clean(t), start: w.start })));
+  let intro = -1;
+  let total = 0;
+  let noun = "";
+  for (let i = 0; i < toks.length && intro < 0; i++) {
+    const n = /^\d+$/.test(toks[i].t) ? Number(toks[i].t) : NUM[toks[i].t] && !ORDINALS.has(toks[i].t) ? NUM[toks[i].t] : 0;
+    if (n < 2 || n > 10) continue;
+    for (let j = i + 1; j <= i + 3 && j < toks.length; j++) {
+      if (LIST_NOUNS.test(toks[j].t)) {
+        intro = j;
+        total = n;
+        noun = toks[j].t;
+        break;
+      }
+    }
+  }
+  if (intro < 0) return null;
+  const marks: { n: number; start: number }[] = [];
+  for (let i = intro + 1; i < toks.length; i++) {
+    const t = toks[i].t;
+    const prev = i > 0 ? toks[i - 1].t : "";
+    const next = marks.length + 1;
+    if (next > total) break;
+    let n = 0;
+    if (ORDINALS.has(t)) n = NUM[t];
+    else if ((NUM[t] || /^\d+$/.test(t)) && ITEM_LEAD.has(prev)) n = NUM[t] || Number(t);
+    else if ((t === "next" || t === "another") && marks.length >= 1) n = next;
+    else if ((t === "finally" || t === "lastly") && marks.length >= 1) n = total;
+    if (n === next || (n === total && n > next && marks.length >= total - 2)) {
+      const at = ITEM_LEAD.has(prev) && i > 0 ? toks[i - 1].start : toks[i].start;
+      if (!marks.length || at - marks[marks.length - 1].start > 1.5) marks.push({ n, start: at });
+    }
+  }
+  if (marks.length < 2) return null;
+  const singular = noun === "things" || noun === "ways" ? "#" : noun.replace(/(ies)$/, "y").replace(/s$/, "").toUpperCase();
+  const items = marks.map((m, k) => ({
+    n: m.n,
+    start: m.start,
+    end: k + 1 < marks.length ? marks[k + 1].start : Math.max(m.start + 2, duration - 0.3),
+  }));
+  return { label: singular, total, items };
+}
+
+// ---- audiogram -----------------------------------------------------------
+
+/**
+ * Podcast picture for a clip: colour backdrop, round cover (a still from
+ * the video when there is one), and an animated waveform of the voice.
+ * Writes a W x H 30fps MP4 with the clip's audio, same length as the span.
+ */
+export async function renderAudiogramBase(opts: {
+  input: string;
+  output: string;
+  start: number;
+  duration: number;
+  W: number;
+  H: number;
+  hasPicture: boolean;
+  brand?: { primary: string; secondary: string } | null;
+}): Promise<void> {
+  const { W, H } = opts;
+  const bg = await makeBackgroundImage(opts.brand ? "gradient" : "studio", W, H, opts.brand);
+  if (!bg) throw new Error("audiogram background failed");
+  const scale = Math.min(W, H) / 1080;
+  const av = Math.round(460 * scale);
+  let avatar: string | null = null;
+  if (opts.hasPicture) {
+    const p = path.join(DATA(), "postfx", `avatar-${Date.now()}-${Math.floor(Math.random() * 1e4)}.png`);
+    try {
+      fs.mkdirSync(path.dirname(p), { recursive: true });
+      const r = av / 2;
+      await execFileP(
+        ffmpegBin(),
+        [
+          "-hide_banner", "-loglevel", "error", "-y",
+          "-ss", (opts.start + Math.min(2, opts.duration / 2)).toFixed(2), "-i", opts.input,
+          "-frames:v", "1",
+          "-vf", `crop='min(iw,ih)':'min(iw,ih)',scale=${av}:${av},format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(lt(hypot(X-${r},Y-${r}),${r - 3}),255,if(lt(hypot(X-${r},Y-${r}),${r}),140,0))'`,
+          p,
+        ],
+        { timeout: 60000 }
+      );
+      if (fs.existsSync(p)) avatar = p;
+    } catch {}
+  }
+  const waveW = Math.round(W * 0.86);
+  const waveH = Math.round(280 * scale);
+  const args = [
+    "-hide_banner", "-loglevel", "error", "-y",
+    "-ss", opts.start.toFixed(3), "-t", opts.duration.toFixed(3), "-i", opts.input,
+    "-loop", "1", "-framerate", "30", "-t", opts.duration.toFixed(3), "-i", bg,
+  ];
+  if (avatar) args.push("-loop", "1", "-framerate", "30", "-t", opts.duration.toFixed(3), "-i", avatar);
+  const f = [
+    `[1:v]scale=${W}:${H},setsar=1,format=yuv420p[bg]`,
+    `[0:a]aformat=channel_layouts=mono,showwaves=s=${waveW}x${waveH}:mode=cline:rate=30:colors=white:scale=sqrt:draw=full,format=rgba,colorchannelmixer=aa=0.92[wave]`,
+  ];
+  let last = "bg";
+  if (avatar) {
+    f.push(`[${last}][2:v]overlay=(W-w)/2:${Math.round(H * (H > W ? 0.2 : 0.12))}[bga]`);
+    last = "bga";
+  }
+  f.push(`[${last}][wave]overlay=(W-w)/2:${Math.round(H * (H > W ? 0.5 : 0.58))}:shortest=1,fps=30,format=yuv420p[v]`);
+  args.push(
+    "-filter_complex", f.join(";"), "-map", "[v]", "-map", "0:a",
+    "-t", opts.duration.toFixed(3),
+    "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
+    "-c:a", "aac", "-b:a", "192k", "-ar", "44100", "-ac", "2", opts.output
+  );
+  try {
+    await execFileP(ffmpegBin(), args, { maxBuffer: 64 * 1024 * 1024 });
+  } finally {
+    if (avatar) {
+      try { fs.unlinkSync(avatar); } catch {}
+    }
+  }
+  if (!fs.existsSync(opts.output)) throw new Error("audiogram render failed");
 }

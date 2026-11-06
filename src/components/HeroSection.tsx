@@ -197,7 +197,7 @@ export default function HeroSection() {
                 <div className="border-2 border-dashed border-black hover:bg-[#FFFDF5] rounded-xl p-5 text-center transition-colors bg-[#F8F7F4] relative cursor-pointer">
                   <input
                     type="file"
-                    accept="video/*"
+                    accept="video/*,audio/*"
                     onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
                     className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                   />

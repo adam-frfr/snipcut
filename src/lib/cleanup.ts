@@ -11,7 +11,8 @@ import path from "path";
  * B-roll images / videos, abandoned chunked uploads.
  * Kept for 3h: effect-pass temp files (subtitles, pre-pass, voiceover)
  * left behind by a crashed render.
- * Never deleted: job records, saved YouTube cookies, your uploaded music,
+ * Never deleted: job records, saved YouTube cookies, your uploaded music
+ * and footage,
  * generated music / sound effects (small, reused).
  */
 

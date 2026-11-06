@@ -8,7 +8,7 @@ export const MUSIC_MOODS = ["auto", "hype", "chill", "lofi", "dramatic", "inspir
 export type MusicMood = (typeof MUSIC_MOODS)[number];
 export const COLOR_GRADES = ["none", "cinematic", "warm", "punchy", "moody", "bw"] as const;
 export type ColorGrade = (typeof COLOR_GRADES)[number];
-export const TRANSITIONS = ["none", "flash", "glitch", "zoom"] as const;
+export const TRANSITIONS = ["none", "flash", "glitch", "zoom", "lightleak", "burn", "rewind", "whip"] as const;
 export type CutTransition = (typeof TRANSITIONS)[number];
 export const ZOOM_TYPES = ["punch", "smooth", "shake", "whip", "none"] as const;
 export type ZoomType = (typeof ZOOM_TYPES)[number];
@@ -29,6 +29,11 @@ export type FaceBubble = (typeof FACE_BUBBLES)[number];
 export const BILINGUAL_LANGS = ["off", "es", "fr", "de", "pt", "it", "hi", "ar", "tr", "ru", "ja", "ko", "zh", "id"] as const;
 export type BilingualLang = (typeof BILINGUAL_LANGS)[number];
 export const WATERMARK_POSITIONS = ["top-right", "top-left", "bottom-right", "bottom-left"] as const;
+/** Behind the speaker on talking-head shots (person cut out with AI). */
+export const BACKGROUNDS = ["none", "blur", "studio", "gradient", "brand"] as const;
+export type SubjectBackground = (typeof BACKGROUNDS)[number];
+export const FACE_BLURS = ["off", "others", "all"] as const;
+export type FaceBlurMode = (typeof FACE_BLURS)[number];
 
 export interface BrandStyle {
   name: string;
@@ -103,6 +108,27 @@ export interface ClipStyle {
   musicStart: number; // seconds into the track
   /** Uploaded track id (data/music/user/<id>); "" = generated mood music. */
   customMusic: string;
+  // ---- batch 6 ----
+  /** Replace / blur what's behind the speaker (talking-head shots). */
+  background: SubjectBackground;
+  /** Soft white outline around the speaker. */
+  subjectGlow: boolean;
+  /** The hook title sits big BEHIND the speaker's head. */
+  textBehind: boolean;
+  /** The strongest sentence slams in full-screen, word by word. */
+  textSlam: boolean;
+  /** Animated subscribe button + reaction stickers. */
+  stickers: boolean;
+  /** "Tip 2/5" labels when the speaker goes through a numbered list. */
+  listicle: boolean;
+  /** Blur faces: other people (keep the speaker) or everyone. */
+  faceBlur: FaceBlurMode;
+  /** Uploaded footage id (data/footage/user/<id>) shown under the clip; "" = off. */
+  splitFootage: string;
+  /** Podcast look: animated waveform + cover instead of the camera picture. */
+  audiogram: boolean;
+  /** Also stitch the job's best moments into one highlight reel (job renders only). */
+  highlightReel: boolean;
 }
 
 export const DEFAULT_CLIP_STYLE: ClipStyle = {
@@ -141,6 +167,16 @@ export const DEFAULT_CLIP_STYLE: ClipStyle = {
   musicFadeOut: 1.2,
   musicStart: 0,
   customMusic: "",
+  background: "none",
+  subjectGlow: false,
+  textBehind: false,
+  textSlam: false,
+  stickers: false,
+  listicle: false,
+  faceBlur: "off",
+  splitFootage: "",
+  audiogram: false,
+  highlightReel: false,
 };
 
 const HEX = /^#[0-9a-fA-F]{6}$/;
@@ -218,6 +254,16 @@ export function normalizeClipStyle(raw: unknown): ClipStyle {
     musicFadeOut: clampNum(r.musicFadeOut, 0, 5, d.musicFadeOut),
     musicStart: clampNum(r.musicStart, 0, 600, d.musicStart),
     customMusic: typeof r.customMusic === "string" && /^[a-z0-9-]{1,60}\.(mp3|wav|m4a|aac|ogg)$/.test(r.customMusic) ? r.customMusic : "",
+    background: pick(BACKGROUNDS, r.background, d.background),
+    subjectGlow: bool(r.subjectGlow, d.subjectGlow),
+    textBehind: bool(r.textBehind, d.textBehind),
+    textSlam: bool(r.textSlam, d.textSlam),
+    stickers: bool(r.stickers, d.stickers),
+    listicle: bool(r.listicle, d.listicle),
+    faceBlur: pick(FACE_BLURS, r.faceBlur, d.faceBlur),
+    splitFootage: typeof r.splitFootage === "string" && /^[a-z0-9-]{1,60}\.(mp4|mov|webm|mkv)$/.test(r.splitFootage) ? r.splitFootage : "",
+    audiogram: bool(r.audiogram, d.audiogram),
+    highlightReel: bool(r.highlightReel, d.highlightReel),
   };
 }
 
@@ -246,7 +292,16 @@ export const styleNeedsFx = (s: ClipStyle) =>
   s.faceBubble !== "off" ||
   s.drawings.length > 0 ||
   s.hookAnim !== "pop" ||
-  Boolean(s.brand);
+  Boolean(s.brand) ||
+  s.background !== "none" ||
+  s.subjectGlow ||
+  s.textBehind ||
+  s.textSlam ||
+  s.stickers ||
+  s.listicle ||
+  s.faceBlur !== "off" ||
+  Boolean(s.splitFootage) ||
+  s.audiogram;
 
 /** Caption fonts offered in the UI (keys match CAPTION_FONTS in videoService). */
 export const CAPTION_FONT_OPTIONS: { id: string; label: string }[] = [
@@ -265,7 +320,14 @@ export const MOOD_LABELS: Record<string, string> = {
 export const GRADE_LABELS: Record<string, string> = {
   none: "Original", cinematic: "Cinematic", warm: "Warm", punchy: "Punchy", moody: "Moody", bw: "Black & white",
 };
-export const TRANSITION_LABELS: Record<string, string> = { none: "Hard cut", flash: "Flash", glitch: "Glitch", zoom: "Zoom punch" };
+export const TRANSITION_LABELS: Record<string, string> = {
+  none: "Hard cut", flash: "Flash", glitch: "Glitch", zoom: "Zoom punch",
+  lightleak: "Light leak", burn: "Film burn", rewind: "VHS rewind", whip: "Whip pan",
+};
+export const BACKGROUND_LABELS: Record<string, string> = {
+  none: "Original", blur: "Blur the room", studio: "Dark studio", gradient: "Gradient", brand: "Brand colour",
+};
+export const FACE_BLUR_LABELS: Record<string, string> = { off: "Off", others: "Other people", all: "Everyone" };
 export const ZOOM_LABELS: Record<string, string> = { punch: "Punch", smooth: "Smooth", shake: "Shake", whip: "Whip", none: "No zooms" };
 export const FILM_LOOK_LABELS: Record<string, string> = {
   none: "None", grain: "Film grain", vignette: "Vignette", letterbox: "Letterbox", vhs: "Retro VHS", silent: "Silent film",

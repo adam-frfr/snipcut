@@ -57,6 +57,11 @@ const tests = [
     args: ["tsx", path.join(__dirname, "test-cleanup.ts")],
   },
   {
+    name: "Highlight Reel: Stitching, Length, A/V Sync",
+    cmd: "npx",
+    args: ["tsx", path.join(__dirname, "test-highlight-reel.ts")],
+  },
+  {
     name: "Cut Accuracy & A/V Sync Across Layout and Silence-Removal Joins",
     cmd: "npx",
     args: ["tsx", path.join(__dirname, "test-cut-accuracy.ts")],
