@@ -337,7 +337,7 @@ function DashboardContent() {
   const refreshUserBrollKey = () => {
     try {
       setUserBrollKey(
-        ["snipcut_pexels_key", "snipcut_pixabay_key", "snipcut_openai_key"].some(
+        ["snipcut_pexels_key", "snipcut_pixabay_key", "snipcut_unsplash_key", "snipcut_openai_key"].some(
           (k) => (localStorage.getItem(k) || "").trim().length > 0
         )
       );
@@ -820,6 +820,7 @@ function DashboardContent() {
         preferredModel: (typeof window !== "undefined" && localStorage.getItem("snipcut_preferred_model")) || "",
         pexelsKey: (typeof window !== "undefined" && localStorage.getItem("snipcut_pexels_key")) || "",
         pixabayKey: (typeof window !== "undefined" && localStorage.getItem("snipcut_pixabay_key")) || "",
+        unsplashKey: (typeof window !== "undefined" && localStorage.getItem("snipcut_unsplash_key")) || "",
       };
 
       if (uploadFile) {
@@ -1053,6 +1054,7 @@ function DashboardContent() {
           captionFont: clip.fx?.captionFont || captionFont,
           pexelsKey: localStorage.getItem("snipcut_pexels_key") || undefined,
           pixabayKey: localStorage.getItem("snipcut_pixabay_key") || undefined,
+          unsplashKey: localStorage.getItem("snipcut_unsplash_key") || undefined,
           openaiKey: localStorage.getItem("snipcut_openai_key") || undefined,
       });
 
@@ -2150,12 +2152,12 @@ function DashboardContent() {
                   />
                   <span className="text-xs font-black uppercase tracking-wider text-black">AI B-Roll cutaways</span>
                   <span className="text-[10px] font-medium text-neutral-500 normal-case tracking-normal">
-                    AI picks stock photos/videos that match each sentence and cuts away to them (AI-generated from your OpenAI key, or stock if you have a Pexels/Pixabay key; never over screen recordings or split-screens)
+                    AI picks stock photos/videos that match each sentence and cuts away to them (AI-generated from your OpenAI key, or stock if you have a Pexels/Pixabay/Unsplash key; never over screen recordings or split-screens)
                   </span>
                 </label>
                 {brollKeyMissing && (
                   <div className="ml-6 -mt-1 p-2 bg-[#FFF3C4] border-2 border-black text-[10px] font-bold text-black flex items-center gap-2 flex-wrap">
-                    <span>B-roll needs a key: add your OpenAI key (AI-made B-roll) or a Pexels / Pixabay key.</span>
+                    <span>B-roll needs a key: add your OpenAI key (AI-made B-roll) or a Pexels / Pixabay / Unsplash key.</span>
                     <button
                       type="button"
                       onClick={() => setSettingsOpen(true)}

@@ -22,6 +22,7 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
   const [groqKey, setGroqKey] = useState("");
   const [pexelsKey, setPexelsKey] = useState("");
   const [pixabayKey, setPixabayKey] = useState("");
+  const [unsplashKey, setUnsplashKey] = useState("");
   const [preferredModel, setPreferredModel] = useState<"claude-3-5-haiku" | "gpt-4o-mini" | "claude-3-5-sonnet">("claude-3-5-haiku");
   const [youtubeCookies, setYoutubeCookies] = useState("");
   const [youtubeProxy, setYoutubeProxy] = useState("");
@@ -53,6 +54,7 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
         storedGroq = localStorage.getItem("snipcut_groq_key") || "";
         setPexelsKey(localStorage.getItem("snipcut_pexels_key") || "");
         setPixabayKey(localStorage.getItem("snipcut_pixabay_key") || "");
+        setUnsplashKey(localStorage.getItem("snipcut_unsplash_key") || "");
         storedModel = (localStorage.getItem("snipcut_preferred_model") as any) || "claude-3-5-haiku";
         storedCookies = localStorage.getItem("snipcut_youtube_cookies") || "";
         storedProxy = localStorage.getItem("snipcut_youtube_proxy") || "";
@@ -127,6 +129,7 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
       localStorage.setItem("snipcut_groq_key", groqKey.trim());
       localStorage.setItem("snipcut_pexels_key", pexelsKey.trim());
       localStorage.setItem("snipcut_pixabay_key", pixabayKey.trim());
+      localStorage.setItem("snipcut_unsplash_key", unsplashKey.trim());
       localStorage.setItem("snipcut_preferred_model", preferredModel);
       localStorage.setItem("snipcut_youtube_cookies", youtubeCookies.trim());
       localStorage.setItem("snipcut_youtube_proxy", youtubeProxy.trim());
@@ -304,6 +307,22 @@ export default function ApiSettingsModal({ isOpen, onClose }: ApiSettingsModalPr
             />
             <p className="text-[10px] font-bold text-[#555555] mt-1">
               Only if you already have one (new keys are paused). Enables stock VIDEO cutaways; without a stock key, B-Roll is AI-generated from your OpenAI key.
+            </p>
+          </div>
+
+          <div>
+            <label className="block text-xs font-black uppercase text-black mb-1">
+              Unsplash Access Key (Stock Photo B-Roll — Optional)
+            </label>
+            <input
+              type="password"
+              value={unsplashKey}
+              onChange={(e) => setUnsplashKey(e.target.value)}
+              placeholder="Access Key from unsplash.com/oauth/applications"
+              className="w-full neo-input py-2.5 px-3 text-base sm:text-sm font-mono"
+            />
+            <p className="text-[10px] font-bold text-[#555555] mt-1">
+              Free. Photos only (Unsplash has no videos); each photo gets a slow zoom. Use the Access Key, never the Secret key.
             </p>
           </div>
 

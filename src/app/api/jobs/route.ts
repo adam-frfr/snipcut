@@ -68,6 +68,7 @@ export async function POST(req: NextRequest) {
         captionFont,
         pexelsKey,
         pixabayKey,
+        unsplashKey,
       } = body;
 
       if (youtubeUrl !== undefined && youtubeUrl !== null && typeof youtubeUrl !== "string") {
@@ -95,6 +96,7 @@ export async function POST(req: NextRequest) {
         captionFont: typeof captionFont === "string" && CAPTION_FONTS[captionFont] ? captionFont : undefined,
         pexelsKey: (pexelsKey || "").trim?.() || undefined,
         pixabayKey: (pixabayKey || "").trim?.() || undefined,
+        unsplashKey: (unsplashKey || "").trim?.() || undefined,
       };
 
       if (youtubeUrl) {

@@ -16,7 +16,7 @@ export async function GET(req: NextRequest) {
     // The server itself can source B-roll (stock key or AI images);
     // otherwise each user brings a Pexels / Pixabay / OpenAI key.
     hasBrollSource: Boolean(
-      process.env.PEXELS_API_KEY || process.env.PIXABAY_API_KEY || hasOpenai || process.env.BROLL_ALLOW_WIKIMEDIA === "1"
+      process.env.PEXELS_API_KEY || process.env.PIXABAY_API_KEY || process.env.UNSPLASH_ACCESS_KEY || hasOpenai || process.env.BROLL_ALLOW_WIKIMEDIA === "1"
     ),
     preferredModel: "~anthropic/claude-sonnet-latest",
   });

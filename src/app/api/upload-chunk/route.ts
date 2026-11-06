@@ -135,6 +135,7 @@ export async function POST(req: NextRequest) {
       captionFont: typeof body.captionFont === "string" && CAPTION_FONTS[body.captionFont] ? body.captionFont : undefined,
       pexelsKey: (body.pexelsKey || "").trim?.() || undefined,
       pixabayKey: (body.pixabayKey || "").trim?.() || undefined,
+      unsplashKey: (body.unsplashKey || "").trim?.() || undefined,
     };
 
     const jobId = `job_${crypto.randomUUID()}`;

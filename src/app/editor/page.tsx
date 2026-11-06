@@ -576,6 +576,7 @@ function EditorContent() {
         captionFont: fx.captionFont,
         pexelsKey: localStorage.getItem("snipcut_pexels_key") || undefined,
         pixabayKey: localStorage.getItem("snipcut_pixabay_key") || undefined,
+        unsplashKey: localStorage.getItem("snipcut_unsplash_key") || undefined,
         openaiKey: localStorage.getItem("snipcut_openai_key") || undefined,
       });
 
