@@ -11,6 +11,7 @@ import { normalizeClipStyle, ClipStyle } from "./clipStyle";
 import { acquireJobLock, releaseJobLock } from "./jobLock";
 import { resolveSafeFilePath, extractAudioForWhisper, generatePreviewClip, generatePosterImage, generateSourcePoster } from "./videoService";
 import { downloadYoutubeVideo, normalizeUploadedVideo } from "./mediaPrep";
+import { downloadDirectVideo } from "./directImport";
 import { buildHighlightReel } from "./highlightReel";
 import { hasBrollSource } from "./brollService";
 
@@ -94,8 +95,10 @@ export interface JobOutput {
 }
 
 export interface JobOptions {
-  sourceType: "upload" | "youtube";
+  sourceType: "upload" | "youtube" | "url";
   youtubeUrl?: string;
+  /** A direct link to a video file, downloaded by the worker (directImport.ts). */
+  videoUrl?: string;
   // ... or a YouTube link still to download (with optional per-job cookie
   // file under data/, deleted after the download, and proxy).
   cookieFile?: string;
@@ -386,6 +389,23 @@ class JobQueueManager {
           job.output.fileId = prepared.fileId;
           delete job.output.rawUploadPath;
           delete job.output.rawBaseName;
+        } else if (job.options.videoUrl) {
+          job.progress = 8;
+          job.stageMessage = "Downloading the video from your link...";
+          saveJobRecord(job);
+          const dl = await downloadDirectVideo(job.options.videoUrl, path.join(process.cwd(), "public", "uploads"));
+          console.log(`[JobQueue] Direct link downloaded (${(dl.bytes / 1048576).toFixed(1)} MB), converting...`);
+          job.stageMessage = "Converting the video to a web-ready MP4...";
+          saveJobRecord(job);
+          let prepared;
+          try {
+            prepared = await normalizeUploadedVideo(dl.rawPath, dl.baseName);
+          } catch (e: any) {
+            try { fs.unlinkSync(dl.rawPath); } catch {}
+            throw new Error(`The link's file isn't a video or audio file we can read (${String(e?.message || e).slice(0, 120)}).`);
+          }
+          job.output.filePath = prepared.filePath;
+          job.output.fileId = prepared.fileId;
         } else if (job.options.youtubeUrl) {
           job.progress = 8;
           job.stageMessage = "Downloading the video from YouTube...";

@@ -6,6 +6,7 @@ import { verifyAuthAndRateLimit } from "@/lib/authRateLimit";
 import { jobQueue, saveJobRecord, JobRecord, JobOptions, listRecentProjects, retentionHours } from "@/lib/jobQueue";
 import { normalizeCookiesToNetscape } from "@/lib/youtubeCookies";
 import { normalizeYoutubeUrl, normalizeProxy } from "@/lib/mediaPrep";
+import { normalizeDirectUrl } from "@/lib/directImport";
 import { normalizeClipStyle } from "@/lib/clipStyle";
 import { CAPTION_FONTS } from "@/lib/videoService";
 
@@ -48,7 +49,8 @@ export async function POST(req: NextRequest) {
       const {
         fileId: inputId,
         filePath: inputPath,
-        youtubeUrl,
+        youtubeUrl: youtubeUrlRaw,
+        videoUrl,
         customPrompt,
         aspectRatio,
         reframeMode,
@@ -71,12 +73,28 @@ export async function POST(req: NextRequest) {
         unsplashKey,
       } = body;
 
+      if ((youtubeUrlRaw != null && typeof youtubeUrlRaw !== "string") || (videoUrl != null && typeof videoUrl !== "string")) {
+        return NextResponse.json({ error: "youtubeUrl / videoUrl must be strings" }, { status: 400 });
+      }
+      // One link box for both: YouTube links go to yt-dlp; any other plain
+      // https link is treated as a direct video file (directImport.ts) —
+      // that path never touches YouTube, so its bot check doesn't apply.
+      const linkIn = (videoUrl || youtubeUrlRaw || "").trim();
+      const isSample = linkIn === "sample" || linkIn.includes("sample-podcast") || linkIn.includes("sample-keynote");
+      let youtubeUrl: string | undefined = linkIn && (isSample || normalizeYoutubeUrl(linkIn)) ? linkIn : undefined;
+      const directUrl = linkIn && !youtubeUrl ? normalizeDirectUrl(linkIn) : null;
+      if (linkIn && !youtubeUrl && !directUrl) {
+        return NextResponse.json(
+          { error: "Paste a YouTube link or a direct https link to a video file." },
+          { status: 400 }
+        );
+      }
       if (youtubeUrl !== undefined && youtubeUrl !== null && typeof youtubeUrl !== "string") {
         return NextResponse.json({ error: "youtubeUrl must be a string" }, { status: 400 });
       }
 
       options = {
-        sourceType: youtubeUrl ? "youtube" : "upload",
+        sourceType: directUrl ? "url" : youtubeUrl ? "youtube" : "upload",
         youtubeUrl,
         customPrompt,
         aspectRatio: aspectRatio || "9:16",
@@ -99,7 +117,12 @@ export async function POST(req: NextRequest) {
         unsplashKey: (unsplashKey || "").trim?.() || undefined,
       };
 
-      if (youtubeUrl) {
+      if (directUrl) {
+        // Downloaded by the worker (minutes for big files; no request held open).
+        options.videoUrl = directUrl;
+        youtubeUrl = undefined;
+        options.youtubeUrl = undefined;
+      } else if (youtubeUrl) {
         const downloadDir = path.join(process.cwd(), "public", "downloads");
         if (!fs.existsSync(downloadDir)) fs.mkdirSync(downloadDir, { recursive: true });
 
@@ -141,7 +164,7 @@ export async function POST(req: NextRequest) {
           : path.join(process.cwd(), "public", fileId.replace(/^\/+/, ""));
       } else {
         return NextResponse.json(
-          { error: "Must provide either file upload, fileId, or youtubeUrl" },
+          { error: "Must provide either file upload, fileId, youtubeUrl or videoUrl" },
           { status: 400 }
         );
       }
