@@ -7,6 +7,11 @@ console.log("==================================================\n");
 
 const tests = [
   {
+    name: "Direct Video Link Import: Safety Checks, Redirects, Size Cap, Conversion",
+    cmd: "npx",
+    args: ["tsx", path.join(__dirname, "test-direct-import.ts")],
+  },
+  {
     name: "Autopilot: Trend Hunter, Auto-Clipping, Inbox, Schedule & YouTube Uploads",
     cmd: "npx",
     args: ["tsx", path.join(__dirname, "test-autopilot.ts")],

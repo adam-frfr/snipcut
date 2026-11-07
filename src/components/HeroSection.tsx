@@ -155,14 +155,14 @@ export default function HeroSection() {
             {activeTab === "url" && (
               <div>
                 <label className="block text-xs font-black uppercase text-black mb-1.5 tracking-wider">
-                  YouTube Video Link
+                  YouTube or Direct Video Link
                 </label>
                 <div className="relative">
                   <input
                     type="url"
                     value={urlInput}
                     onChange={(e) => setUrlInput(e.target.value)}
-                    placeholder="https://www.youtube.com/watch?v=..."
+                    placeholder="https://www.youtube.com/watch?v=...  or  a link to an .mp4"
                     className="w-full neo-input py-3 pl-4 pr-4 text-base sm:text-sm font-bold text-black placeholder:text-[#999999]"
                   />
                 </div>

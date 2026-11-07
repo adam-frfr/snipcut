@@ -892,7 +892,7 @@ function DashboardContent() {
           }),
         });
       } else if (url) {
-        setProcessingStage("Enqueuing video URL for download and AI processing...");
+        setProcessingStage("Sending the link to the server for download and AI processing...");
         const storedCookies = (typeof window !== "undefined" && localStorage.getItem("snipcut_youtube_cookies")) || "";
         const storedProxy = (typeof window !== "undefined" && localStorage.getItem("snipcut_youtube_proxy")) || "";
 
@@ -2048,7 +2048,7 @@ function DashboardContent() {
               <div>
                 <div className="flex items-center justify-between mb-1.5">
                   <label className="block text-xs font-black uppercase tracking-wider text-black">
-                    YouTube Video URL
+                    YouTube or direct video link
                   </label>
                   <span className="text-[11px] text-neutral-600 font-medium">Or choose a quick demo</span>
                 </div>
@@ -2056,9 +2056,12 @@ function DashboardContent() {
                   type="url"
                   value={urlInput}
                   onChange={(e) => setUrlInput(e.target.value)}
-                  placeholder="https://www.youtube.com/watch?v=..."
+                  placeholder="https://www.youtube.com/watch?v=...  or  https://.../video.mp4"
                   className="w-full bg-[#F8F7F4] text-black text-base sm:text-sm px-4 py-3 border-2 border-black placeholder:text-neutral-500 focus:outline-none focus:bg-white focus:shadow-[3px_3px_0px_#000000] transition-all font-mono"
                 />
+                <p className="text-[10px] font-medium text-neutral-500 mt-1">
+                  A direct link to a video file (.mp4, .mov, ...) is downloaded by the server — handy when YouTube blocks the server.
+                </p>
 
                 {/* 1-Click Samples (Clean badges without emojis) */}
                 <div className="flex items-center gap-2 mt-2.5 flex-wrap">
