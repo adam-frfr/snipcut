@@ -155,6 +155,9 @@ export function friendlyDownloadError(rawError: string): string {
   if (/yt-dlp binary not found|ENOENT/i.test(e)) {
     return "YouTube downloads aren't set up on this server (yt-dlp is not installed). Upload the video file instead, or ask the site owner to install yt-dlp.";
   }
+  if (/No video formats found|Requested format is not available|n challenge|JS runtime/i.test(e)) {
+    return "YouTube let the server in but didn't hand over the video streams (its player check wasn't solved). This is a server setup issue, not your link: the server needs a current yt-dlp and a JavaScript runtime (Deno). Upload the file or use a direct video link meanwhile.";
+  }
   if (/not a bot|Sign in to confirm/i.test(e)) {
     return "YouTube blocked this download with its bot check. Add fresh YouTube cookies in Settings (API Keys → YouTube Cookies) and use the Test button to verify them, then try again.";
   }

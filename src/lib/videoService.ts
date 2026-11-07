@@ -51,6 +51,33 @@ function checkBinaryRunnable(binPath: string): boolean {
   }
 }
 
+/**
+ * JavaScript engine yt-dlp uses to solve YouTube's player challenge. Without
+ * a supported one YouTube returns no usable streams ("No video formats
+ * found"). The Docker image ships Deno for this: its Node 20 is too old for
+ * current yt-dlp ("node (unsupported)"). YTDLP_JS_RUNTIME overrides, e.g.
+ * "deno:/opt/deno" or "node".
+ */
+let jsRuntimeCache: string[] | null = null;
+export function ytDlpJsRuntimeArgs(): string[] {
+  const env = (process.env.YTDLP_JS_RUNTIME || "").trim();
+  if (env) return ["--js-runtimes", env];
+  if (jsRuntimeCache) return jsRuntimeCache;
+  const deno = ["/usr/local/bin/deno", "/usr/bin/deno"].find((p) => fs.existsSync(p));
+  let hasDeno = Boolean(deno);
+  if (!hasDeno) {
+    try {
+      const { execFileSync } = require("child_process");
+      execFileSync("deno", ["--version"], { stdio: "ignore", timeout: 3000 });
+      hasDeno = true;
+    } catch {}
+  }
+  jsRuntimeCache = hasDeno
+    ? ["--js-runtimes", deno ? `deno:${deno}` : "deno", "--js-runtimes", "node"]
+    : ["--js-runtimes", "node"];
+  return jsRuntimeCache;
+}
+
 // Resolution order: 1. Env override -> 2. ./bin (platform matching) -> 3. static package -> 4. system PATH -> Clear error
 export function getFfmpegBinary(): string {
   if (process.env.FFMPEG_PATH && fs.existsSync(process.env.FFMPEG_PATH)) {

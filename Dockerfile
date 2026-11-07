@@ -27,6 +27,12 @@ RUN curl -fsSL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp 
     && chmod a+rx /usr/local/bin/yt-dlp \
     && chown node:node /usr/local/bin/yt-dlp
 
+# Deno: yt-dlp solves YouTube's player (JavaScript) challenge with a JS
+# runtime. This image's Node 20 is too old for current yt-dlp ("node
+# (unsupported)"), and without a runtime every download fails with "No
+# video formats found". Official Deno image, pinned.
+COPY --from=denoland/deno:bin-2.5.6 /deno /usr/local/bin/deno
+
 WORKDIR /app
 
 COPY package.json package-lock.json ./
