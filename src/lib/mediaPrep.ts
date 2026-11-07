@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import { execFile } from "child_process";
 import util from "util";
-import { getFfmpegBinary, getFfprobeBinary, getYtDlpBinary, probeVideoFormat, checkZscaleSupported } from "./videoService";
+import { getFfmpegBinary, getFfprobeBinary, getYtDlpBinary, probeVideoFormat, checkZscaleSupported, ytDlpJsRuntimeArgs } from "./videoService";
 import { resolveCookieArg, friendlyDownloadError } from "./youtubeCookies";
 
 /**
@@ -134,7 +134,7 @@ export async function downloadYoutubeVideo(opts: {
   try {
     for (const clientArgs of clientStrategies) {
       const args = [
-        "--js-runtimes", "node",
+        ...ytDlpJsRuntimeArgs(),
         "--ffmpeg-location", getFfmpegBinary(),
         ...cookieArgs,
         ...proxyArgs,

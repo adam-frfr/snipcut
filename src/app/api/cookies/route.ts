@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { execFile } from "child_process";
 import util from "util";
 import { verifyAuthAndRateLimit } from "@/lib/authRateLimit";
-import { getYtDlpBinary } from "@/lib/videoService";
+import { getYtDlpBinary, ytDlpJsRuntimeArgs } from "@/lib/videoService";
 import { getServerCookieJar, saveServerCookieJar, normalizeCookiesToNetscape, friendlyDownloadError } from "@/lib/youtubeCookies";
 
 const execFilePromise = util.promisify(execFile);
@@ -68,9 +68,11 @@ export async function POST(req: NextRequest) {
       if (jar) cookieFile = jar.filePath;
     }
 
-    const args: string[] = ["--no-warnings", "--ignore-errors", "--get-title", "--get-id"];
+    // --simulate checks that real video streams come back (not just the
+    // title), so this matches what an actual download needs.
+    const args: string[] = [...ytDlpJsRuntimeArgs(), "--no-warnings", "--simulate", "--print", "title", "-f", "bv*+ba/b"];
     if (cookieFile) args.push("--cookies", cookieFile);
-    args.push("--extractor-args", "youtube:player_client=web,ios,android", PROBE_URL);
+    args.push("--", PROBE_URL);
 
     try {
       const { stdout } = await execFilePromise(getYtDlpBinary(), args, { timeout: 45000 });
